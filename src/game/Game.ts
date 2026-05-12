@@ -9,8 +9,8 @@ import { Bullets } from "./Bullets";
 
 const NUM_BOTS = 3;
 
-// Player view = 64 blocks (= 64 * 0.5 = 32 world units across)
-const VIEW_SIZE = 16;
+// Closer zoom (matches the original gameplay framing before the night-vision change)
+const VIEW_SIZE = 4;
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
