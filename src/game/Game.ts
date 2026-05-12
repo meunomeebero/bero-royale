@@ -4,6 +4,7 @@ import { Player } from "./Player";
 import { InputManager } from "./InputManager";
 import { AudioManager } from "./AudioManager";
 import { DustParticles } from "./DustParticles";
+import { Bullets } from "./Bullets";
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -13,6 +14,7 @@ export class Game {
   private input: InputManager;
   private audio: AudioManager;
   private dust: DustParticles;
+  private bullets: Bullets;
   private platform: Platform;
   private player: Player;
 
@@ -35,9 +37,9 @@ export class Game {
     this.scene.background = new THREE.Color("#060610");
     this.scene.fog = new THREE.FogExp2(new THREE.Color("#060610"), 0.04);
 
-    // Isometric camera
+    // Isometric camera (smaller view because blocks are smaller)
     const aspect = container.clientWidth / container.clientHeight;
-    const viewSize = 7;
+    const viewSize = 4;
     this.camera = new THREE.OrthographicCamera(
       -viewSize * aspect,
       viewSize * aspect,
@@ -46,7 +48,7 @@ export class Game {
       0.1,
       100,
     );
-    this.camera.position.set(12, 12, 12);
+    this.camera.position.set(8, 8, 8);
     this.camera.lookAt(0, 0, 0);
 
     // Lights
@@ -65,21 +67,34 @@ export class Game {
     this.audio = new AudioManager();
     this.input = new InputManager();
     this.dust = new DustParticles();
+    this.bullets = new Bullets();
     this.platform = new Platform();
-    this.player = new Player(this.platform, this.input, this.audio, this.dust);
+    this.player = new Player(
+      this.platform,
+      this.input,
+      this.audio,
+      this.dust,
+      this.bullets,
+    );
 
     this.scene.add(this.platform.group);
     this.scene.add(this.dust.group);
-    this.scene.add(this.player.mesh);
+    this.scene.add(this.bullets.group);
+    this.scene.add(this.player.root);
 
     window.addEventListener("resize", this.onResize);
+  }
+
+  /** Exposed so HUD can do mouse->world raycasting if needed. */
+  getCamera() {
+    return this.camera;
   }
 
   private onResize = () => {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     const aspect = w / h;
-    const viewSize = 7;
+    const viewSize = 4;
     this.camera.left = -viewSize * aspect;
     this.camera.right = viewSize * aspect;
     this.camera.top = viewSize;
@@ -92,8 +107,9 @@ export class Game {
     this.clock.start();
     const loop = () => {
       const dt = Math.min(this.clock.getDelta(), 1 / 30);
-      this.player.update(dt);
+      this.player.update(dt, this.camera);
       this.dust.update(dt);
+      this.bullets.update(dt);
       this.renderer.render(this.scene, this.camera);
       this.rafId = requestAnimationFrame(loop);
     };
@@ -106,6 +122,7 @@ export class Game {
     this.input.dispose();
     this.audio.dispose();
     this.dust.dispose();
+    this.bullets.dispose();
     this.player.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {

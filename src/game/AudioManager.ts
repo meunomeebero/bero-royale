@@ -60,6 +60,13 @@ export class AudioManager {
     this.blip(180, 60, 260, "square", 0.08);
   }
 
+  shoot() {
+    // Sharp 8-bit pew
+    this.blip(900, 180, 70, "square", 0.05);
+    // Mix in a tiny noise-ish sawtooth for crunch
+    this.blip(1600, 400, 40, "sawtooth", 0.025);
+  }
+
   dispose() {
     if (this.ctx) {
       void this.ctx.close();
