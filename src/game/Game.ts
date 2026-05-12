@@ -9,8 +9,8 @@ import { Bullets } from "./Bullets";
 
 const NUM_BOTS = 3;
 
-// Player view = 64 blocks (= 64 * 0.5 = 32 world units across)
-const VIEW_SIZE = 16; // half-extent on the shorter axis (camera ortho top/bottom)
+// Show the whole map (80 blocks * 0.5 = 40 units across; half-extent ~22 with margin)
+const VIEW_SIZE = 22;
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -42,8 +42,7 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#060610");
-    // Heavy fog so the player only sees ~64 blocks (~32 units) around themselves
-    this.scene.fog = new THREE.FogExp2(new THREE.Color("#060610"), 0.085);
+    // Fog disabled — full map visibility for now
 
     const aspect = container.clientWidth / container.clientHeight;
     this.camera = new THREE.OrthographicCamera(
@@ -52,7 +51,7 @@ export class Game {
       VIEW_SIZE,
       -VIEW_SIZE,
       0.1,
-      200,
+      400,
     );
 
     // Lights
@@ -106,8 +105,9 @@ export class Game {
   }
 
   private updateCamera() {
-    this.camera.position.copy(this.player.root.position).add(this.cameraOffset);
-    this.camera.lookAt(this.player.root.position);
+    // Static camera centered on the world — full map visible
+    this.camera.position.set(60, 60, 60);
+    this.camera.lookAt(0, 0, 0);
   }
 
   private onResize = () => {
