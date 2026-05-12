@@ -18,6 +18,21 @@ export class InputManager {
     window.addEventListener("mousedown", this.onMouseDown);
     window.addEventListener("mouseup", this.onMouseUp);
     window.addEventListener("contextmenu", this.onContextMenu);
+    window.addEventListener("blur", this.onBlur);
+  }
+
+  private onBlur = () => {
+    // When the window loses focus, the OS may swallow keyup events,
+    // leaving keys "stuck". Clear all input state to be safe.
+    this.clearKeys();
+  };
+
+  /** Force-clear all currently held keys / mouse buttons. Useful on respawn. */
+  clearKeys() {
+    this.keys.clear();
+    this.spaceJustPressed = false;
+    this.mouseJustPressed = false;
+    this.mouseHeld = false;
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -105,5 +120,6 @@ export class InputManager {
     window.removeEventListener("mousedown", this.onMouseDown);
     window.removeEventListener("mouseup", this.onMouseUp);
     window.removeEventListener("contextmenu", this.onContextMenu);
+    window.removeEventListener("blur", this.onBlur);
   }
 }

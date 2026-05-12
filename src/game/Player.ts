@@ -193,9 +193,12 @@ export class Player implements BulletTarget {
     );
   }
 
-  private respawn() {    const spawn = this.platform.randomSpawn(4);
+  private respawn() {
+    const spawn = this.platform.randomSpawn(4);
     spawn.y = this.platform.topY + PLAYER_SIZE / 2;
     this.root.position.copy(spawn);
+    this.root.rotation.set(0, 0, 0);
+    this.root.scale.set(1, 1, 1);
     this.velocity.set(0, 0, 0);
     this.body.scale.set(1, 1, 1);
     this.body.rotation.set(0, 0, 0);
@@ -211,6 +214,9 @@ export class Player implements BulletTarget {
     this.health = MAX_HEALTH;
     this.hitFlashTimer = 0;
     this.shakeTimer = 0;
+    // Clear any keys / mouse buttons that may have gotten stuck during the
+    // fall/death animation (e.g. window lost focus while a movement key was held).
+    this.input.clearKeys();
     this.position.copy(this.root.position);
   }
 
