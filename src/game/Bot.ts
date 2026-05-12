@@ -1,47 +1,46 @@
 import * as THREE from "three";
 import type { Platform } from "./Platform";
-import type { InputManager } from "./InputManager";
 import type { AudioManager } from "./AudioManager";
 import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
+import type { Player } from "./Player";
 
-const PLAYER_SIZE = 0.5;
-const MOVE_SPEED = 6.5;
-const ACCEL = 28;
+const BOT_SIZE = 0.5;
+const MOVE_SPEED = 3.5;
+const ACCEL = 14;
 const JUMP_VELOCITY = 6.0;
 const GRAVITY = 18.0;
 
-const SQUASH_LERP = 0.22;
-const FALL_DURATION = 0.7;
-const SHOOT_COOLDOWN = 0.12;
-
 const MAX_HEALTH = 10;
-const RESPAWN_DELAY = 5.0; // seconds
+const RESPAWN_DELAY = 5.0;
 const HIT_FLASH_DURATION = 0.25;
 
-const COLOR_HEALTHY = new THREE.Color("#7b2fff");
+const SIGHT_RANGE = 16; // distance at which the bot starts seeing the player
+const SHOOT_COOLDOWN = 0.7;
+const JUMP_COOLDOWN_MIN = 1.6;
+const JUMP_COOLDOWN_MAX = 3.5;
+const WANDER_INTERVAL = 2.5;
+
+const COLOR_HEALTHY = new THREE.Color("#ff7f1f");
 const COLOR_DEAD = new THREE.Color("#3a0606");
-const COLOR_HIT = new THREE.Color("#ff2030");
-const EMISSIVE_HEALTHY = new THREE.Color("#3a0ea0");
+const COLOR_HIT = new THREE.Color("#ffffff");
+const EMISSIVE_HEALTHY = new THREE.Color("#a13a00");
 const EMISSIVE_DEAD = new THREE.Color("#1a0202");
 
 type State = "alive" | "falling" | "dead";
 
-export class Player implements BulletTarget {
-  readonly id = "player";
-  readonly side = "player" as const;
-  readonly bodyHalfHeight = PLAYER_SIZE / 2;
+export class Bot implements BulletTarget {
+  readonly id: string;
+  readonly side = "bot" as const;
+  readonly bodyHalfHeight = BOT_SIZE / 2;
 
-  /** Root object: holds the body cube + shield + gun. */
   readonly root: THREE.Group;
   private body: THREE.Mesh;
   private aimGroup: THREE.Group;
-  private shield: THREE.Mesh;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
 
   private platform: Platform;
-  private input: InputManager;
   private audio: AudioManager;
   private dust: DustParticles;
   private bullets: Bullets;
@@ -53,47 +52,40 @@ export class Player implements BulletTarget {
   private deadTimer = 0;
   private targetScale = new THREE.Vector3(1, 1, 1);
   private bodyMaterial: THREE.MeshLambertMaterial;
-  private shootTimer = 0;
   private health = MAX_HEALTH;
 
   private hitFlashTimer = 0;
   private shakeTimer = 0;
   private shakeAmount = 0;
 
-  private tmpAim = new THREE.Vector3();
-  private tmpDir = new THREE.Vector3();
-
   private aimYaw = 0;
-  private gunRecoil = 0;
-  private gunBaseX = 0.12;
+  private shootTimer = 0;
+  private jumpTimer = 0;
+  private wanderTimer = 0;
+  private wanderTarget = new THREE.Vector3();
 
-  /** Exposed center of body (BulletTarget). */
   readonly position = new THREE.Vector3();
 
   constructor(
+    id: string,
     platform: Platform,
-    input: InputManager,
     audio: AudioManager,
     dust: DustParticles,
     bullets: Bullets,
   ) {
+    this.id = id;
     this.platform = platform;
-    this.input = input;
     this.audio = audio;
     this.dust = dust;
     this.bullets = bullets;
 
     this.root = new THREE.Group();
 
-    const bodyGeom = new THREE.BoxGeometry(
-      PLAYER_SIZE,
-      PLAYER_SIZE,
-      PLAYER_SIZE,
-    );
+    const bodyGeom = new THREE.BoxGeometry(BOT_SIZE, BOT_SIZE, BOT_SIZE);
     this.bodyMaterial = new THREE.MeshLambertMaterial({
       color: COLOR_HEALTHY.clone(),
       emissive: EMISSIVE_HEALTHY.clone(),
-      emissiveIntensity: 0.5,
+      emissiveIntensity: 0.45,
       transparent: true,
     });
     this.body = new THREE.Mesh(bodyGeom, this.bodyMaterial);
@@ -102,41 +94,30 @@ export class Player implements BulletTarget {
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
 
-    const shieldGeom = new THREE.BoxGeometry(0.06, 0.36, 0.28);
-    const shieldMat = new THREE.MeshLambertMaterial({
-      color: new THREE.Color("#5a5e63"),
-      emissive: new THREE.Color("#2a2d31"),
-      emissiveIntensity: 0.25,
-    });
-    this.shield = new THREE.Mesh(shieldGeom, shieldMat);
-    this.shield.position.set(0.08, 0, 0.32);
-    this.aimGroup.add(this.shield);
-
+    // Bot pistol (red-tinted)
     this.gun = new THREE.Group();
-    const gunBodyGeom = new THREE.BoxGeometry(0.18, 0.14, 0.12);
-    const gunBodyMat = new THREE.MeshLambertMaterial({
-      color: new THREE.Color("#1a1a2e"),
-      emissive: new THREE.Color("#0a0a18"),
+    const gunMat = new THREE.MeshLambertMaterial({
+      color: new THREE.Color("#2a1010"),
+      emissive: new THREE.Color("#400a0a"),
       emissiveIntensity: 0.4,
     });
-    const gunBody = new THREE.Mesh(gunBodyGeom, gunBodyMat);
+    const gunBody = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.14, 0.12),
+      gunMat,
+    );
     this.gun.add(gunBody);
-
-    const barrelGeom = new THREE.BoxGeometry(0.18, 0.07, 0.07);
-    const barrel = new THREE.Mesh(barrelGeom, gunBodyMat);
+    const barrel = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.07, 0.07),
+      gunMat,
+    );
     barrel.position.set(0.16, 0.02, 0);
     this.gun.add(barrel);
-
-    const gripGeom = new THREE.BoxGeometry(0.07, 0.14, 0.09);
-    const grip = new THREE.Mesh(gripGeom, gunBodyMat);
-    grip.position.set(-0.05, -0.12, 0);
-    this.gun.add(grip);
 
     this.gunBarrelTip = new THREE.Object3D();
     this.gunBarrelTip.position.set(0.28, 0.02, 0);
     this.gun.add(this.gunBarrelTip);
 
-    this.gun.position.set(this.gunBaseX, 0, -0.3);
+    this.gun.position.set(0.12, 0, 0);
     this.aimGroup.add(this.gun);
 
     this.respawn();
@@ -146,30 +127,16 @@ export class Player implements BulletTarget {
     return this.state === "alive";
   }
 
-  /** Player is currently airborne (jumping/falling) — bullets at ground level miss. */
   isAirborne() {
     return !this.grounded;
   }
 
-  getHealth() {
-    return this.health;
-  }
-
-  getMaxHealth() {
-    return MAX_HEALTH;
-  }
-
-  getState() {
-    return this.state;
-  }
-
-  /** BulletTarget callback. */
   takeHit(_direction: THREE.Vector3): boolean {
     if (this.state !== "alive") return false;
     this.health = Math.max(0, this.health - 1);
     this.hitFlashTimer = HIT_FLASH_DURATION;
-    this.shakeTimer = 0.25;
-    this.shakeAmount = 0.06;
+    this.shakeTimer = 0.22;
+    this.shakeAmount = 0.05;
     this.targetScale.set(1.35, 0.7, 1.35);
     this.audio.hit();
     if (this.health <= 0) {
@@ -182,24 +149,22 @@ export class Player implements BulletTarget {
     this.state = "dead";
     this.deadTimer = 0;
     this.audio.death();
-    // Burst of dust on death
     this.dust.spawnBurst(
       new THREE.Vector3(
         this.root.position.x,
         this.platform.topY + 0.05,
         this.root.position.z,
       ),
-      18,
+      14,
     );
   }
 
   private respawn() {
-    const spawn = this.platform.randomSpawn(4);
-    spawn.y = this.platform.topY + PLAYER_SIZE / 2;
+    const spawn = this.platform.randomSpawn(6);
+    spawn.y = this.platform.topY + BOT_SIZE / 2;
     this.root.position.copy(spawn);
     this.velocity.set(0, 0, 0);
     this.body.scale.set(1, 1, 1);
-    this.body.rotation.set(0, 0, 0);
     this.body.position.set(0, 0, 0);
     this.targetScale.set(1, 1, 1);
     this.bodyMaterial.opacity = 1;
@@ -212,50 +177,25 @@ export class Player implements BulletTarget {
     this.health = MAX_HEALTH;
     this.hitFlashTimer = 0;
     this.shakeTimer = 0;
+    this.shootTimer = 0.5 + Math.random();
+    this.jumpTimer = JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
+    this.wanderTimer = 0;
     this.position.copy(this.root.position);
   }
 
-  private updateAim(camera: THREE.Camera) {
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(this.input.mouseNDC, camera);
-    const plane = new THREE.Plane(
-      new THREE.Vector3(0, 1, 0),
-      -this.root.position.y,
-    );
-    const hit = raycaster.ray.intersectPlane(plane, this.tmpAim);
-    if (hit) {
-      const dx = hit.x - this.root.position.x;
-      const dz = hit.z - this.root.position.z;
-      this.aimYaw = Math.atan2(dz, dx);
-    }
-    this.aimGroup.rotation.y = -this.aimYaw;
-  }
-
-  private getAimDirection(out: THREE.Vector3) {
-    out.set(Math.cos(this.aimYaw), 0, Math.sin(this.aimYaw));
-    return out;
-  }
-
-  /** Update body color based on health (purple -> dark red). */
   private updateColor() {
-    const t = 1 - this.health / MAX_HEALTH; // 0 healthy → 1 dead
+    const t = 1 - this.health / MAX_HEALTH;
     if (this.hitFlashTimer > 0) {
       this.bodyMaterial.color.copy(COLOR_HIT);
     } else {
-      this.bodyMaterial.color
-        .copy(COLOR_HEALTHY)
-        .lerp(COLOR_DEAD, t);
+      this.bodyMaterial.color.copy(COLOR_HEALTHY).lerp(COLOR_DEAD, t);
     }
-    this.bodyMaterial.emissive
-      .copy(EMISSIVE_HEALTHY)
-      .lerp(EMISSIVE_DEAD, t);
+    this.bodyMaterial.emissive.copy(EMISSIVE_HEALTHY).lerp(EMISSIVE_DEAD, t);
   }
 
-  update(dt: number, camera: THREE.Camera) {
-    // DEAD: countdown to respawn
+  update(dt: number, player: Player) {
     if (this.state === "dead") {
       this.deadTimer += dt;
-      // Sink slowly + shrink
       this.root.position.y -= dt * 0.6;
       const t = Math.min(1, this.deadTimer / RESPAWN_DELAY);
       const s = Math.max(0.05, 1 - t);
@@ -276,12 +216,12 @@ export class Player implements BulletTarget {
       this.root.position.addScaledVector(this.velocity, dt);
       this.root.rotation.x += dt * 6;
       this.root.rotation.z += dt * 4;
-      const t = 1 - this.fallTimer / FALL_DURATION;
+      const t = 1 - this.fallTimer / 0.7;
       this.bodyMaterial.opacity = Math.max(0, t);
       const s = Math.max(0.1, t);
       this.root.scale.set(s, s, s);
       this.position.copy(this.root.position);
-      if (this.fallTimer >= FALL_DURATION) {
+      if (this.fallTimer >= 0.7) {
         this.root.rotation.set(0, 0, 0);
         this.root.scale.set(1, 1, 1);
         this.respawn();
@@ -289,53 +229,97 @@ export class Player implements BulletTarget {
       return;
     }
 
-    // Aim
-    this.updateAim(camera);
+    // AI: see player?
+    const dx = player.position.x - this.root.position.x;
+    const dz = player.position.z - this.root.position.z;
+    const distToPlayer = Math.hypot(dx, dz);
+    const seesPlayer = player.isAlive() && distToPlayer <= SIGHT_RANGE;
+
+    const move = new THREE.Vector3(0, 0, 0);
+    if (seesPlayer) {
+      // Aim at player
+      this.aimYaw = Math.atan2(dz, dx);
+      this.aimGroup.rotation.y = -this.aimYaw;
+
+      // Approach to a comfortable shooting distance
+      const desired = 6;
+      if (distToPlayer > desired + 0.5) {
+        move.set(dx, 0, dz).normalize();
+      } else if (distToPlayer < desired - 0.5) {
+        move.set(-dx, 0, -dz).normalize();
+      }
+
+      // Shoot on cooldown
+      this.shootTimer -= dt;
+      if (this.shootTimer <= 0) {
+        this.shoot();
+        this.shootTimer = SHOOT_COOLDOWN + Math.random() * 0.4;
+      }
+
+      // Occasionally jump (so it can hit airborne players)
+      this.jumpTimer -= dt;
+      if (this.grounded && this.jumpTimer <= 0) {
+        this.velocity.y = JUMP_VELOCITY;
+        this.grounded = false;
+        this.audio.jump();
+        this.targetScale.set(0.7, 1.4, 0.7);
+        this.jumpTimer =
+          JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
+      }
+    } else {
+      // Wander
+      this.wanderTimer -= dt;
+      if (this.wanderTimer <= 0) {
+        const wander = this.platform.randomSpawn(8);
+        this.wanderTarget.set(wander.x, 0, wander.z);
+        this.wanderTimer = WANDER_INTERVAL + Math.random() * 2;
+      }
+      const wdx = this.wanderTarget.x - this.root.position.x;
+      const wdz = this.wanderTarget.z - this.root.position.z;
+      const wd = Math.hypot(wdx, wdz);
+      if (wd > 0.5) {
+        move.set(wdx, 0, wdz).normalize();
+        // Face wander direction
+        this.aimYaw = Math.atan2(wdz, wdx);
+        this.aimGroup.rotation.y = -this.aimYaw;
+      }
+    }
 
     // Movement
-    const move = this.input.getMoveVector();
     const targetVx = move.x * MOVE_SPEED;
     const targetVz = move.z * MOVE_SPEED;
     const lerpAmt = 1 - Math.exp(-ACCEL * dt);
     this.velocity.x += (targetVx - this.velocity.x) * lerpAmt;
     this.velocity.z += (targetVz - this.velocity.z) * lerpAmt;
 
-    // Jump
-    if (this.grounded && this.input.consumeJump()) {
-      this.velocity.y = JUMP_VELOCITY;
-      this.grounded = false;
-      this.audio.jump();
-      this.targetScale.set(0.7, 1.4, 0.7);
-    } else {
-      this.input.consumeJump();
-    }
-
-    // Shooting
-    this.shootTimer -= dt;
-    const fireNow =
-      this.input.consumeShoot() ||
-      (this.input.isShootHeld() && this.shootTimer <= 0);
-    if (fireNow) {
-      this.shoot();
-      this.shootTimer = SHOOT_COOLDOWN;
-    }
-
     // Gravity
     this.velocity.y -= GRAVITY * dt;
 
-    // Apply velocity
+    // Apply
     this.root.position.addScaledVector(this.velocity, dt);
 
-    // Ground / death-by-edge
-    const groundY = this.platform.topY + PLAYER_SIZE / 2;
+    // Ground collision / edge
+    const groundY = this.platform.topY + BOT_SIZE / 2;
     const bounds = this.platform.getBounds();
+    const safeMargin = 1.5;
     const onPlatform =
+      this.root.position.x >= bounds.minX + safeMargin &&
+      this.root.position.x <= bounds.maxX - safeMargin &&
+      this.root.position.z >= bounds.minZ + safeMargin &&
+      this.root.position.z <= bounds.maxZ - safeMargin;
+
+    // Soft-clamp bots to a safe interior so they don't suicide off the edge
+    const hardOnPlatform =
       this.root.position.x >= bounds.minX &&
       this.root.position.x <= bounds.maxX &&
       this.root.position.z >= bounds.minZ &&
       this.root.position.z <= bounds.maxZ;
+    if (!onPlatform && hardOnPlatform) {
+      // Push wander target back toward center
+      this.wanderTarget.set(0, 0, 0);
+    }
 
-    if (onPlatform && this.root.position.y <= groundY) {
+    if (hardOnPlatform && this.root.position.y <= groundY) {
       const wasAirborne = !this.grounded;
       this.root.position.y = groundY;
       this.velocity.y = 0;
@@ -343,26 +327,26 @@ export class Player implements BulletTarget {
         this.grounded = true;
         this.audio.land();
         this.targetScale.set(1.4, 0.6, 1.4);
-        const dustPos = new THREE.Vector3(
-          this.root.position.x,
-          this.platform.topY + 0.02,
-          this.root.position.z,
+        this.dust.spawnBurst(
+          new THREE.Vector3(
+            this.root.position.x,
+            this.platform.topY + 0.02,
+            this.root.position.z,
+          ),
+          8,
         );
-        this.dust.spawnBurst(dustPos, 10);
       }
-    } else if (!onPlatform && this.root.position.y < this.platform.topY) {
-      // Fell off the edge: trigger fall + die
+    } else if (!hardOnPlatform && this.root.position.y < this.platform.topY) {
       if (this.state === "alive") {
         this.state = "falling";
         this.audio.fall();
         this.grounded = false;
-        // Still count as a death so respawn timing applies via the falling state.
       }
     } else {
       this.grounded = false;
     }
 
-    // Movement squash
+    // Squash + lean
     const speedXZ = Math.hypot(this.velocity.x, this.velocity.z);
     const speedRatio = Math.min(1, speedXZ / MOVE_SPEED);
     if (this.grounded) {
@@ -378,17 +362,15 @@ export class Player implements BulletTarget {
     } else {
       this.targetScale.lerp(new THREE.Vector3(1, 1, 1), 0.06);
     }
-
-    // Lean
     const leanX = THREE.MathUtils.clamp(this.velocity.z / MOVE_SPEED, -1, 1);
     const leanZ = THREE.MathUtils.clamp(-this.velocity.x / MOVE_SPEED, -1, 1);
     this.body.rotation.x += (leanX * 0.35 - this.body.rotation.x) * 0.18;
     this.body.rotation.z += (leanZ * 0.35 - this.body.rotation.z) * 0.18;
 
-    // Shake (hit reaction)
+    // Shake
     if (this.shakeTimer > 0) {
       this.shakeTimer -= dt;
-      const s = this.shakeAmount * (this.shakeTimer / 0.25);
+      const s = this.shakeAmount * (this.shakeTimer / 0.22);
       this.body.position.x = (Math.random() - 0.5) * s * 2;
       this.body.position.y = (Math.random() - 0.5) * s * 2;
       this.body.position.z = (Math.random() - 0.5) * s * 2;
@@ -396,41 +378,33 @@ export class Player implements BulletTarget {
       this.body.position.lerp(new THREE.Vector3(0, 0, 0), 0.4);
     }
 
-    // Hit flash timer
     if (this.hitFlashTimer > 0) this.hitFlashTimer -= dt;
-
-    // Color update (health -> red)
     this.updateColor();
+    this.body.scale.lerp(this.targetScale, SQUASH_LERP_VAL);
 
-    // Smooth scale lerp
-    this.body.scale.lerp(this.targetScale, SQUASH_LERP);
-
-    // Gun recoil recovery
-    this.gunRecoil += (0 - this.gunRecoil) * Math.min(1, 18 * dt);
-    this.gun.position.x = this.gunBaseX - this.gunRecoil;
-
-    // Sync exposed position for BulletTarget
     this.position.copy(this.root.position);
   }
 
   private shoot() {
     const muzzle = new THREE.Vector3();
     this.gunBarrelTip.getWorldPosition(muzzle);
-    const dir = this.getAimDirection(this.tmpDir).clone();
-    this.bullets.spawn(muzzle, dir, "player");
+    const dir = new THREE.Vector3(
+      Math.cos(this.aimYaw),
+      0,
+      Math.sin(this.aimYaw),
+    );
+    this.bullets.spawn(muzzle, dir, "bot");
     this.audio.shoot();
-    this.gunRecoil = 0.08;
-    this.targetScale.set(1.15, 0.9, 1.15);
   }
 
   dispose() {
     this.bodyMaterial.dispose();
     (this.body.geometry as THREE.BufferGeometry).dispose();
-    this.shield.geometry.dispose();
-    (this.shield.material as THREE.Material).dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
     });
   }
 }
+
+const SQUASH_LERP_VAL = 0.22;

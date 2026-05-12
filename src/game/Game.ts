@@ -1,10 +1,16 @@
 import * as THREE from "three";
 import { Platform } from "./Platform";
 import { Player } from "./Player";
+import { Bot } from "./Bot";
 import { InputManager } from "./InputManager";
 import { AudioManager } from "./AudioManager";
 import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
+
+const NUM_BOTS = 3;
+
+// Player view = 64 blocks (= 64 * 0.5 = 32 world units across)
+const VIEW_SIZE = 16; // half-extent on the shorter axis (camera ortho top/bottom)
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -17,51 +23,44 @@ export class Game {
   private bullets: Bullets;
   private platform: Platform;
   private player: Player;
+  private bots: Bot[] = [];
 
   private clock = new THREE.Clock();
   private rafId = 0;
   private container: HTMLElement;
 
+  private cameraOffset = new THREE.Vector3(20, 20, 20);
+
   constructor(container: HTMLElement) {
     this.container = container;
 
-    // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.setClearColor(new THREE.Color("#060610"), 1);
     container.appendChild(this.renderer.domElement);
 
-    // Scene
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#060610");
-    this.scene.fog = new THREE.FogExp2(new THREE.Color("#060610"), 0.04);
+    // Heavy fog so the player only sees ~64 blocks (~32 units) around themselves
+    this.scene.fog = new THREE.FogExp2(new THREE.Color("#060610"), 0.085);
 
-    // Isometric camera (smaller view because blocks are smaller)
     const aspect = container.clientWidth / container.clientHeight;
-    const viewSize = 4;
     this.camera = new THREE.OrthographicCamera(
-      -viewSize * aspect,
-      viewSize * aspect,
-      viewSize,
-      -viewSize,
+      -VIEW_SIZE * aspect,
+      VIEW_SIZE * aspect,
+      VIEW_SIZE,
+      -VIEW_SIZE,
       0.1,
-      100,
+      200,
     );
-    this.camera.position.set(8, 8, 8);
-    this.camera.lookAt(0, 0, 0);
 
     // Lights
     const ambient = new THREE.AmbientLight(new THREE.Color("#1a1a4e"), 0.7);
     this.scene.add(ambient);
-
     const dir = new THREE.DirectionalLight(new THREE.Color("#6644ff"), 1.2);
     dir.position.set(8, 14, 6);
     this.scene.add(dir);
-
-    const glow = new THREE.PointLight(new THREE.Color("#8800ff"), 0.6, 14);
-    glow.position.set(0, -2, 0);
-    this.scene.add(glow);
 
     // Game objects
     this.audio = new AudioManager();
@@ -76,29 +75,49 @@ export class Game {
       this.dust,
       this.bullets,
     );
+    this.bullets.registerTarget(this.player);
+
+    for (let i = 0; i < NUM_BOTS; i++) {
+      const bot = new Bot(
+        `bot_${i}`,
+        this.platform,
+        this.audio,
+        this.dust,
+        this.bullets,
+      );
+      this.bots.push(bot);
+      this.scene.add(bot.root);
+      this.bullets.registerTarget(bot);
+    }
 
     this.scene.add(this.platform.group);
     this.scene.add(this.dust.group);
     this.scene.add(this.bullets.group);
     this.scene.add(this.player.root);
 
+    // Initial camera position
+    this.updateCamera();
+
     window.addEventListener("resize", this.onResize);
   }
 
-  /** Exposed so HUD can do mouse->world raycasting if needed. */
-  getCamera() {
-    return this.camera;
+  getPlayer() {
+    return this.player;
+  }
+
+  private updateCamera() {
+    this.camera.position.copy(this.player.root.position).add(this.cameraOffset);
+    this.camera.lookAt(this.player.root.position);
   }
 
   private onResize = () => {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     const aspect = w / h;
-    const viewSize = 4;
-    this.camera.left = -viewSize * aspect;
-    this.camera.right = viewSize * aspect;
-    this.camera.top = viewSize;
-    this.camera.bottom = -viewSize;
+    this.camera.left = -VIEW_SIZE * aspect;
+    this.camera.right = VIEW_SIZE * aspect;
+    this.camera.top = VIEW_SIZE;
+    this.camera.bottom = -VIEW_SIZE;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   };
@@ -108,8 +127,10 @@ export class Game {
     const loop = () => {
       const dt = Math.min(this.clock.getDelta(), 1 / 30);
       this.player.update(dt, this.camera);
+      for (const bot of this.bots) bot.update(dt, this.player);
       this.dust.update(dt);
       this.bullets.update(dt);
+      this.updateCamera();
       this.renderer.render(this.scene, this.camera);
       this.rafId = requestAnimationFrame(loop);
     };
@@ -124,6 +145,7 @@ export class Game {
     this.dust.dispose();
     this.bullets.dispose();
     this.player.dispose();
+    for (const bot of this.bots) bot.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement);

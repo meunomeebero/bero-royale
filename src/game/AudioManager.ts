@@ -61,10 +61,19 @@ export class AudioManager {
   }
 
   shoot() {
-    // Sharp 8-bit pew
     this.blip(900, 180, 70, "square", 0.05);
-    // Mix in a tiny noise-ish sawtooth for crunch
     this.blip(1600, 400, 40, "sawtooth", 0.025);
+  }
+
+  hit() {
+    // Crunchy 8-bit hit
+    this.blip(420, 90, 110, "square", 0.07);
+    this.blip(140, 60, 90, "sawtooth", 0.05);
+  }
+
+  death() {
+    this.blip(220, 40, 500, "sawtooth", 0.09);
+    this.blip(110, 30, 700, "square", 0.06);
   }
 
   dispose() {
