@@ -28,6 +28,7 @@ export class Game {
   private clock = new THREE.Clock();
   private rafId = 0;
   private container: HTMLElement;
+  private paused = false;
 
   private cameraOffset = new THREE.Vector3(20, 20, 20);
 
@@ -124,16 +125,34 @@ export class Game {
   start() {
     this.clock.start();
     const loop = () => {
-      const dt = Math.min(this.clock.getDelta(), 1 / 30);
-      this.player.update(dt, this.camera);
-      for (const bot of this.bots) bot.update(dt, this.player);
-      this.dust.update(dt);
-      this.bullets.update(dt);
-      this.updateCamera();
+      const dt = this.paused ? 0 : Math.min(this.clock.getDelta(), 1 / 30);
+      if (!this.paused) {
+        this.player.update(dt, this.camera);
+        for (const bot of this.bots) bot.update(dt, this.player);
+        this.dust.update(dt);
+        this.bullets.update(dt);
+        this.updateCamera();
+      } else {
+        // Drain the clock so dt doesn't explode when we resume
+        this.clock.getDelta();
+      }
       this.renderer.render(this.scene, this.camera);
       this.rafId = requestAnimationFrame(loop);
     };
     this.rafId = requestAnimationFrame(loop);
+  }
+
+  setPaused(value: boolean) {
+    this.paused = value;
+  }
+
+  isPaused() {
+    return this.paused;
+  }
+
+  togglePause() {
+    this.paused = !this.paused;
+    return this.paused;
   }
 
   dispose() {
