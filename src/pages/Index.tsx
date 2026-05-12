@@ -1,12 +1,31 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useEffect, useRef } from "react";
+import { Game } from "@/game/Game";
 
 const Index = () => {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const game = new Game(containerRef.current);
+    game.start();
+    return () => {
+      game.dispose();
+    };
+  }, []);
+
   return (
-    <div className="w-full h-full p-[32px] bg-gradient-to-b from-[#4E54C8] to-[#A8C0FF] flex flex-col max-md:pt-[32px] max-md:pl-[20px] max-md:pr-[20px] max-md:pb-[32px]">
-      <div className="text-[26px] text-white max-md:text-[22px]">Your App Name</div>
-      <div className='h-full flex-1 flex flex-col items-center justify-center'>
-        <div className='text-[48px] text-white text-center max-md:text-[26px]'>Welcome to your blank app</div>
-        <div className='text-[24px] text-white text-center max-md:text-[16px]'>Make any App yours with ease.</div>
+    <div className="relative w-screen h-screen overflow-hidden bg-game-bg">
+      <div ref={containerRef} className="absolute inset-0" />
+
+      {/* HUD overlay */}
+      <div className="pointer-events-none absolute inset-0 flex flex-col">
+        <div className="px-6 py-4 font-mono text-game-accent text-xs tracking-widest uppercase">
+          Voxel Cube
+        </div>
+        <div className="flex-1" />
+        <div className="px-6 py-4 font-mono text-game-muted text-xs tracking-wider text-center">
+          Arrow keys to move &middot; Space to jump
+        </div>
       </div>
     </div>
   );

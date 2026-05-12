@@ -50,6 +50,11 @@
     --sidebar-border: 220 13% 91%;
 
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Voxel game palette (cool / cyber-night) */
+    --game-bg: 240 50% 4%;
+    --game-accent: 265 100% 75%;
+    --game-muted: 250 30% 60%;
   }
 
   .dark {
