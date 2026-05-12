@@ -9,8 +9,8 @@ import { Bullets } from "./Bullets";
 
 const NUM_BOTS = 3;
 
-// Show the whole map (80 blocks * 0.5 = 40 units across; half-extent ~22 with margin)
-const VIEW_SIZE = 22;
+// Player view = 64 blocks (= 64 * 0.5 = 32 world units across)
+const VIEW_SIZE = 16;
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -105,9 +105,8 @@ export class Game {
   }
 
   private updateCamera() {
-    // Static camera centered on the world — full map visible
-    this.camera.position.set(60, 60, 60);
-    this.camera.lookAt(0, 0, 0);
+    this.camera.position.copy(this.player.root.position).add(this.cameraOffset);
+    this.camera.lookAt(this.player.root.position);
   }
 
   private onResize = () => {
