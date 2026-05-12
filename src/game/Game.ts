@@ -7,10 +7,13 @@ import { AudioManager } from "./AudioManager";
 import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
 
-const NUM_BOTS = 3;
+const INITIAL_BOTS = 3;
+const NEW_BOT_EVERY_SECONDS = 60;
 
 // Closer zoom (matches the original gameplay framing before the night-vision change)
 const VIEW_SIZE = 4;
+
+const TOP_SCORE_KEY = "voxelCube.topScore";
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -24,6 +27,7 @@ export class Game {
   private platform: Platform;
   private player: Player;
   private bots: Bot[] = [];
+  private nextBotId = 0;
 
   private clock = new THREE.Clock();
   private rafId = 0;
@@ -31,6 +35,13 @@ export class Game {
   private paused = false;
 
   private cameraOffset = new THREE.Vector3(20, 20, 20);
+
+  // Survival run state
+  private elapsed = 0; // seconds in current run
+  private nextBotSpawnAt = NEW_BOT_EVERY_SECONDS;
+  private topScore = 0;
+  private wasPlayerAliveLastFrame = true;
+  private onStatsChange?: (stats: GameStats) => void;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -43,7 +54,6 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#060610");
-    // Fog disabled — full map visibility for now
 
     const aspect = container.clientWidth / container.clientHeight;
     this.camera = new THREE.OrthographicCamera(
@@ -77,28 +87,88 @@ export class Game {
     );
     this.bullets.registerTarget(this.player);
 
-    for (let i = 0; i < NUM_BOTS; i++) {
-      const bot = new Bot(
-        `bot_${i}`,
-        this.platform,
-        this.audio,
-        this.dust,
-        this.bullets,
-      );
-      this.bots.push(bot);
-      this.scene.add(bot.root);
-      this.bullets.registerTarget(bot);
-    }
-
     this.scene.add(this.platform.group);
     this.scene.add(this.dust.group);
     this.scene.add(this.bullets.group);
     this.scene.add(this.player.root);
 
-    // Initial camera position
-    this.updateCamera();
+    // Load top score
+    this.topScore = this.loadTopScore();
 
+    // Initial bots
+    for (let i = 0; i < INITIAL_BOTS; i++) this.spawnBot();
+
+    this.updateCamera();
     window.addEventListener("resize", this.onResize);
+  }
+
+  private loadTopScore(): number {
+    try {
+      const raw = localStorage.getItem(TOP_SCORE_KEY);
+      if (!raw) return 0;
+      const n = Number.parseFloat(raw);
+      return Number.isFinite(n) ? n : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private saveTopScore(score: number) {
+    try {
+      localStorage.setItem(TOP_SCORE_KEY, String(score));
+    } catch {
+      // ignore quota / unavailable storage
+    }
+  }
+
+  private spawnBot() {
+    const bot = new Bot(
+      `bot_${this.nextBotId++}`,
+      this.platform,
+      this.audio,
+      this.dust,
+      this.bullets,
+    );
+    this.bots.push(bot);
+    this.scene.add(bot.root);
+    this.bullets.registerTarget(bot);
+  }
+
+  private clearBots() {
+    for (const bot of this.bots) {
+      this.bullets.unregisterTarget(bot);
+      this.scene.remove(bot.root);
+      bot.dispose();
+    }
+    this.bots = [];
+  }
+
+  /** Reset run state and spawn a fresh wave of bots. */
+  private restartRun() {
+    if (this.elapsed > this.topScore) {
+      this.topScore = this.elapsed;
+      this.saveTopScore(this.topScore);
+    }
+    this.elapsed = 0;
+    this.nextBotSpawnAt = NEW_BOT_EVERY_SECONDS;
+    this.clearBots();
+    for (let i = 0; i < INITIAL_BOTS; i++) this.spawnBot();
+    this.notifyStats();
+  }
+
+  setStatsListener(cb?: (stats: GameStats) => void) {
+    this.onStatsChange = cb;
+    this.notifyStats();
+  }
+
+  private notifyStats() {
+    if (this.onStatsChange) {
+      this.onStatsChange({
+        elapsed: this.elapsed,
+        topScore: this.topScore,
+        botCount: this.bots.length,
+      });
+    }
   }
 
   getPlayer() {
@@ -124,6 +194,7 @@ export class Game {
 
   start() {
     this.clock.start();
+    let lastNotifySecond = -1;
     const loop = () => {
       const dt = this.paused ? 0 : Math.min(this.clock.getDelta(), 1 / 30);
       if (!this.paused) {
@@ -132,8 +203,32 @@ export class Game {
         this.dust.update(dt);
         this.bullets.update(dt);
         this.updateCamera();
+
+        // Survival timer ticks only while the player is alive
+        const aliveNow = this.player.isAlive();
+        if (aliveNow) {
+          this.elapsed += dt;
+          // Spawn additional bot every minute
+          if (this.elapsed >= this.nextBotSpawnAt) {
+            this.spawnBot();
+            this.nextBotSpawnAt += NEW_BOT_EVERY_SECONDS;
+            this.notifyStats();
+          }
+        }
+
+        // Detect death edge: alive -> not alive, restart the run (and save top score)
+        if (this.wasPlayerAliveLastFrame && !aliveNow) {
+          this.restartRun();
+        }
+        this.wasPlayerAliveLastFrame = aliveNow;
+
+        // Notify HUD every whole second
+        const sec = Math.floor(this.elapsed);
+        if (sec !== lastNotifySecond) {
+          lastNotifySecond = sec;
+          this.notifyStats();
+        }
       } else {
-        // Drain the clock so dt doesn't explode when we resume
         this.clock.getDelta();
       }
       this.renderer.render(this.scene, this.camera);
@@ -163,10 +258,16 @@ export class Game {
     this.dust.dispose();
     this.bullets.dispose();
     this.player.dispose();
-    for (const bot of this.bots) bot.dispose();
+    this.clearBots();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement);
     }
   }
+}
+
+export interface GameStats {
+  elapsed: number;
+  topScore: number;
+  botCount: number;
 }

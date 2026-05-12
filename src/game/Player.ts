@@ -193,8 +193,7 @@ export class Player implements BulletTarget {
     );
   }
 
-  private respawn() {
-    const spawn = this.platform.randomSpawn(4);
+  private respawn() {    const spawn = this.platform.randomSpawn(4);
     spawn.y = this.platform.topY + PLAYER_SIZE / 2;
     this.root.position.copy(spawn);
     this.velocity.set(0, 0, 0);

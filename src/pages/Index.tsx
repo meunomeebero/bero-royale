@@ -1,18 +1,31 @@
 import { useEffect, useRef, useState } from "react";
-import { Pause, Play } from "lucide-react";
-import { Game } from "@/game/Game";
+import { Pause, Play, Timer, Trophy, Users } from "lucide-react";
+import { Game, type GameStats } from "@/game/Game";
 import { Button } from "@/components/ui/button";
+
+const formatTime = (seconds: number) => {
+  const total = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+};
 
 const Index = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Game | null>(null);
   const [cursor, setCursor] = useState({ x: -100, y: -100 });
   const [paused, setPaused] = useState(false);
+  const [stats, setStats] = useState<GameStats>({
+    elapsed: 0,
+    topScore: 0,
+    botCount: 0,
+  });
 
   useEffect(() => {
     if (!containerRef.current) return;
     const game = new Game(containerRef.current);
     gameRef.current = game;
+    game.setStatsListener((s) => setStats(s));
     game.start();
 
     const onMove = (e: MouseEvent) => {
@@ -31,6 +44,7 @@ const Index = () => {
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("keydown", onKey);
+      game.setStatsListener(undefined);
       game.dispose();
       gameRef.current = null;
     };
@@ -52,9 +66,27 @@ const Index = () => {
 
       {/* HUD overlay */}
       <div className="absolute inset-0 flex flex-col pointer-events-none">
-        <div className="flex items-start justify-between px-6 py-4">
-          <div className="font-mono text-game-accent text-xs tracking-widest uppercase">
-            Voxel Cube
+        <div className="flex items-start justify-between px-6 py-4 gap-4">
+          <div className="flex flex-col gap-2">
+            <div className="font-mono text-game-accent text-xs tracking-widest uppercase">
+              Voxel Cube
+            </div>
+            <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-widest">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-game-bg/70 border border-game-accent/30 text-game-accent">
+                <Timer className="w-3.5 h-3.5" />
+                <span className="tabular-nums">{formatTime(stats.elapsed)}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-game-bg/70 border border-game-muted/30 text-game-muted">
+                <Trophy className="w-3.5 h-3.5" />
+                <span className="tabular-nums">
+                  {formatTime(stats.topScore)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-game-bg/70 border border-game-muted/30 text-game-muted">
+                <Users className="w-3.5 h-3.5" />
+                <span className="tabular-nums">{stats.botCount}</span>
+              </div>
+            </div>
           </div>
           <Button
             type="button"
