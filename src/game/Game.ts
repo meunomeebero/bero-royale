@@ -6,6 +6,7 @@ import { InputManager } from "./InputManager";
 import { AudioManager } from "./AudioManager";
 import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
+import { Decor } from "./Decor";
 
 const INITIAL_BOTS = 3;
 const NEW_BOT_EVERY_SECONDS = 60;
@@ -91,6 +92,8 @@ export class Game {
     this.bullets.registerTarget(this.player);
 
     this.scene.add(this.platform.group);
+    const decor = new Decor(this.platform);
+    this.scene.add(decor.group);
     this.scene.add(this.dust.group);
     this.scene.add(this.bullets.group);
     this.scene.add(this.player.root);

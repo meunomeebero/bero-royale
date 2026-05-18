@@ -1,18 +1,16 @@
 import * as THREE from "three";
 
-const PLATFORM_GRID = 80; // 80 x 80 = 6400 blocks (10x larger than the original 8x8 = 64)
+const PLATFORM_GRID = 80; // 80 x 80 = 6400 blocks
 const BLOCK_SIZE = 0.5;
 const BLOCK_HEIGHT = 0.25;
 
-// Much brighter, more saturated tiles so the platform reads against the dark sky.
-const COLOR_DARK = new THREE.Color("#2a2570");
-const COLOR_MED = new THREE.Color("#3a3590");
-const COLOR_GRID = new THREE.Color("#9b6bff"); // accent line color every 8 blocks
+const ASPHALT_TEXTURE_URL =
+  "https://grazia-prod.oss-ap-southeast-1.aliyuncs.com/resources/uid_100032862/asphalt_moss_tile_d5e9cb5e.png";
 
 export class Platform {
   readonly group: THREE.Group;
   readonly topY: number;
-  readonly size: number; // total side length in world units
+  readonly size: number;
   readonly blockSize = BLOCK_SIZE;
 
   constructor() {
@@ -20,43 +18,43 @@ export class Platform {
     this.size = PLATFORM_GRID * BLOCK_SIZE;
     this.topY = BLOCK_HEIGHT / 2;
 
-    const geom = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_SIZE);
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: false });
-    const total = PLATFORM_GRID * PLATFORM_GRID;
+    // Single large flat slab textured with the tileable asphalt+moss map.
+    const slabGeom = new THREE.BoxGeometry(
+      this.size,
+      BLOCK_HEIGHT,
+      this.size,
+    );
 
-    const mesh = new THREE.InstancedMesh(geom, mat, total);
-    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin("anonymous");
+    const tex = loader.load(ASPHALT_TEXTURE_URL);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(PLATFORM_GRID / 2, PLATFORM_GRID / 2);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
 
-    const dummy = new THREE.Object3D();
-    const offset = -((PLATFORM_GRID - 1) * BLOCK_SIZE) / 2;
-    let i = 0;
-    for (let x = 0; x < PLATFORM_GRID; x++) {
-      for (let z = 0; z < PLATFORM_GRID; z++) {
-        dummy.position.set(
-          offset + x * BLOCK_SIZE,
-          0,
-          offset + z * BLOCK_SIZE,
-        );
-        dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
-        // Highlight grid lines every 8 blocks for visual texture
-        const isGridLine = x % 8 === 0 || z % 8 === 0;
-        const isCheckered = (x + z) % 2 === 0;
-        if (isGridLine) {
-          mesh.setColorAt(i, COLOR_GRID);
-        } else {
-          mesh.setColorAt(i, isCheckered ? COLOR_DARK : COLOR_MED);
-        }
-        i++;
-      }
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-
-    this.group.add(mesh);
+    const topMat = new THREE.MeshLambertMaterial({
+      map: tex,
+      color: new THREE.Color("#9aa0a8"),
+    });
+    const sideMat = new THREE.MeshLambertMaterial({
+      color: new THREE.Color("#1a1a2e"),
+    });
+    // BoxGeometry face order: +X, -X, +Y (top), -Y (bottom), +Z, -Z
+    const materials = [
+      sideMat,
+      sideMat,
+      topMat,
+      sideMat,
+      sideMat,
+      sideMat,
+    ];
+    const slab = new THREE.Mesh(slabGeom, materials);
+    slab.position.set(0, 0, 0);
+    this.group.add(slab);
   }
 
-  /** Bounds in world coordinates (post centering). */
   getBounds() {
     const half = this.size / 2;
     return {
@@ -67,7 +65,6 @@ export class Platform {
     };
   }
 
-  /** Random spawn position on top of the platform (with edge margin). */
   randomSpawn(margin = 4): THREE.Vector3 {
     const half = this.size / 2 - margin;
     return new THREE.Vector3(
