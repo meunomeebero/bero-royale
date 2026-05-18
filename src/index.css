@@ -53,8 +53,35 @@
 
     /* Voxel game palette (cool / cyber-night) */
     --game-bg: 240 50% 4%;
+    --game-panel: 240 45% 8%;
     --game-accent: 265 100% 75%;
+    --game-accent-2: 195 100% 60%;
+    --game-danger: 350 100% 65%;
+    --game-success: 145 80% 55%;
     --game-muted: 250 30% 60%;
+    --game-grid: 250 60% 50%;
+
+    /* Gradients */
+    --gradient-hud: linear-gradient(
+      135deg,
+      hsl(240 45% 8% / 0.92),
+      hsl(250 45% 6% / 0.88)
+    );
+    --gradient-accent: linear-gradient(
+      135deg,
+      hsl(265 100% 75%),
+      hsl(195 100% 60%)
+    );
+    --gradient-danger: linear-gradient(
+      135deg,
+      hsl(350 100% 65%),
+      hsl(20 100% 60%)
+    );
+
+    /* Shadows / glows */
+    --glow-accent: 0 0 24px hsl(265 100% 75% / 0.45);
+    --glow-accent-strong: 0 0 32px hsl(265 100% 75% / 0.7);
+    --glow-cyan: 0 0 20px hsl(195 100% 60% / 0.45);
   }
 
   .dark {
@@ -112,3 +139,137 @@ body,
   width: 100%;
   height: 100%;
 }
+
+/* ---------- Futuristic HUD utilities ---------- */
+@layer utilities {
+  /* Diagonal corner-cut panel (clip-path) */
+  .clip-hud {
+    clip-path: polygon(
+      14px 0,
+      100% 0,
+      100% calc(100% - 14px),
+      calc(100% - 14px) 100%,
+      0 100%,
+      0 14px
+    );
+  }
+  .clip-hud-sm {
+    clip-path: polygon(
+      8px 0,
+      100% 0,
+      100% calc(100% - 8px),
+      calc(100% - 8px) 100%,
+      0 100%,
+      0 8px
+    );
+  }
+
+  /* Scanline overlay */
+  .scanlines {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      hsl(var(--game-accent) / 0.04) 3px,
+      transparent 4px
+    );
+  }
+
+  /* Subtle vignette */
+  .vignette {
+    background: radial-gradient(
+      ellipse at center,
+      transparent 55%,
+      hsl(var(--game-bg) / 0.65) 100%
+    );
+  }
+
+  /* Animated bracket corner accents */
+  .bracket-corners::before,
+  .bracket-corners::after,
+  .bracket-corners > .br-bl,
+  .bracket-corners > .br-br {
+    content: "";
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-color: hsl(var(--game-accent));
+    pointer-events: none;
+  }
+  .bracket-corners::before {
+    top: -1px;
+    left: -1px;
+    border-top: 2px solid;
+    border-left: 2px solid;
+  }
+  .bracket-corners::after {
+    top: -1px;
+    right: -1px;
+    border-top: 2px solid;
+    border-right: 2px solid;
+  }
+  .bracket-corners > .br-bl {
+    bottom: -1px;
+    left: -1px;
+    border-bottom: 2px solid hsl(var(--game-accent));
+    border-left: 2px solid hsl(var(--game-accent));
+  }
+  .bracket-corners > .br-br {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 2px solid hsl(var(--game-accent));
+    border-right: 2px solid hsl(var(--game-accent));
+  }
+}
+
+@layer base {
+  @keyframes pulse-glow {
+    0%,
+    100% {
+      opacity: 0.6;
+      filter: drop-shadow(0 0 6px hsl(var(--game-accent) / 0.6));
+    }
+    50% {
+      opacity: 1;
+      filter: drop-shadow(0 0 14px hsl(var(--game-accent) / 0.9));
+    }
+  }
+  @keyframes hud-sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(200%);
+    }
+  }
+  @keyframes blink-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @keyframes ring-rotate {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .animate-pulse-glow {
+    animation: pulse-glow 2.2s ease-in-out infinite;
+  }
+  .animate-hud-sweep {
+    animation: hud-sweep 3.5s linear infinite;
+  }
+  .animate-blink-soft {
+    animation: blink-soft 1.6s ease-in-out infinite;
+  }
+  .animate-ring-rotate {
+    animation: ring-rotate 6s linear infinite;
+  }
+}
+

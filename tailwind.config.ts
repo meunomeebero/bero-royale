@@ -64,8 +64,13 @@ export default {
 					ring: 'hsl(var(--sidebar-ring))'
 				},
 				'game-bg': 'hsl(var(--game-bg))',
+				'game-panel': 'hsl(var(--game-panel))',
 				'game-accent': 'hsl(var(--game-accent))',
-				'game-muted': 'hsl(var(--game-muted))'
+				'game-accent-2': 'hsl(var(--game-accent-2))',
+				'game-danger': 'hsl(var(--game-danger))',
+				'game-success': 'hsl(var(--game-success))',
+				'game-muted': 'hsl(var(--game-muted))',
+				'game-grid': 'hsl(var(--game-grid))'
 			},
 			borderRadius: {
 				lg: 'var(--radius)',

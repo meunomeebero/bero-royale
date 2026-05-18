@@ -167,6 +167,9 @@ export class Game {
         elapsed: this.elapsed,
         topScore: this.topScore,
         botCount: this.bots.length,
+        health: this.player.getHealth(),
+        maxHealth: this.player.getMaxHealth(),
+        isDead: !this.player.isAlive(),
       });
     }
   }
@@ -195,6 +198,9 @@ export class Game {
   start() {
     this.clock.start();
     let lastNotifySecond = -1;
+    let lastHealth = this.player.getHealth();
+    let lastDead = !this.player.isAlive();
+    let lastBotCount = this.bots.length;
     const loop = () => {
       const dt = this.paused ? 0 : Math.min(this.clock.getDelta(), 1 / 30);
       if (!this.paused) {
@@ -222,10 +228,21 @@ export class Game {
         }
         this.wasPlayerAliveLastFrame = aliveNow;
 
-        // Notify HUD every whole second
+        // Notify on health / dead / bot-count change OR every whole second
         const sec = Math.floor(this.elapsed);
-        if (sec !== lastNotifySecond) {
+        const hp = this.player.getHealth();
+        const dead = !aliveNow;
+        const botC = this.bots.length;
+        if (
+          sec !== lastNotifySecond ||
+          hp !== lastHealth ||
+          dead !== lastDead ||
+          botC !== lastBotCount
+        ) {
           lastNotifySecond = sec;
+          lastHealth = hp;
+          lastDead = dead;
+          lastBotCount = botC;
           this.notifyStats();
         }
       } else {
@@ -270,4 +287,7 @@ export interface GameStats {
   elapsed: number;
   topScore: number;
   botCount: number;
+  health: number;
+  maxHealth: number;
+  isDead: boolean;
 }
