@@ -74,13 +74,13 @@ export class Game {
       400,
     );
 
-    // Night lighting -- very dim cool ambient + faint moon
-    const ambient = new THREE.AmbientLight(new THREE.Color("#16244a"), 0.55);
+    // Night lighting -- brighter so the map is clearly visible, still cool/blueish
+    const ambient = new THREE.AmbientLight(new THREE.Color("#7896cc"), 1.4);
     this.scene.add(ambient);
-    const moon = new THREE.DirectionalLight(new THREE.Color("#4a6cab"), 0.22);
+    const moon = new THREE.DirectionalLight(new THREE.Color("#d0deff"), 1.0);
     moon.position.set(8, 14, 6);
     this.scene.add(moon);
-    const fill = new THREE.DirectionalLight(new THREE.Color("#1a2454"), 0.15);
+    const fill = new THREE.DirectionalLight(new THREE.Color("#8aa0d8"), 0.55);
     fill.position.set(-6, 8, -4);
     this.scene.add(fill);
 
