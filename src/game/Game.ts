@@ -9,6 +9,7 @@ import { Bullets } from "./Bullets";
 import { Decor } from "./Decor";
 import { SmokePuffs } from "./SmokePuffs";
 import { FogPatches } from "./FogPatches";
+import { Rain } from "./Rain";
 import { GrassPoof } from "./GrassPoof";
 
 const INITIAL_BOTS = 3;
@@ -30,6 +31,7 @@ export class Game {
   private bullets: Bullets;
   private smoke: SmokePuffs;
   private fog: FogPatches;
+  private rain: Rain;
   private grassPoof: GrassPoof;
   private platform: Platform;
   private player: Player;
@@ -116,6 +118,8 @@ export class Game {
     this.scene.add(this.smoke.group);
     this.scene.add(this.grassPoof.group);
     this.scene.add(this.fog.group);
+    this.rain = new Rain(this.platform.size / 2);
+    this.scene.add(this.rain.mesh);
     this.scene.add(this.player.root);
 
     // Load top score
@@ -238,6 +242,7 @@ export class Game {
         this.smoke.update(dt);
         this.grassPoof.update(dt);
         this.fog.update(dt);
+        this.rain.update(dt);
 
         // Lava hazard collision (player + bots): must be touching the ground
         if (
@@ -332,6 +337,7 @@ export class Game {
     this.smoke.dispose();
     this.grassPoof.dispose();
     this.fog.dispose();
+    this.rain.dispose();
     this.player.dispose();
     this.clearBots();
     this.renderer.dispose();
