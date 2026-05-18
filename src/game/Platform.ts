@@ -4,8 +4,10 @@ const PLATFORM_GRID = 80; // 80 x 80 = 6400 blocks (10x larger than the original
 const BLOCK_SIZE = 0.5;
 const BLOCK_HEIGHT = 0.25;
 
-const COLOR_DARK = new THREE.Color("#0d0d2b");
-const COLOR_MED = new THREE.Color("#1a1a3e");
+// Much brighter, more saturated tiles so the platform reads against the dark sky.
+const COLOR_DARK = new THREE.Color("#2a2570");
+const COLOR_MED = new THREE.Color("#3a3590");
+const COLOR_GRID = new THREE.Color("#9b6bff"); // accent line color every 8 blocks
 
 export class Platform {
   readonly group: THREE.Group;
@@ -37,8 +39,14 @@ export class Platform {
         );
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
+        // Highlight grid lines every 8 blocks for visual texture
+        const isGridLine = x % 8 === 0 || z % 8 === 0;
         const isCheckered = (x + z) % 2 === 0;
-        mesh.setColorAt(i, isCheckered ? COLOR_DARK : COLOR_MED);
+        if (isGridLine) {
+          mesh.setColorAt(i, COLOR_GRID);
+        } else {
+          mesh.setColorAt(i, isCheckered ? COLOR_DARK : COLOR_MED);
+        }
         i++;
       }
     }

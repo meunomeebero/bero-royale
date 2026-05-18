@@ -66,11 +66,14 @@ export class Game {
     );
 
     // Lights
-    const ambient = new THREE.AmbientLight(new THREE.Color("#1a1a4e"), 0.7);
+    const ambient = new THREE.AmbientLight(new THREE.Color("#5a5aaa"), 1.0);
     this.scene.add(ambient);
-    const dir = new THREE.DirectionalLight(new THREE.Color("#6644ff"), 1.2);
+    const dir = new THREE.DirectionalLight(new THREE.Color("#ffffff"), 1.4);
     dir.position.set(8, 14, 6);
     this.scene.add(dir);
+    const fill = new THREE.DirectionalLight(new THREE.Color("#8888ff"), 0.5);
+    fill.position.set(-6, 8, -4);
+    this.scene.add(fill);
 
     // Game objects
     this.audio = new AudioManager();
