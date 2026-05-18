@@ -21,7 +21,7 @@ export class FogPatches {
   private elapsed = 0;
   private geom: THREE.BoxGeometry;
 
-  constructor(mapHalfSize: number, count = 140) {
+  constructor(mapHalfSize: number, count = 35) {
     this.group = new THREE.Group();
     this.mapHalf = mapHalfSize;
 
