@@ -115,7 +115,8 @@ export class Player implements BulletTarget {
       color: new THREE.Color("#ffe39a"),
     });
     this.lantern = new THREE.Mesh(lanternGeom, lanternMat);
-    this.lantern.position.set(0.05, 0.02, 0.32);
+    // Held high on the opposite side of the gun, like raising a lamp overhead
+    this.lantern.position.set(-0.34, 0.42, 0.05);
     this.aimGroup.add(this.lantern);
 
     // Light source emitting from the lantern, illuminating the player area

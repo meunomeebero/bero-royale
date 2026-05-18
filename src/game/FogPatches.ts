@@ -19,7 +19,7 @@ export class FogPatches {
   private mapHalf: number;
   private elapsed = 0;
 
-  constructor(mapHalfSize: number, count = 10) {
+  constructor(mapHalfSize: number, count = 22) {
     this.group = new THREE.Group();
     this.mapHalf = mapHalfSize;
 
@@ -27,22 +27,24 @@ export class FogPatches {
     for (let i = 0; i < count; i++) {
       const mat = new THREE.SpriteMaterial({
         map: texture,
-        color: new THREE.Color("#9ec2ff"),
+        // Slightly cool off-white so it reads as moonlit mist, not blue smoke
+        color: new THREE.Color("#e6ecff"),
         transparent: true,
-        opacity: 0.05 + Math.random() * 0.06,
+        // Very faint -- just a spooky veil, never blocks visibility
+        opacity: 0.04 + Math.random() * 0.05,
         depthWrite: false,
         blending: THREE.NormalBlending,
       });
       const sprite = new THREE.Sprite(mat);
-      const size = 5 + Math.random() * 5;
-      sprite.scale.set(size, size * 0.5, 1);
+      const size = 6 + Math.random() * 6;
+      sprite.scale.set(size, size * 0.45, 1);
       sprite.position.set(
         (Math.random() * 2 - 1) * mapHalfSize,
-        0.7 + Math.random() * 0.6,
+        0.6 + Math.random() * 0.9,
         (Math.random() * 2 - 1) * mapHalfSize,
       );
       const ang = Math.random() * Math.PI * 2;
-      const speed = 0.15 + Math.random() * 0.25;
+      const speed = 0.25 + Math.random() * 0.4;
       this.patches.push({
         mesh: sprite,
         velocity: new THREE.Vector3(
