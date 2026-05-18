@@ -21,12 +21,12 @@ export class FogPatches {
   private elapsed = 0;
   private geom: THREE.BoxGeometry;
 
-  constructor(mapHalfSize: number, count = 90) {
+  constructor(mapHalfSize: number, count = 140) {
     this.group = new THREE.Group();
     this.mapHalf = mapHalfSize;
 
-    // A flat-ish cube so it reads as a horizontal puff hovering over the ground
-    this.geom = new THREE.BoxGeometry(0.6, 0.35, 0.6);
+    // A flat, wide cube so it reads as a big horizontal puff hovering over the ground
+    this.geom = new THREE.BoxGeometry(1.6, 0.5, 1.6);
 
     for (let i = 0; i < count; i++) {
       const opacity = 0.06 + Math.random() * 0.07;
@@ -37,9 +37,9 @@ export class FogPatches {
         depthWrite: false,
       });
       const mesh = new THREE.Mesh(this.geom, mat);
-      // Vary the cube size so the haze looks more organic
-      const scale = 0.8 + Math.random() * 2.2;
-      mesh.scale.set(scale, 0.6 + Math.random() * 0.4, scale);
+      // Vary the cube size so the haze looks more organic -- now much chunkier
+      const scale = 2.4 + Math.random() * 4.2;
+      mesh.scale.set(scale, 0.7 + Math.random() * 0.5, scale);
       const baseY = 0.6 + Math.random() * 1.1;
       mesh.position.set(
         (Math.random() * 2 - 1) * mapHalfSize,
