@@ -2,8 +2,8 @@ import * as THREE from "three";
 import type { Platform } from "./Platform";
 
 /**
- * Voxel street props scattered around the map: trash cans, garbage bags,
- * wooden crates and small debris. Pure decoration (no collision).
+ * Forest props scattered around the map: pine trees, oak trees, stumps and
+ * small bushes / rocks. Pure decoration (no collision).
  */
 export class Decor {
   readonly group: THREE.Group;
@@ -11,36 +11,48 @@ export class Decor {
   constructor(platform: Platform, seed = 12345) {
     this.group = new THREE.Group();
     const bounds = platform.getBounds();
-    const baseY = platform.topY;
     const rand = mulberry32(seed);
 
-    const TOTAL = 90;
+    const TOTAL = 130;
     let placed = 0;
     let attempts = 0;
     while (placed < TOTAL && attempts < TOTAL * 8) {
       attempts++;
       const x = bounds.minX + rand() * (bounds.maxX - bounds.minX);
       const z = bounds.minZ + rand() * (bounds.maxZ - bounds.minZ);
-      // Keep props on the sidewalks (and a small margin from the edge)
-      if (!platform.isOnSidewalk(x, z)) continue;
+      // Keep props off lava and away from the very edge
+      if (!platform.isOnGrass(x, z)) continue;
+      if (platform.isHill(x, z)) continue; // avoid covering hills
       if (
-        x < bounds.minX + 0.5 ||
-        x > bounds.maxX - 0.5 ||
-        z < bounds.minZ + 0.5 ||
-        z > bounds.maxZ - 0.5
+        x < bounds.minX + 0.6 ||
+        x > bounds.maxX - 0.6 ||
+        z < bounds.minZ + 0.6 ||
+        z > bounds.maxZ - 0.6
       ) {
         continue;
       }
+      // Don't cluster: skip if next to lava
+      if (
+        platform.isLavaAt(x + 0.5, z) ||
+        platform.isLavaAt(x - 0.5, z) ||
+        platform.isLavaAt(x, z + 0.5) ||
+        platform.isLavaAt(x, z - 0.5)
+      ) {
+        continue;
+      }
+      const baseY = platform.surfaceY(x, z);
       const pick = rand();
       let prop: THREE.Object3D;
-      if (pick < 0.35) {
-        prop = makeTrashCan(rand);
-      } else if (pick < 0.6) {
-        prop = makeGarbageBag(rand);
+      if (pick < 0.45) {
+        prop = makePineTree(rand);
+      } else if (pick < 0.7) {
+        prop = makeOakTree(rand);
       } else if (pick < 0.85) {
-        prop = makeCrate(rand);
+        prop = makeBush(rand);
+      } else if (pick < 0.95) {
+        prop = makeRock(rand);
       } else {
-        prop = makeDebris(rand);
+        prop = makeStump(rand);
       }
       prop.position.set(x, baseY, z);
       prop.rotation.y = rand() * Math.PI * 2;
@@ -59,123 +71,158 @@ function mulberry32(a: number) {
   };
 }
 
+// --- Materials (night-forest palette: dark wood + bluish-teal foliage) ----
+
+const TRUNK_MAT = new THREE.MeshLambertMaterial({
+  color: new THREE.Color("#2a1a10"),
+});
+const TRUNK_DARK_MAT = new THREE.MeshLambertMaterial({
+  color: new THREE.Color("#1a0e08"),
+});
+
+const FOLIAGE_MATS = [
+  new THREE.MeshLambertMaterial({ color: new THREE.Color("#1e3e3a") }),
+  new THREE.MeshLambertMaterial({ color: new THREE.Color("#264a4a") }),
+  new THREE.MeshLambertMaterial({ color: new THREE.Color("#15302e") }),
+  new THREE.MeshLambertMaterial({ color: new THREE.Color("#2a5a52") }),
+];
+
+const ROCK_MATS = [
+  new THREE.MeshLambertMaterial({ color: new THREE.Color("#3a3a44") }),
+  new THREE.MeshLambertMaterial({ color: new THREE.Color("#26262e") }),
+];
+
 // --- Prop builders -------------------------------------------------------
 
-const CAN_BODY_MAT = new THREE.MeshLambertMaterial({
-  color: new THREE.Color("#3a3a40"),
-});
-const CAN_TOP_MAT = new THREE.MeshLambertMaterial({
-  color: new THREE.Color("#23232a"),
-});
-const CAN_RUST_MAT = new THREE.MeshLambertMaterial({
-  color: new THREE.Color("#5a3a25"),
-});
-
-function makeTrashCan(rand: () => number): THREE.Group {
+function makePineTree(rand: () => number): THREE.Group {
   const g = new THREE.Group();
-  const rusty = rand() < 0.4;
-  const bodyMat = rusty ? CAN_RUST_MAT : CAN_BODY_MAT;
-  // Body: 3 stacked thin slabs to give that voxel "barrel" feel
-  const w = 0.32;
-  const segH = 0.18;
-  for (let i = 0; i < 3; i++) {
-    const seg = new THREE.Mesh(
-      new THREE.BoxGeometry(w, segH, w),
-      bodyMat,
-    );
-    seg.position.y = segH / 2 + i * segH;
-    g.add(seg);
-  }
-  // Lid
-  const lid = new THREE.Mesh(
-    new THREE.BoxGeometry(w + 0.04, 0.05, w + 0.04),
-    CAN_TOP_MAT,
+  // Trunk: 2-3 stacked thin cubes
+  const trunkH = 0.4 + rand() * 0.25;
+  const trunkW = 0.12;
+  const trunk = new THREE.Mesh(
+    new THREE.BoxGeometry(trunkW, trunkH, trunkW),
+    TRUNK_MAT,
   );
-  lid.position.y = segH * 3 + 0.025;
-  // Sometimes tilt the lid like it's loose
-  if (rand() < 0.5) lid.rotation.z = (rand() - 0.5) * 0.6;
-  g.add(lid);
+  trunk.position.y = trunkH / 2;
+  g.add(trunk);
+  // Foliage: 3-4 stacked diminishing voxel slabs
+  const layers = 3 + Math.floor(rand() * 2);
+  const baseSize = 0.55 + rand() * 0.15;
+  const layerH = 0.22;
+  for (let i = 0; i < layers; i++) {
+    const s = baseSize * (1 - i * 0.18);
+    const mat = FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)];
+    const leaves = new THREE.Mesh(
+      new THREE.BoxGeometry(s, layerH, s),
+      mat,
+    );
+    leaves.position.y = trunkH + layerH / 2 + i * layerH * 0.9;
+    g.add(leaves);
+  }
   return g;
 }
 
-const BAG_MATS = [
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#181820") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#1f1f28") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#2a221a") }),
-];
-
-function makeGarbageBag(rand: () => number): THREE.Group {
+function makeOakTree(rand: () => number): THREE.Group {
   const g = new THREE.Group();
-  const mat = BAG_MATS[Math.floor(rand() * BAG_MATS.length)];
-  const w = 0.32 + rand() * 0.18;
-  const h = 0.25 + rand() * 0.15;
-  // Lumpy bag = 1 main blob + a couple smaller blobs glued on
-  const main = new THREE.Mesh(new THREE.BoxGeometry(w, h, w * 0.9), mat);
-  main.position.y = h / 2;
-  g.add(main);
-  for (let i = 0; i < 2; i++) {
-    const s = 0.12 + rand() * 0.1;
-    const lump = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), mat);
+  const trunkH = 0.45 + rand() * 0.2;
+  const trunk = new THREE.Mesh(
+    new THREE.BoxGeometry(0.16, trunkH, 0.16),
+    TRUNK_MAT,
+  );
+  trunk.position.y = trunkH / 2;
+  g.add(trunk);
+  // Wide leafy crown: 1 big cube + 4 smaller cubes around it
+  const cw = 0.7;
+  const mat = FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)];
+  const crown = new THREE.Mesh(
+    new THREE.BoxGeometry(cw, 0.45, cw),
+    mat,
+  );
+  crown.position.y = trunkH + 0.22;
+  g.add(crown);
+  for (let i = 0; i < 4; i++) {
+    const ang = (i / 4) * Math.PI * 2;
+    const m = FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)];
+    const lump = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.28, 0.32), m);
     lump.position.set(
-      (rand() - 0.5) * w * 0.6,
-      h * 0.6 + (rand() - 0.5) * 0.1,
-      (rand() - 0.5) * w * 0.6,
+      Math.cos(ang) * 0.3,
+      trunkH + 0.18 + (rand() - 0.5) * 0.1,
+      Math.sin(ang) * 0.3,
     );
-    lump.rotation.set(rand() * 0.4, rand() * 0.8, rand() * 0.4);
     g.add(lump);
   }
   return g;
 }
 
-const CRATE_MAT = new THREE.MeshLambertMaterial({
-  color: new THREE.Color("#6a3f1f"),
-});
-const CRATE_DARK_MAT = new THREE.MeshLambertMaterial({
-  color: new THREE.Color("#3e2511"),
-});
-
-function makeCrate(rand: () => number): THREE.Group {
+function makeBush(rand: () => number): THREE.Group {
   const g = new THREE.Group();
-  const s = 0.32 + rand() * 0.1;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), CRATE_MAT);
-  body.position.y = s / 2;
-  g.add(body);
-  // Plank highlights on top edges (just thin dark slats)
-  const slat = new THREE.Mesh(
-    new THREE.BoxGeometry(s + 0.02, 0.04, 0.04),
-    CRATE_DARK_MAT,
+  const s = 0.24 + rand() * 0.16;
+  const main = new THREE.Mesh(
+    new THREE.BoxGeometry(s, s, s),
+    FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)],
   );
-  slat.position.y = s - 0.03;
-  g.add(slat);
-  const slat2 = slat.clone();
-  slat2.rotation.y = Math.PI / 2;
-  g.add(slat2);
-  // Random tilt for abandoned look
-  g.rotation.z = (rand() - 0.5) * 0.25;
+  main.position.y = s / 2;
+  g.add(main);
+  // Couple of smaller leafy lumps
+  for (let i = 0; i < 2; i++) {
+    const ss = 0.12 + rand() * 0.1;
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(ss, ss, ss),
+      FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)],
+    );
+    m.position.set(
+      (rand() - 0.5) * s * 0.7,
+      ss / 2 + (rand() - 0.5) * 0.05,
+      (rand() - 0.5) * s * 0.7,
+    );
+    g.add(m);
+  }
   return g;
 }
 
-const DEBRIS_MATS = [
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#5a5a60") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#3a4a3a") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#7a3a30") }),
-];
-
-function makeDebris(rand: () => number): THREE.Group {
+function makeRock(rand: () => number): THREE.Group {
   const g = new THREE.Group();
-  // A small pile of 3-5 tiny voxels (rubble / cans / cardboard)
-  const count = 3 + Math.floor(rand() * 3);
-  for (let i = 0; i < count; i++) {
-    const s = 0.06 + rand() * 0.1;
-    const mat = DEBRIS_MATS[Math.floor(rand() * DEBRIS_MATS.length)];
-    const cube = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), mat);
-    cube.position.set(
-      (rand() - 0.5) * 0.3,
-      s / 2,
-      (rand() - 0.5) * 0.3,
+  const s = 0.18 + rand() * 0.18;
+  const mat = ROCK_MATS[Math.floor(rand() * ROCK_MATS.length)];
+  const main = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.7, s), mat);
+  main.position.y = (s * 0.7) / 2;
+  g.add(main);
+  if (rand() < 0.6) {
+    const m2 = ROCK_MATS[Math.floor(rand() * ROCK_MATS.length)];
+    const pebble = new THREE.Mesh(
+      new THREE.BoxGeometry(s * 0.5, s * 0.4, s * 0.5),
+      m2,
     );
-    cube.rotation.y = rand() * Math.PI;
-    g.add(cube);
+    pebble.position.set(s * 0.45, (s * 0.4) / 2, (rand() - 0.5) * s);
+    g.add(pebble);
+  }
+  g.rotation.y = rand() * Math.PI * 2;
+  return g;
+}
+
+function makeStump(rand: () => number): THREE.Group {
+  const g = new THREE.Group();
+  const stump = new THREE.Mesh(
+    new THREE.BoxGeometry(0.28, 0.2, 0.28),
+    TRUNK_MAT,
+  );
+  stump.position.y = 0.1;
+  g.add(stump);
+  // Dark "rings" on top
+  const top = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.04, 0.3),
+    TRUNK_DARK_MAT,
+  );
+  top.position.y = 0.22;
+  g.add(top);
+  if (rand() < 0.4) {
+    // moss / leaves on top
+    const moss = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.06, 0.14),
+      FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)],
+    );
+    moss.position.set(0, 0.27, 0);
+    g.add(moss);
   }
   return g;
 }

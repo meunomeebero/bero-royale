@@ -8,6 +8,8 @@ import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
 import { Decor } from "./Decor";
 import { SmokePuffs } from "./SmokePuffs";
+import { FogPatches } from "./FogPatches";
+import { GrassPoof } from "./GrassPoof";
 
 const INITIAL_BOTS = 3;
 const NEW_BOT_EVERY_SECONDS = 60;
@@ -27,6 +29,8 @@ export class Game {
   private dust: DustParticles;
   private bullets: Bullets;
   private smoke: SmokePuffs;
+  private fog: FogPatches;
+  private grassPoof: GrassPoof;
   private platform: Platform;
   private player: Player;
   private bots: Bot[] = [];
@@ -52,11 +56,13 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setClearColor(new THREE.Color("#060610"), 1);
+    this.renderer.setClearColor(new THREE.Color("#03060f"), 1);
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color("#060610");
+    this.scene.background = new THREE.Color("#03060f");
+    // Distant fog -- blue night atmosphere
+    this.scene.fog = new THREE.Fog(new THREE.Color("#0a1428"), 14, 38);
 
     const aspect = container.clientWidth / container.clientHeight;
     this.camera = new THREE.OrthographicCamera(
@@ -68,13 +74,13 @@ export class Game {
       400,
     );
 
-    // Lights
-    const ambient = new THREE.AmbientLight(new THREE.Color("#5a5aaa"), 1.0);
+    // Night lighting -- very dim cool ambient + faint moon
+    const ambient = new THREE.AmbientLight(new THREE.Color("#16244a"), 0.55);
     this.scene.add(ambient);
-    const dir = new THREE.DirectionalLight(new THREE.Color("#ffffff"), 1.4);
-    dir.position.set(8, 14, 6);
-    this.scene.add(dir);
-    const fill = new THREE.DirectionalLight(new THREE.Color("#8888ff"), 0.5);
+    const moon = new THREE.DirectionalLight(new THREE.Color("#4a6cab"), 0.22);
+    moon.position.set(8, 14, 6);
+    this.scene.add(moon);
+    const fill = new THREE.DirectionalLight(new THREE.Color("#1a2454"), 0.15);
     fill.position.set(-6, 8, -4);
     this.scene.add(fill);
 
@@ -84,7 +90,9 @@ export class Game {
     this.dust = new DustParticles();
     this.bullets = new Bullets();
     this.smoke = new SmokePuffs();
+    this.grassPoof = new GrassPoof();
     this.platform = new Platform();
+    this.fog = new FogPatches(this.platform.size / 2);
     this.player = new Player(
       this.platform,
       this.input,
@@ -93,6 +101,7 @@ export class Game {
       this.bullets,
     );
     this.player.setSmoke(this.smoke);
+    this.player.setGrassPoof(this.grassPoof);
     this.bullets.registerTarget(this.player);
 
     this.scene.add(this.platform.group);
@@ -101,6 +110,8 @@ export class Game {
     this.scene.add(this.dust.group);
     this.scene.add(this.bullets.group);
     this.scene.add(this.smoke.group);
+    this.scene.add(this.grassPoof.group);
+    this.scene.add(this.fog.group);
     this.scene.add(this.player.root);
 
     // Load top score
@@ -221,6 +232,8 @@ export class Game {
         this.dust.update(dt);
         this.bullets.update(dt);
         this.smoke.update(dt);
+        this.grassPoof.update(dt);
+        this.fog.update(dt);
 
         // Lava hazard collision (player + bots): must be touching the ground
         if (
@@ -313,6 +326,8 @@ export class Game {
     this.dust.dispose();
     this.bullets.dispose();
     this.smoke.dispose();
+    this.grassPoof.dispose();
+    this.fog.dispose();
     this.player.dispose();
     this.clearBots();
     this.renderer.dispose();

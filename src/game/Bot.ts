@@ -167,7 +167,7 @@ export class Bot implements BulletTarget {
 
   private respawn() {
     const spawn = this.platform.randomSpawn(6);
-    spawn.y = this.platform.topY + BOT_SIZE / 2;
+    spawn.y = this.platform.surfaceY(spawn.x, spawn.z) + BOT_SIZE / 2;
     this.root.position.copy(spawn);
     this.velocity.set(0, 0, 0);
     this.body.scale.set(1, 1, 1);
@@ -305,7 +305,11 @@ export class Bot implements BulletTarget {
     this.root.position.addScaledVector(this.velocity, dt);
 
     // Ground collision / edge
-    const groundY = this.platform.topY + BOT_SIZE / 2;
+    const groundSurfY = this.platform.surfaceY(
+      this.root.position.x,
+      this.root.position.z,
+    );
+    const groundY = groundSurfY + BOT_SIZE / 2;
     const bounds = this.platform.getBounds();
     const safeMargin = 1.5;
     const onPlatform =

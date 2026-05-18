@@ -123,19 +123,18 @@ function toTexture(ctx: CanvasRenderingContext2D): THREE.CanvasTexture {
 function makeDirtTexture(seed = 1): THREE.CanvasTexture {
   const ctx = newCanvas();
   paintNoise(ctx, {
-    base: "#7a4a2b",
-    light: "#9a6438",
-    dark: "#52311a",
-    accent: "#3b2412",
+    base: "#3a2618",
+    light: "#56371f",
+    dark: "#26180e",
+    accent: "#1c100a",
     lightChance: 0.16,
     darkChance: 0.2,
     accentChance: 0.08,
-    noise: 14,
+    noise: 12,
     seed,
   });
-  // scatter a few darker "pebbles"
   const r = rng(seed + 99);
-  ctx.fillStyle = "#3b2412";
+  ctx.fillStyle = "#1c100a";
   for (let i = 0; i < 4; i++) {
     const x = Math.floor(r() * TILE_SIZE);
     const y = Math.floor(r() * TILE_SIZE);
@@ -146,39 +145,41 @@ function makeDirtTexture(seed = 1): THREE.CanvasTexture {
 
 function makeGrassTopTexture(seed = 2): THREE.CanvasTexture {
   const ctx = newCanvas();
+  // Deep moonlit teal-grass. Very low contrast so directional light doesn't
+  // wash the lighter pixels into white.
   paintNoise(ctx, {
-    base: "#5d8a3a",
-    light: "#7caf4d",
-    dark: "#3f6224",
-    accent: "#a3c265",
-    lightChance: 0.22,
-    darkChance: 0.2,
+    base: "#143a30",
+    light: "#1a4a3c",
+    dark: "#0a2520",
+    accent: "#1f5a48",
+    lightChance: 0.18,
+    darkChance: 0.22,
     accentChance: 0.05,
-    noise: 12,
+    noise: 4,
     seed,
   });
   return toTexture(ctx);
 }
 
-/** Grass side: dirt with a green grass fringe along the TOP edge. */
+/** Grass side: dirt with a bluish-green grass fringe along the TOP edge. */
 function makeGrassSideTexture(seed = 3): THREE.CanvasTexture {
   const ctx = newCanvas();
   paintNoise(ctx, {
-    base: "#7a4a2b",
-    light: "#9a6438",
-    dark: "#52311a",
-    accent: "#3b2412",
+    base: "#3a2618",
+    light: "#56371f",
+    dark: "#26180e",
+    accent: "#1c100a",
     lightChance: 0.16,
     darkChance: 0.2,
     accentChance: 0.08,
-    noise: 14,
+    noise: 12,
     seed,
   });
-  // Paint the top 3-4 rows of pixels as a grass fringe with a jagged bottom edge
+  // Paint the top 3-4 rows as a bluish-green grass fringe
   const r = rng(seed + 7);
-  const greens = ["#5d8a3a", "#7caf4d", "#3f6224", "#a3c265"];
+  const greens = ["#143a30", "#1a4a3c", "#0a2520", "#1f5a48"];
   for (let x = 0; x < TILE_SIZE; x++) {
-    const fringe = 3 + (r() < 0.4 ? 1 : 0); // 3 or 4 pixels tall
+    const fringe = 3 + (r() < 0.4 ? 1 : 0);
     for (let y = 0; y < fringe; y++) {
       ctx.fillStyle = greens[Math.floor(r() * greens.length)];
       ctx.fillRect(x, y, 1, 1);
@@ -323,8 +324,7 @@ function makeLavaRockTexture(seed = 9): THREE.CanvasTexture {
     lightChance: 0.14,
     darkChance: 0.22,
     accentChance: 0.06,
-    noise: 10,
-    seed,
+    noise: 10,    seed,
   });
   return toTexture(ctx);
 }

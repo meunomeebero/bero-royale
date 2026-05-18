@@ -5,6 +5,7 @@ import type { AudioManager } from "./AudioManager";
 import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
 import type { SmokePuffs } from "./SmokePuffs";
+import type { GrassPoof } from "./GrassPoof";
 
 const PLAYER_SIZE = 0.5;
 const MOVE_SPEED = 6.5;
@@ -33,11 +34,12 @@ export class Player implements BulletTarget {
   readonly side = "player" as const;
   readonly bodyHalfHeight = PLAYER_SIZE / 2;
 
-  /** Root object: holds the body cube + shield + gun. */
+  /** Root object: holds the body cube + lantern + gun. */
   readonly root: THREE.Group;
   private body: THREE.Mesh;
   private aimGroup: THREE.Group;
-  private shield: THREE.Mesh;
+  private lantern: THREE.Mesh;
+  private lanternLight: THREE.PointLight;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
 
@@ -47,6 +49,9 @@ export class Player implements BulletTarget {
   private dust: DustParticles;
   private bullets: Bullets;
   private smoke: SmokePuffs | null = null;
+  private grassPoof: GrassPoof | null = null;
+  private stepTimer = 0;
+  private lanternFlicker = 0;
 
   private velocity = new THREE.Vector3(0, 0, 0);
   private grounded = true;
@@ -104,15 +109,24 @@ export class Player implements BulletTarget {
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
 
-    const shieldGeom = new THREE.BoxGeometry(0.06, 0.36, 0.28);
-    const shieldMat = new THREE.MeshLambertMaterial({
-      color: new THREE.Color("#5a5e63"),
-      emissive: new THREE.Color("#2a2d31"),
-      emissiveIntensity: 0.25,
+    // Lantern: a small glowing cube held in the off-hand
+    const lanternGeom = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+    const lanternMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color("#ffe39a"),
     });
-    this.shield = new THREE.Mesh(shieldGeom, shieldMat);
-    this.shield.position.set(0.08, 0, 0.32);
-    this.aimGroup.add(this.shield);
+    this.lantern = new THREE.Mesh(lanternGeom, lanternMat);
+    this.lantern.position.set(0.05, 0.02, 0.32);
+    this.aimGroup.add(this.lantern);
+
+    // Light source emitting from the lantern, illuminating the player area
+    this.lanternLight = new THREE.PointLight(
+      new THREE.Color("#ffd680"),
+      2.2,
+      6.5, // range
+      1.6, // physical falloff
+    );
+    this.lanternLight.position.set(0, 0.1, 0);
+    this.lantern.add(this.lanternLight);
 
     this.gun = new THREE.Group();
     const gunBodyGeom = new THREE.BoxGeometry(0.18, 0.14, 0.12);
@@ -161,6 +175,10 @@ export class Player implements BulletTarget {
 
   setSmoke(smoke: SmokePuffs) {
     this.smoke = smoke;
+  }
+
+  setGrassPoof(g: GrassPoof) {
+    this.grassPoof = g;
   }
 
   /** Force-kill the player (used by environmental hazards like lava). */
@@ -220,7 +238,7 @@ export class Player implements BulletTarget {
 
   private respawn() {
     const spawn = this.platform.randomSpawn(4);
-    spawn.y = this.platform.topY + PLAYER_SIZE / 2;
+    spawn.y = this.platform.surfaceY(spawn.x, spawn.z) + PLAYER_SIZE / 2;
     this.root.position.copy(spawn);
     this.root.rotation.set(0, 0, 0);
     this.root.scale.set(1, 1, 1);
@@ -336,6 +354,20 @@ export class Player implements BulletTarget {
       this.grounded = false;
       this.audio.jump();
       this.targetScale.set(0.7, 1.4, 0.7);
+      // Grass puff when jumping
+      if (this.grassPoof) {
+        const sy = this.platform.surfaceY(
+          this.root.position.x,
+          this.root.position.z,
+        );
+        if (!this.platform.isLavaAt(this.root.position.x, this.root.position.z)) {
+          this.grassPoof.spawn(
+            new THREE.Vector3(this.root.position.x, sy, this.root.position.z),
+            6,
+            null,
+          );
+        }
+      }
     } else {
       this.input.consumeJump();
     }
@@ -357,7 +389,11 @@ export class Player implements BulletTarget {
     this.root.position.addScaledVector(this.velocity, dt);
 
     // Ground / death-by-edge
-    const groundY = this.platform.topY + PLAYER_SIZE / 2;
+    const groundSurfaceY = this.platform.surfaceY(
+      this.root.position.x,
+      this.root.position.z,
+    );
+    const groundY = groundSurfaceY + PLAYER_SIZE / 2;
     const bounds = this.platform.getBounds();
     const onPlatform =
       this.root.position.x >= bounds.minX &&
@@ -375,10 +411,18 @@ export class Player implements BulletTarget {
         this.targetScale.set(1.4, 0.6, 1.4);
         const dustPos = new THREE.Vector3(
           this.root.position.x,
-          this.platform.topY + 0.02,
+          groundSurfaceY + 0.02,
           this.root.position.z,
         );
         this.dust.spawnBurst(dustPos, 10);
+        // Burst of grass blades on landing
+        if (this.grassPoof && !this.platform.isLavaAt(this.root.position.x, this.root.position.z)) {
+          this.grassPoof.spawn(
+            new THREE.Vector3(this.root.position.x, groundSurfaceY, this.root.position.z),
+            8,
+            null,
+          );
+        }
       }
     } else if (!onPlatform && this.root.position.y < this.platform.topY) {
       // Fell off the edge: trigger fall + die
@@ -386,7 +430,6 @@ export class Player implements BulletTarget {
         this.state = "falling";
         this.audio.fall();
         this.grounded = false;
-        // Still count as a death so respawn timing applies via the falling state.
       }
     } else {
       this.grounded = false;
@@ -439,6 +482,40 @@ export class Player implements BulletTarget {
     this.gunRecoil += (0 - this.gunRecoil) * Math.min(1, 18 * dt);
     this.gun.position.x = this.gunBaseX - this.gunRecoil;
 
+    // Footstep sound + grass particles while walking on ground
+    const speedXY = Math.hypot(this.velocity.x, this.velocity.z);
+    if (this.grounded && speedXY > 0.6) {
+      this.stepTimer -= dt * (0.7 + speedXY * 0.18);
+      if (this.stepTimer <= 0) {
+        this.stepTimer = 0.32; // base cadence
+        this.audio.step();
+        if (
+          this.grassPoof &&
+          !this.platform.isLavaAt(this.root.position.x, this.root.position.z)
+        ) {
+          const sy = this.platform.surfaceY(
+            this.root.position.x,
+            this.root.position.z,
+          );
+          const dir = new THREE.Vector3(this.velocity.x, 0, this.velocity.z);
+          this.grassPoof.spawn(
+            new THREE.Vector3(this.root.position.x, sy, this.root.position.z),
+            2,
+            dir,
+          );
+        }
+      }
+    } else {
+      this.stepTimer = 0;
+    }
+
+    // Lantern flicker -- subtle intensity wobble
+    this.lanternFlicker += dt;
+    const flicker =
+      2.0 + Math.sin(this.lanternFlicker * 12) * 0.18 +
+      (Math.random() - 0.5) * 0.15;
+    this.lanternLight.intensity = flicker;
+
     // Sync exposed position for BulletTarget
     this.position.copy(this.root.position);
   }
@@ -461,8 +538,8 @@ export class Player implements BulletTarget {
   dispose() {
     this.bodyMaterial.dispose();
     (this.body.geometry as THREE.BufferGeometry).dispose();
-    this.shield.geometry.dispose();
-    (this.shield.material as THREE.Material).dispose();
+    this.lantern.geometry.dispose();
+    (this.lantern.material as THREE.Material).dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();

@@ -76,6 +76,24 @@ export class AudioManager {
     this.blip(110, 30, 700, "square", 0.06);
   }
 
+  /** Soft grass-step blip. Pitch is randomised slightly so steps don't sound robotic. */
+  step() {
+    const ctx = this.getCtx();
+    const now = ctx.currentTime;
+    const dur = 0.05;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    const base = 180 + Math.random() * 80;
+    osc.frequency.setValueAtTime(base, now);
+    osc.frequency.exponentialRampToValueAtTime(base * 0.5, now + dur);
+    gain.gain.setValueAtTime(0.025, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + dur);
+  }
+
   dispose() {
     if (this.ctx) {
       void this.ctx.close();
