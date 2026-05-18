@@ -34,12 +34,10 @@ export class Player implements BulletTarget {
   readonly side = "player" as const;
   readonly bodyHalfHeight = PLAYER_SIZE / 2;
 
-  /** Root object: holds the body cube + lantern + gun. */
+  /** Root object: holds the body cube + gun. */
   readonly root: THREE.Group;
   private body: THREE.Mesh;
   private aimGroup: THREE.Group;
-  private lantern: THREE.Mesh;
-  private lanternLight: THREE.PointLight;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
 
@@ -51,7 +49,6 @@ export class Player implements BulletTarget {
   private smoke: SmokePuffs | null = null;
   private grassPoof: GrassPoof | null = null;
   private stepTimer = 0;
-  private lanternFlicker = 0;
 
   private velocity = new THREE.Vector3(0, 0, 0);
   private grounded = true;
@@ -108,26 +105,6 @@ export class Player implements BulletTarget {
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
-
-    // Lantern: a small glowing cube held in the off-hand
-    const lanternGeom = new THREE.BoxGeometry(0.18, 0.18, 0.18);
-    const lanternMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color("#ffe39a"),
-    });
-    this.lantern = new THREE.Mesh(lanternGeom, lanternMat);
-    // Held high on the opposite side of the gun, like raising a lamp overhead
-    this.lantern.position.set(-0.34, 0.42, 0.05);
-    this.aimGroup.add(this.lantern);
-
-    // Light source emitting from the lantern, illuminating the player area
-    this.lanternLight = new THREE.PointLight(
-      new THREE.Color("#ffd680"),
-      2.2,
-      6.5, // range
-      1.6, // physical falloff
-    );
-    this.lanternLight.position.set(0, 0.1, 0);
-    this.lantern.add(this.lanternLight);
 
     this.gun = new THREE.Group();
     const gunBodyGeom = new THREE.BoxGeometry(0.18, 0.14, 0.12);
@@ -510,13 +487,6 @@ export class Player implements BulletTarget {
       this.stepTimer = 0;
     }
 
-    // Lantern flicker -- subtle intensity wobble
-    this.lanternFlicker += dt;
-    const flicker =
-      2.0 + Math.sin(this.lanternFlicker * 12) * 0.18 +
-      (Math.random() - 0.5) * 0.15;
-    this.lanternLight.intensity = flicker;
-
     // Sync exposed position for BulletTarget
     this.position.copy(this.root.position);
   }
@@ -539,8 +509,6 @@ export class Player implements BulletTarget {
   dispose() {
     this.bodyMaterial.dispose();
     (this.body.geometry as THREE.BufferGeometry).dispose();
-    this.lantern.geometry.dispose();
-    (this.lantern.material as THREE.Material).dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();

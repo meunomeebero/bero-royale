@@ -1,110 +1,95 @@
 import * as THREE from "three";
 
-interface FogPatch {
-  mesh: THREE.Sprite;
+interface FogPuff {
+  mesh: THREE.Mesh;
   velocity: THREE.Vector3;
   baseOpacity: number;
-  rotSpeed: number;
-  bounds: { half: number };
+  pulseOffset: number;
+  bobOffset: number;
+  baseY: number;
 }
 
 /**
- * Drifting volumetric-ish fog patches: soft round sprites that float low over
- * the ground, slowly translating across the map and gently pulsing opacity.
- * Wraps around when leaving the play area so the world always feels misty.
+ * Square, voxel-style fog: dozens of tiny white cubes drift slowly across the
+ * map at low altitude, wrapping around the edges. They are faint enough to
+ * never block visibility, just adding a spooky moving haze on top of the scene.
  */
 export class FogPatches {
   readonly group: THREE.Group;
-  private patches: FogPatch[] = [];
+  private puffs: FogPuff[] = [];
   private mapHalf: number;
   private elapsed = 0;
+  private geom: THREE.BoxGeometry;
 
-  constructor(mapHalfSize: number, count = 22) {
+  constructor(mapHalfSize: number, count = 90) {
     this.group = new THREE.Group();
     this.mapHalf = mapHalfSize;
 
-    const texture = makeFogTexture();
+    // A flat-ish cube so it reads as a horizontal puff hovering over the ground
+    this.geom = new THREE.BoxGeometry(0.6, 0.35, 0.6);
+
     for (let i = 0; i < count; i++) {
-      const mat = new THREE.SpriteMaterial({
-        map: texture,
-        // Slightly cool off-white so it reads as moonlit mist, not blue smoke
-        color: new THREE.Color("#e6ecff"),
+      const opacity = 0.06 + Math.random() * 0.07;
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color("#ffffff"),
         transparent: true,
-        // Very faint -- just a spooky veil, never blocks visibility
-        opacity: 0.04 + Math.random() * 0.05,
+        opacity,
         depthWrite: false,
-        blending: THREE.NormalBlending,
       });
-      const sprite = new THREE.Sprite(mat);
-      const size = 6 + Math.random() * 6;
-      sprite.scale.set(size, size * 0.45, 1);
-      sprite.position.set(
+      const mesh = new THREE.Mesh(this.geom, mat);
+      // Vary the cube size so the haze looks more organic
+      const scale = 0.8 + Math.random() * 2.2;
+      mesh.scale.set(scale, 0.6 + Math.random() * 0.4, scale);
+      const baseY = 0.6 + Math.random() * 1.1;
+      mesh.position.set(
         (Math.random() * 2 - 1) * mapHalfSize,
-        0.6 + Math.random() * 0.9,
+        baseY,
         (Math.random() * 2 - 1) * mapHalfSize,
       );
       const ang = Math.random() * Math.PI * 2;
-      const speed = 0.25 + Math.random() * 0.4;
-      this.patches.push({
-        mesh: sprite,
+      const speed = 0.35 + Math.random() * 0.5;
+      this.puffs.push({
+        mesh,
         velocity: new THREE.Vector3(
           Math.cos(ang) * speed,
           0,
           Math.sin(ang) * speed,
         ),
-        baseOpacity: mat.opacity,
-        rotSpeed: (Math.random() - 0.5) * 0.05,
-        bounds: { half: mapHalfSize },
+        baseOpacity: opacity,
+        pulseOffset: Math.random() * Math.PI * 2,
+        bobOffset: Math.random() * Math.PI * 2,
+        baseY,
       });
-      this.group.add(sprite);
+      this.group.add(mesh);
     }
   }
 
   update(dt: number) {
     this.elapsed += dt;
-    for (const p of this.patches) {
-      p.mesh.position.addScaledVector(p.velocity, dt);
-      // Wrap around the map
-      if (p.mesh.position.x > p.bounds.half) p.mesh.position.x = -p.bounds.half;
-      if (p.mesh.position.x < -p.bounds.half) p.mesh.position.x = p.bounds.half;
-      if (p.mesh.position.z > p.bounds.half) p.mesh.position.z = -p.bounds.half;
-      if (p.mesh.position.z < -p.bounds.half) p.mesh.position.z = p.bounds.half;
-      // Pulse opacity
-      const mat = p.mesh.material as THREE.SpriteMaterial;
+    for (const p of this.puffs) {
+      p.mesh.position.x += p.velocity.x * dt;
+      p.mesh.position.z += p.velocity.z * dt;
+      // Wrap the puff to the opposite side of the map
+      if (p.mesh.position.x > this.mapHalf) p.mesh.position.x = -this.mapHalf;
+      if (p.mesh.position.x < -this.mapHalf) p.mesh.position.x = this.mapHalf;
+      if (p.mesh.position.z > this.mapHalf) p.mesh.position.z = -this.mapHalf;
+      if (p.mesh.position.z < -this.mapHalf) p.mesh.position.z = this.mapHalf;
+      // Gentle vertical bobbing
+      p.mesh.position.y =
+        p.baseY + Math.sin(this.elapsed * 0.8 + p.bobOffset) * 0.08;
+      // Soft opacity breathing
+      const mat = p.mesh.material as THREE.MeshBasicMaterial;
       mat.opacity =
-        p.baseOpacity * (0.7 + 0.3 * Math.sin(this.elapsed * 0.6 + p.rotSpeed * 100));
+        p.baseOpacity *
+        (0.75 + 0.25 * Math.sin(this.elapsed * 0.6 + p.pulseOffset));
     }
   }
 
   dispose() {
-    for (const p of this.patches) {
-      (p.mesh.material as THREE.SpriteMaterial).dispose();
+    for (const p of this.puffs) {
+      (p.mesh.material as THREE.Material).dispose();
     }
-    this.patches = [];
+    this.puffs = [];
+    this.geom.dispose();
   }
-}
-
-/** Soft round white texture used as the fog sprite. */
-function makeFogTexture(): THREE.CanvasTexture {
-  const size = 128;
-  const cnv = document.createElement("canvas");
-  cnv.width = size;
-  cnv.height = size;
-  const ctx = cnv.getContext("2d")!;
-  const grad = ctx.createRadialGradient(
-    size / 2,
-    size / 2,
-    size * 0.05,
-    size / 2,
-    size / 2,
-    size / 2,
-  );
-  grad.addColorStop(0, "rgba(255,255,255,0.9)");
-  grad.addColorStop(0.4, "rgba(255,255,255,0.45)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(cnv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
 }
