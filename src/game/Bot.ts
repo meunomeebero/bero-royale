@@ -6,6 +6,7 @@ import type { Bullets, BulletTarget } from "./Bullets";
 import type { Player } from "./Player";
 import type { SmokePuffs } from "./SmokePuffs";
 import { makePigMaterials } from "./TextureFactory";
+import { buildPigDecorations, buildNameLabel } from "./PigParts";
 
 const BOT_SIZE = 0.5;
 const MOVE_SPEED = 3.5;
@@ -86,9 +87,9 @@ export class Bot implements BulletTarget {
     this.root = new THREE.Group();
 
     const bodyGeom = new THREE.BoxGeometry(BOT_SIZE, BOT_SIZE, BOT_SIZE);
-    // Bot pigs are tinted red so the player can distinguish them from
-    // friendlies/themselves on the dark map.
-    const pigMats = makePigMaterials("#ff9a9a");
+    // All mobs (player + bots) are pink pigs -- bots are identified by the
+    // floating red name label above their heads, not by tint.
+    const pigMats = makePigMaterials();
     for (const m of pigMats) {
       m.color.copy(COLOR_HEALTHY);
       m.emissive = EMISSIVE_HEALTHY.clone();
@@ -102,6 +103,17 @@ export class Bot implements BulletTarget {
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
+
+    // Pig face/tail decorations rotate with the bot's aim direction
+    const pigDeco = buildPigDecorations(BOT_SIZE);
+    this.aimGroup.add(pigDeco);
+
+    // Floating red name label above the bot's head -- identifies hostiles
+    // The id is "bot_N"; surface it as "Mob N" so it reads like a mob tag.
+    const labelText = formatBotLabel(id);
+    const label = buildNameLabel(labelText);
+    label.position.set(0, BOT_SIZE * 0.85 + 0.35, 0);
+    this.root.add(label);
 
     // Bot pistol (red-tinted)
     this.gun = new THREE.Group();
@@ -467,3 +479,10 @@ export class Bot implements BulletTarget {
 }
 
 const SQUASH_LERP_VAL = 0.22;
+
+/** Convert internal bot ids like "bot_3" into a player-facing tag like "Mob 3". */
+function formatBotLabel(id: string): string {
+  const m = id.match(/(\d+)/);
+  const n = m ? m[1] : "?";
+  return `Mob ${n}`;
+}

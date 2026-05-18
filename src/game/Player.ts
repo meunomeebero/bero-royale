@@ -7,6 +7,7 @@ import type { Bullets, BulletTarget } from "./Bullets";
 import type { SmokePuffs } from "./SmokePuffs";
 import type { GrassPoof } from "./GrassPoof";
 import { makePigMaterials } from "./TextureFactory";
+import { buildPigDecorations } from "./PigParts";
 
 const PLAYER_SIZE = 0.5;
 const MOVE_SPEED = 6.5;
@@ -112,6 +113,11 @@ export class Player implements BulletTarget {
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
+
+    // Pig face/tail decorations live in the aimGroup so they always face the
+    // player's aim direction.
+    const pigDeco = buildPigDecorations(PLAYER_SIZE);
+    this.aimGroup.add(pigDeco);
 
     this.gun = new THREE.Group();
     const gunBodyGeom = new THREE.BoxGeometry(0.18, 0.14, 0.12);

@@ -356,72 +356,35 @@ function setPx(
   ctx.fillRect(x, y, 1, 1);
 }
 
-function fillRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  color: string,
-) {
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w, h);
-}
+// Reserved helper -- referenced via `void` so eslint stays happy while the
+// detailed face/snout pixels are temporarily off (eyes/snout are real cubes).
+void setPx;
 
-/** Pig front face: two eyes + snout with two nostrils. */
+/** Pig front face: blank pink (eyes and snout are separate cubes). */
 function makePigFrontTexture(seed = 101): THREE.CanvasTexture {
   const ctx = newCanvas();
   paintPigBase(ctx, seed);
-
-  // Eyes (left & right), each a 2x2 white with 1x1 black pupil
-  // Left eye
-  fillRect(ctx, 3, 5, 2, 2, "#ffffff");
-  setPx(ctx, 4, 5, "#1a1a1a");
-  // Right eye
-  fillRect(ctx, 11, 5, 2, 2, "#ffffff");
-  setPx(ctx, 11, 5, "#1a1a1a");
-
-  // Snout: a 6x5 block in the lower-center, darker pink
-  fillRect(ctx, 5, 9, 6, 5, "#b65f63");
-  // Snout outline (slightly darker)
-  fillRect(ctx, 5, 9, 6, 1, "#8e4549");
-  fillRect(ctx, 5, 13, 6, 1, "#8e4549");
-  fillRect(ctx, 5, 9, 1, 5, "#8e4549");
-  fillRect(ctx, 10, 9, 1, 5, "#8e4549");
-  // Two nostrils
-  fillRect(ctx, 6, 11, 1, 1, "#3a1a1c");
-  fillRect(ctx, 9, 11, 1, 1, "#3a1a1c");
-
   return toTexture(ctx);
 }
 
-/** Pig back: plain pink with a tiny dark "tail dot". */
+/** Pig back: blank pink (tail is a separate cube). */
 function makePigBackTexture(seed = 102): THREE.CanvasTexture {
   const ctx = newCanvas();
   paintPigBase(ctx, seed);
-  // Curly tail hint
-  fillRect(ctx, 7, 7, 2, 2, "#b65f63");
-  setPx(ctx, 8, 8, "#8e4549");
   return toTexture(ctx);
 }
 
-/** Pig side: pink with subtle dark belly stripe at bottom. */
+/** Pig side: plain pink. */
 function makePigSideTexture(seed = 103): THREE.CanvasTexture {
   const ctx = newCanvas();
   paintPigBase(ctx, seed);
-  // Slight darker ear blob in the top corner so seeing the side hints at an ear
-  fillRect(ctx, 2, 1, 2, 2, "#b65f63");
-  fillRect(ctx, 12, 1, 2, 2, "#b65f63");
   return toTexture(ctx);
 }
 
-/** Pig top: solid pink. */
+/** Pig top: plain pink. */
 function makePigTopTexture(seed = 104): THREE.CanvasTexture {
   const ctx = newCanvas();
   paintPigBase(ctx, seed);
-  // Two darker pink ear bumps near the front edge
-  fillRect(ctx, 2, 1, 2, 2, "#b65f63");
-  fillRect(ctx, 12, 1, 2, 2, "#b65f63");
   return toTexture(ctx);
 }
 
