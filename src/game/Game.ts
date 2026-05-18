@@ -8,7 +8,6 @@ import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
 import { Decor } from "./Decor";
 import { SmokePuffs } from "./SmokePuffs";
-import { Lava } from "./Lava";
 
 const INITIAL_BOTS = 3;
 const NEW_BOT_EVERY_SECONDS = 60;
@@ -28,7 +27,6 @@ export class Game {
   private dust: DustParticles;
   private bullets: Bullets;
   private smoke: SmokePuffs;
-  private lava!: Lava;
   private platform: Platform;
   private player: Player;
   private bots: Bot[] = [];
@@ -97,12 +95,7 @@ export class Game {
     this.player.setSmoke(this.smoke);
     this.bullets.registerTarget(this.player);
 
-    // Lava hazards (river + scattered pits)
-    const halfRoad = 4; // matches Platform: ROAD_WIDTH_BLOCKS / 2 * BLOCK_SIZE = 16/2 * 0.5
-    this.lava = new Lava(this.platform.size / 2, halfRoad);
-
     this.scene.add(this.platform.group);
-    this.scene.add(this.lava.group);
     const decor = new Decor(this.platform);
     this.scene.add(decor.group);
     this.scene.add(this.dust.group);
@@ -228,13 +221,12 @@ export class Game {
         this.dust.update(dt);
         this.bullets.update(dt);
         this.smoke.update(dt);
-        this.lava.update(dt);
 
         // Lava hazard collision (player + bots): must be touching the ground
         if (
           this.player.isAlive() &&
           this.player.isGrounded() &&
-          this.lava.isInsideHazard(
+          this.platform.isLavaAt(
             this.player.root.position.x,
             this.player.root.position.z,
           )
@@ -245,7 +237,7 @@ export class Game {
           if (
             bot.isAlive() &&
             bot.isGrounded() &&
-            this.lava.isInsideHazard(
+            this.platform.isLavaAt(
               bot.root.position.x,
               bot.root.position.z,
             )
@@ -321,7 +313,6 @@ export class Game {
     this.dust.dispose();
     this.bullets.dispose();
     this.smoke.dispose();
-    this.lava.dispose();
     this.player.dispose();
     this.clearBots();
     this.renderer.dispose();
