@@ -6,6 +6,7 @@ import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
 import type { SmokePuffs } from "./SmokePuffs";
 import type { GrassPoof } from "./GrassPoof";
+import { makePigMaterials } from "./TextureFactory";
 
 const PLAYER_SIZE = 0.5;
 const MOVE_SPEED = 6.5;
@@ -57,6 +58,7 @@ export class Player implements BulletTarget {
   private deadTimer = 0;
   private targetScale = new THREE.Vector3(1, 1, 1);
   private bodyMaterial: THREE.MeshLambertMaterial;
+  private pigMaterials: THREE.MeshLambertMaterial[] = [];
   private shootTimer = 0;
   private health = MAX_HEALTH;
 
@@ -94,13 +96,18 @@ export class Player implements BulletTarget {
       PLAYER_SIZE,
       PLAYER_SIZE,
     );
-    this.bodyMaterial = new THREE.MeshLambertMaterial({
-      color: COLOR_HEALTHY.clone(),
-      emissive: EMISSIVE_HEALTHY.clone(),
-      emissiveIntensity: 0.5,
-      transparent: true,
-    });
-    this.body = new THREE.Mesh(bodyGeom, this.bodyMaterial);
+    const pigMats = makePigMaterials();
+    for (const m of pigMats) {
+      m.color.copy(COLOR_HEALTHY);
+      m.emissive = EMISSIVE_HEALTHY.clone();
+      m.emissiveIntensity = 0.5;
+      m.transparent = true;
+    }
+    this.pigMaterials = pigMats;
+    // bodyMaterial points at the first material -- everything else writes to
+    // every material via syncBodyMaterials() so colors/opacity stay in sync.
+    this.bodyMaterial = pigMats[0];
+    this.body = new THREE.Mesh(bodyGeom, pigMats);
     this.root.add(this.body);
 
     this.aimGroup = new THREE.Group();
@@ -228,6 +235,7 @@ export class Player implements BulletTarget {
     this.bodyMaterial.opacity = 1;
     this.bodyMaterial.color.copy(COLOR_HEALTHY);
     this.bodyMaterial.emissive.copy(EMISSIVE_HEALTHY);
+    this.syncPigMaterials();
     this.grounded = true;
     this.state = "alive";
     this.fallTimer = 0;
@@ -277,6 +285,21 @@ export class Player implements BulletTarget {
       .lerp(EMISSIVE_DEAD, t);
   }
 
+  /**
+   * Copies the primary `bodyMaterial` color/emissive/opacity to every face
+   * material so the pig-textured cube tints uniformly when taking damage or
+   * fading out.
+   */
+  private syncPigMaterials() {
+    const src = this.bodyMaterial;
+    for (const m of this.pigMaterials) {
+      if (m === src) continue;
+      m.color.copy(src.color);
+      m.emissive.copy(src.emissive);
+      m.opacity = src.opacity;
+    }
+  }
+
   update(dt: number, camera: THREE.Camera) {
     // DEAD: countdown to respawn
     if (this.state === "dead") {
@@ -289,6 +312,7 @@ export class Player implements BulletTarget {
       this.bodyMaterial.opacity = Math.max(0.1, 1 - t);
       this.bodyMaterial.color.copy(COLOR_DEAD);
       this.bodyMaterial.emissive.copy(EMISSIVE_DEAD);
+      this.syncPigMaterials();
       this.position.copy(this.root.position);
       if (this.deadTimer >= RESPAWN_DELAY) {
         this.respawn();
@@ -304,6 +328,7 @@ export class Player implements BulletTarget {
       this.root.rotation.z += dt * 4;
       const t = 1 - this.fallTimer / FALL_DURATION;
       this.bodyMaterial.opacity = Math.max(0, t);
+      this.syncPigMaterials();
       const s = Math.max(0.1, t);
       this.root.scale.set(s, s, s);
       this.position.copy(this.root.position);
@@ -452,6 +477,7 @@ export class Player implements BulletTarget {
 
     // Color update (health -> red)
     this.updateColor();
+    this.syncPigMaterials();
 
     // Smooth scale lerp
     this.body.scale.lerp(this.targetScale, SQUASH_LERP);
@@ -507,7 +533,10 @@ export class Player implements BulletTarget {
   }
 
   dispose() {
-    this.bodyMaterial.dispose();
+    for (const m of this.pigMaterials) {
+      if (m.map) m.map.dispose();
+      m.dispose();
+    }
     (this.body.geometry as THREE.BufferGeometry).dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;

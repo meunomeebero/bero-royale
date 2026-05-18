@@ -329,6 +329,135 @@ function makeLavaRockTexture(seed = 9): THREE.CanvasTexture {
   return toTexture(ctx);
 }
 
+// ---- Pig textures (Minecraft-pig style) ----------------------------------
+
+/** Fills with a soft pink noise base, used by every face of the pig. */
+function paintPigBase(ctx: CanvasRenderingContext2D, seed: number) {
+  paintNoise(ctx, {
+    base: "#e58a8a",
+    light: "#efa3a3",
+    dark: "#c46d6f",
+    accent: "#d77a7c",
+    lightChance: 0.18,
+    darkChance: 0.18,
+    accentChance: 0.08,
+    noise: 5,
+    seed,
+  });
+}
+
+function setPx(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, 1, 1);
+}
+
+function fillRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w, h);
+}
+
+/** Pig front face: two eyes + snout with two nostrils. */
+function makePigFrontTexture(seed = 101): THREE.CanvasTexture {
+  const ctx = newCanvas();
+  paintPigBase(ctx, seed);
+
+  // Eyes (left & right), each a 2x2 white with 1x1 black pupil
+  // Left eye
+  fillRect(ctx, 3, 5, 2, 2, "#ffffff");
+  setPx(ctx, 4, 5, "#1a1a1a");
+  // Right eye
+  fillRect(ctx, 11, 5, 2, 2, "#ffffff");
+  setPx(ctx, 11, 5, "#1a1a1a");
+
+  // Snout: a 6x5 block in the lower-center, darker pink
+  fillRect(ctx, 5, 9, 6, 5, "#b65f63");
+  // Snout outline (slightly darker)
+  fillRect(ctx, 5, 9, 6, 1, "#8e4549");
+  fillRect(ctx, 5, 13, 6, 1, "#8e4549");
+  fillRect(ctx, 5, 9, 1, 5, "#8e4549");
+  fillRect(ctx, 10, 9, 1, 5, "#8e4549");
+  // Two nostrils
+  fillRect(ctx, 6, 11, 1, 1, "#3a1a1c");
+  fillRect(ctx, 9, 11, 1, 1, "#3a1a1c");
+
+  return toTexture(ctx);
+}
+
+/** Pig back: plain pink with a tiny dark "tail dot". */
+function makePigBackTexture(seed = 102): THREE.CanvasTexture {
+  const ctx = newCanvas();
+  paintPigBase(ctx, seed);
+  // Curly tail hint
+  fillRect(ctx, 7, 7, 2, 2, "#b65f63");
+  setPx(ctx, 8, 8, "#8e4549");
+  return toTexture(ctx);
+}
+
+/** Pig side: pink with subtle dark belly stripe at bottom. */
+function makePigSideTexture(seed = 103): THREE.CanvasTexture {
+  const ctx = newCanvas();
+  paintPigBase(ctx, seed);
+  // Slight darker ear blob in the top corner so seeing the side hints at an ear
+  fillRect(ctx, 2, 1, 2, 2, "#b65f63");
+  fillRect(ctx, 12, 1, 2, 2, "#b65f63");
+  return toTexture(ctx);
+}
+
+/** Pig top: solid pink. */
+function makePigTopTexture(seed = 104): THREE.CanvasTexture {
+  const ctx = newCanvas();
+  paintPigBase(ctx, seed);
+  // Two darker pink ear bumps near the front edge
+  fillRect(ctx, 2, 1, 2, 2, "#b65f63");
+  fillRect(ctx, 12, 1, 2, 2, "#b65f63");
+  return toTexture(ctx);
+}
+
+/** Pig bottom: darker pink belly. */
+function makePigBottomTexture(seed = 105): THREE.CanvasTexture {
+  const ctx = newCanvas();
+  paintNoise(ctx, {
+    base: "#c46d6f",
+    light: "#d27e7f",
+    dark: "#a25154",
+    noise: 4,
+    seed,
+  });
+  return toTexture(ctx);
+}
+
+/**
+ * Returns 6 materials in BoxGeometry order [+X,-X,+Y(top),-Y(bottom),+Z,-Z]
+ * arranged so the FRONT face (+Z) shows the pig face.
+ */
+export function makePigMaterials(tint = "#ffffff"): THREE.MeshLambertMaterial[] {
+  const front = makePigFrontTexture();
+  const back = makePigBackTexture();
+  const side = makePigSideTexture();
+  const top = makePigTopTexture();
+  const bottom = makePigBottomTexture();
+  return [
+    makeMat(side, tint), // +X
+    makeMat(side, tint), // -X
+    makeMat(top, tint), // +Y
+    makeMat(bottom, tint), // -Y
+    makeMat(front, tint), // +Z (front)
+    makeMat(back, tint), // -Z (back)
+  ];
+}
+
 // ---- Material kits --------------------------------------------------------
 
 function makeMat(tex: THREE.Texture, tint = "#ffffff"): THREE.MeshLambertMaterial {
