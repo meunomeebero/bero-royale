@@ -23,10 +23,10 @@ const MAX_HEALTH = 10;
 const RESPAWN_DELAY = 5.0; // seconds
 const HIT_FLASH_DURATION = 0.25;
 
-const COLOR_HEALTHY = new THREE.Color("#7b2fff");
+const COLOR_HEALTHY = new THREE.Color("#ffffff");
 const COLOR_DEAD = new THREE.Color("#3a0606");
 const COLOR_HIT = new THREE.Color("#ff2030");
-const EMISSIVE_HEALTHY = new THREE.Color("#3a0ea0");
+const EMISSIVE_HEALTHY = new THREE.Color("#000000");
 const EMISSIVE_DEAD = new THREE.Color("#1a0202");
 
 type State = "alive" | "falling" | "dead";

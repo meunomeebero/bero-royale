@@ -24,10 +24,10 @@ const JUMP_COOLDOWN_MIN = 1.6;
 const JUMP_COOLDOWN_MAX = 3.5;
 const WANDER_INTERVAL = 2.5;
 
-const COLOR_HEALTHY = new THREE.Color("#ff7f1f");
+const COLOR_HEALTHY = new THREE.Color("#ffffff");
 const COLOR_DEAD = new THREE.Color("#3a0606");
-const COLOR_HIT = new THREE.Color("#ffffff");
-const EMISSIVE_HEALTHY = new THREE.Color("#a13a00");
+const COLOR_HIT = new THREE.Color("#ff2030");
+const EMISSIVE_HEALTHY = new THREE.Color("#000000");
 const EMISSIVE_DEAD = new THREE.Color("#1a0202");
 
 type State = "alive" | "falling" | "dead";
