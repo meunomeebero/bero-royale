@@ -61,8 +61,8 @@ export class Game {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#03060f");
-    // Distant fog -- blue night atmosphere
-    this.scene.fog = new THREE.Fog(new THREE.Color("#0a1428"), 14, 38);
+    // Distant fog -- subtle blue night atmosphere (kicks in only far away)
+    this.scene.fog = new THREE.Fog(new THREE.Color("#0a1428"), 28, 70);
 
     const aspect = container.clientWidth / container.clientHeight;
     this.camera = new THREE.OrthographicCamera(

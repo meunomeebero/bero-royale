@@ -19,7 +19,7 @@ export class FogPatches {
   private mapHalf: number;
   private elapsed = 0;
 
-  constructor(mapHalfSize: number, count = 26) {
+  constructor(mapHalfSize: number, count = 10) {
     this.group = new THREE.Group();
     this.mapHalf = mapHalfSize;
 
@@ -29,13 +29,13 @@ export class FogPatches {
         map: texture,
         color: new THREE.Color("#9ec2ff"),
         transparent: true,
-        opacity: 0.18 + Math.random() * 0.18,
+        opacity: 0.05 + Math.random() * 0.06,
         depthWrite: false,
         blending: THREE.NormalBlending,
       });
       const sprite = new THREE.Sprite(mat);
-      const size = 6 + Math.random() * 6;
-      sprite.scale.set(size, size * 0.55, 1);
+      const size = 5 + Math.random() * 5;
+      sprite.scale.set(size, size * 0.5, 1);
       sprite.position.set(
         (Math.random() * 2 - 1) * mapHalfSize,
         0.7 + Math.random() * 0.6,
