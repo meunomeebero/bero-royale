@@ -29,7 +29,7 @@ export class FogPatches {
     this.geom = new THREE.BoxGeometry(1.6, 0.5, 1.6);
 
     for (let i = 0; i < count; i++) {
-      const opacity = 0.06 + Math.random() * 0.07;
+      const opacity = 0.054 + Math.random() * 0.063;
       const mat = new THREE.MeshBasicMaterial({
         color: new THREE.Color("#ffffff"),
         transparent: true,

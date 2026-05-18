@@ -31,7 +31,7 @@ export class Rain {
     const mat = new THREE.MeshBasicMaterial({
       color: new THREE.Color("#aac6ff"),
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.385,
       depthWrite: false,
     });
     this.mesh = new THREE.InstancedMesh(geom, mat, count);
