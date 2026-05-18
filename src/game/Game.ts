@@ -7,6 +7,8 @@ import { AudioManager } from "./AudioManager";
 import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
 import { Decor } from "./Decor";
+import { SmokePuffs } from "./SmokePuffs";
+import { Lava } from "./Lava";
 
 const INITIAL_BOTS = 3;
 const NEW_BOT_EVERY_SECONDS = 60;
@@ -25,6 +27,8 @@ export class Game {
   private audio: AudioManager;
   private dust: DustParticles;
   private bullets: Bullets;
+  private smoke: SmokePuffs;
+  private lava!: Lava;
   private platform: Platform;
   private player: Player;
   private bots: Bot[] = [];
@@ -81,6 +85,7 @@ export class Game {
     this.input = new InputManager();
     this.dust = new DustParticles();
     this.bullets = new Bullets();
+    this.smoke = new SmokePuffs();
     this.platform = new Platform();
     this.player = new Player(
       this.platform,
@@ -89,13 +94,20 @@ export class Game {
       this.dust,
       this.bullets,
     );
+    this.player.setSmoke(this.smoke);
     this.bullets.registerTarget(this.player);
 
+    // Lava hazards (river + scattered pits)
+    const halfRoad = 4; // matches Platform: ROAD_WIDTH_BLOCKS / 2 * BLOCK_SIZE = 16/2 * 0.5
+    this.lava = new Lava(this.platform.size / 2, halfRoad);
+
     this.scene.add(this.platform.group);
+    this.scene.add(this.lava.group);
     const decor = new Decor(this.platform);
     this.scene.add(decor.group);
     this.scene.add(this.dust.group);
     this.scene.add(this.bullets.group);
+    this.scene.add(this.smoke.group);
     this.scene.add(this.player.root);
 
     // Load top score
@@ -135,6 +147,7 @@ export class Game {
       this.dust,
       this.bullets,
     );
+    bot.setSmoke(this.smoke);
     this.bots.push(bot);
     this.scene.add(bot.root);
     this.bullets.registerTarget(bot);
@@ -214,6 +227,33 @@ export class Game {
         for (const bot of this.bots) bot.update(dt, this.player);
         this.dust.update(dt);
         this.bullets.update(dt);
+        this.smoke.update(dt);
+        this.lava.update(dt);
+
+        // Lava hazard collision (player + bots): must be touching the ground
+        if (
+          this.player.isAlive() &&
+          this.player.isGrounded() &&
+          this.lava.isInsideHazard(
+            this.player.root.position.x,
+            this.player.root.position.z,
+          )
+        ) {
+          this.player.killByHazard();
+        }
+        for (const bot of this.bots) {
+          if (
+            bot.isAlive() &&
+            bot.isGrounded() &&
+            this.lava.isInsideHazard(
+              bot.root.position.x,
+              bot.root.position.z,
+            )
+          ) {
+            bot.killByHazard();
+          }
+        }
+
         this.updateCamera();
 
         // Survival timer ticks only while the player is alive
@@ -280,6 +320,8 @@ export class Game {
     this.audio.dispose();
     this.dust.dispose();
     this.bullets.dispose();
+    this.smoke.dispose();
+    this.lava.dispose();
     this.player.dispose();
     this.clearBots();
     this.renderer.dispose();

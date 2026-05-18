@@ -4,6 +4,7 @@ import type { AudioManager } from "./AudioManager";
 import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
 import type { Player } from "./Player";
+import type { SmokePuffs } from "./SmokePuffs";
 
 const BOT_SIZE = 0.5;
 const MOVE_SPEED = 3.5;
@@ -44,6 +45,7 @@ export class Bot implements BulletTarget {
   private audio: AudioManager;
   private dust: DustParticles;
   private bullets: Bullets;
+  private smoke: SmokePuffs | null = null;
 
   private velocity = new THREE.Vector3(0, 0, 0);
   private grounded = true;
@@ -129,6 +131,10 @@ export class Bot implements BulletTarget {
 
   isAirborne() {
     return !this.grounded;
+  }
+
+  isGrounded() {
+    return this.grounded;
   }
 
   takeHit(_direction: THREE.Vector3): boolean {
@@ -395,6 +401,31 @@ export class Bot implements BulletTarget {
     );
     this.bullets.spawn(muzzle, dir, "bot");
     this.audio.shoot();
+    if (this.smoke) {
+      this.smoke.spawnFlash(muzzle, dir);
+      this.smoke.spawnPuff(muzzle, dir, 5, "#bbbbbb");
+    }
+  }
+
+  setSmoke(smoke: SmokePuffs) {
+    this.smoke = smoke;
+  }
+
+  /** Force-kill the bot (used by environmental hazards like lava). */
+  killByHazard() {
+    if (this.state !== "alive") return;
+    this.health = 0;
+    this.audio.death();
+    this.dust.spawnBurst(
+      new THREE.Vector3(
+        this.root.position.x,
+        this.platform.topY + 0.05,
+        this.root.position.z,
+      ),
+      16,
+    );
+    this.state = "dead";
+    this.deadTimer = 0;
   }
 
   dispose() {

@@ -4,6 +4,7 @@ import type { InputManager } from "./InputManager";
 import type { AudioManager } from "./AudioManager";
 import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
+import type { SmokePuffs } from "./SmokePuffs";
 
 const PLAYER_SIZE = 0.5;
 const MOVE_SPEED = 6.5;
@@ -45,6 +46,7 @@ export class Player implements BulletTarget {
   private audio: AudioManager;
   private dust: DustParticles;
   private bullets: Bullets;
+  private smoke: SmokePuffs | null = null;
 
   private velocity = new THREE.Vector3(0, 0, 0);
   private grounded = true;
@@ -150,9 +152,32 @@ export class Player implements BulletTarget {
   isAirborne() {
     return !this.grounded;
   }
-
+  isGrounded() {
+    return this.grounded;
+  }
   getHealth() {
     return this.health;
+  }
+
+  setSmoke(smoke: SmokePuffs) {
+    this.smoke = smoke;
+  }
+
+  /** Force-kill the player (used by environmental hazards like lava). */
+  killByHazard() {
+    if (this.state !== "alive") return;
+    this.health = 0;
+    this.audio.death();
+    this.dust.spawnBurst(
+      new THREE.Vector3(
+        this.root.position.x,
+        this.platform.topY + 0.05,
+        this.root.position.z,
+      ),
+      20,
+    );
+    this.state = "dead";
+    this.deadTimer = 0;
   }
 
   getMaxHealth() {
@@ -426,6 +451,11 @@ export class Player implements BulletTarget {
     this.audio.shoot();
     this.gunRecoil = 0.08;
     this.targetScale.set(1.15, 0.9, 1.15);
+    // Muzzle flash + smoke puff
+    if (this.smoke) {
+      this.smoke.spawnFlash(muzzle, dir);
+      this.smoke.spawnPuff(muzzle, dir, 6, "#cccccc");
+    }
   }
 
   dispose() {
