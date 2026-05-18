@@ -15,9 +15,22 @@ export class Decor {
     const rand = mulberry32(seed);
 
     const TOTAL = 90;
-    for (let i = 0; i < TOTAL; i++) {
+    let placed = 0;
+    let attempts = 0;
+    while (placed < TOTAL && attempts < TOTAL * 8) {
+      attempts++;
       const x = bounds.minX + rand() * (bounds.maxX - bounds.minX);
       const z = bounds.minZ + rand() * (bounds.maxZ - bounds.minZ);
+      // Keep props on the sidewalks (and a small margin from the edge)
+      if (!platform.isOnSidewalk(x, z)) continue;
+      if (
+        x < bounds.minX + 0.5 ||
+        x > bounds.maxX - 0.5 ||
+        z < bounds.minZ + 0.5 ||
+        z > bounds.maxZ - 0.5
+      ) {
+        continue;
+      }
       const pick = rand();
       let prop: THREE.Object3D;
       if (pick < 0.35) {
@@ -32,6 +45,7 @@ export class Decor {
       prop.position.set(x, baseY, z);
       prop.rotation.y = rand() * Math.PI * 2;
       this.group.add(prop);
+      placed++;
     }
   }
 }
