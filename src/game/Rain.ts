@@ -23,7 +23,7 @@ export class Rain {
   private topY = 14;
   private bottomY = 0.2;
 
-  constructor(mapHalfSize: number, count = 700) {
+  constructor(mapHalfSize: number, count = 280) {
     this.mapHalf = mapHalfSize;
 
     // Tall, very thin cube -- looks like a falling streak
