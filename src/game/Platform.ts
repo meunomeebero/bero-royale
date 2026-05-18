@@ -367,6 +367,20 @@ export class Platform {
     return !!c && c.height > 0;
   }
 
+  /**
+   * Solid-block test used by bullets: returns true if (x,y,z) is inside a
+   * raised hill cube (a 1-block-tall obstacle above ground level).
+   */
+  blocksAt(x: number, y: number, z: number): boolean {
+    const c = this.cellAt(x, z);
+    if (!c) return false;
+    if (c.height <= 0) return false;
+    // Hill cube spans from this.topY up to this.topY + c.height * BLOCK_HEIGHT
+    const minY = this.topY;
+    const maxY = this.topY + c.height * BLOCK_HEIGHT;
+    return y >= minY && y <= maxY;
+  }
+
   randomSpawn(margin = 4): THREE.Vector3 {
     const half = this.size / 2 - margin;
     for (let tries = 0; tries < 60; tries++) {

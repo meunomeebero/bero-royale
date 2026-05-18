@@ -1,12 +1,25 @@
 import * as THREE from "three";
 import type { Platform } from "./Platform";
 
+export interface DecorObstacle {
+  /** Center XZ. */
+  x: number;
+  z: number;
+  /** Collision radius (bullets stop when within this distance, ignoring Y). */
+  radius: number;
+  /** Top Y (above ground) -- bullets above this height pass over (jumping over a stump). */
+  topY: number;
+  /** Bottom Y -- bullets below ignore (purely cosmetic small props). */
+  baseY: number;
+}
+
 /**
  * Forest props scattered around the map: pine trees, oak trees, stumps and
- * small bushes / rocks. Pure decoration (no collision).
+ * small bushes / rocks. Visuals + collision data for bullets.
  */
 export class Decor {
   readonly group: THREE.Group;
+  readonly obstacles: DecorObstacle[] = [];
 
   constructor(platform: Platform, seed = 12345) {
     this.group = new THREE.Group();
@@ -20,9 +33,8 @@ export class Decor {
       attempts++;
       const x = bounds.minX + rand() * (bounds.maxX - bounds.minX);
       const z = bounds.minZ + rand() * (bounds.maxZ - bounds.minZ);
-      // Keep props off lava and away from the very edge
       if (!platform.isOnGrass(x, z)) continue;
-      if (platform.isHill(x, z)) continue; // avoid covering hills
+      if (platform.isHill(x, z)) continue;
       if (
         x < bounds.minX + 0.6 ||
         x > bounds.maxX - 0.6 ||
@@ -31,7 +43,6 @@ export class Decor {
       ) {
         continue;
       }
-      // Don't cluster: skip if next to lava
       if (
         platform.isLavaAt(x + 0.5, z) ||
         platform.isLavaAt(x - 0.5, z) ||
@@ -43,20 +54,39 @@ export class Decor {
       const baseY = platform.surfaceY(x, z);
       const pick = rand();
       let prop: THREE.Object3D;
+      let radius = 0;
+      let height = 0;
       if (pick < 0.45) {
         prop = makePineTree(rand);
+        radius = 0.22;
+        height = 1.6;
       } else if (pick < 0.7) {
         prop = makeOakTree(rand);
+        radius = 0.28;
+        height = 1.4;
       } else if (pick < 0.85) {
         prop = makeBush(rand);
+        radius = 0.18;
+        height = 0.45;
       } else if (pick < 0.95) {
         prop = makeRock(rand);
+        radius = 0.18;
+        height = 0.35;
       } else {
         prop = makeStump(rand);
+        radius = 0.17;
+        height = 0.3;
       }
       prop.position.set(x, baseY, z);
       prop.rotation.y = rand() * Math.PI * 2;
       this.group.add(prop);
+      this.obstacles.push({
+        x,
+        z,
+        radius,
+        baseY,
+        topY: baseY + height,
+      });
       placed++;
     }
   }

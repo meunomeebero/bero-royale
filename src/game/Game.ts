@@ -107,6 +107,10 @@ export class Game {
     this.scene.add(this.platform.group);
     const decor = new Decor(this.platform);
     this.scene.add(decor.group);
+    // Wire up bullet collisions with the world (terrain hills + decor props + bounds)
+    this.bullets.setObstacles(decor.obstacles);
+    this.bullets.setBounds(this.platform.getBounds());
+    this.bullets.setWorldBlocker((x, y, z) => this.platform.blocksAt(x, y, z));
     this.scene.add(this.dust.group);
     this.scene.add(this.bullets.group);
     this.scene.add(this.smoke.group);

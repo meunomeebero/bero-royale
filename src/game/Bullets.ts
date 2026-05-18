@@ -33,10 +33,24 @@ export interface BulletTarget {
   takeHit(direction: THREE.Vector3): boolean;
 }
 
+export interface BulletObstacle {
+  x: number;
+  z: number;
+  radius: number;
+  baseY: number;
+  topY: number;
+}
+
+/** Probe for terrain/world blockers. Returns true if this point is solid (bullet stops). */
+export type WorldBlocker = (x: number, y: number, z: number) => boolean;
+
 export class Bullets {
   readonly group: THREE.Group;
   private bullets: Bullet[] = [];
   private targets: BulletTarget[] = [];
+  private obstacles: BulletObstacle[] = [];
+  private worldBlocker: WorldBlocker | null = null;
+  private bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
 
   constructor() {
     this.group = new THREE.Group();
@@ -48,6 +62,18 @@ export class Bullets {
 
   unregisterTarget(t: BulletTarget) {
     this.targets = this.targets.filter((x) => x !== t);
+  }
+
+  setObstacles(list: BulletObstacle[]) {
+    this.obstacles = list;
+  }
+
+  setWorldBlocker(fn: WorldBlocker | null) {
+    this.worldBlocker = fn;
+  }
+
+  setBounds(b: { minX: number; maxX: number; minZ: number; maxZ: number }) {
+    this.bounds = b;
   }
 
   spawn(origin: THREE.Vector3, direction: THREE.Vector3, owner: BulletOwner) {
@@ -90,6 +116,47 @@ export class Bullets {
       b.mesh.position.y = b.flightY;
       const t = Math.min(1, b.life / BULLET_LIFE);
       (b.mesh.material as THREE.MeshBasicMaterial).opacity = t;
+
+      // --- World bounds: stop if leaves map ---
+      if (this.bounds) {
+        const bx = b.mesh.position.x;
+        const bz = b.mesh.position.z;
+        if (
+          bx < this.bounds.minX ||
+          bx > this.bounds.maxX ||
+          bz < this.bounds.minZ ||
+          bz > this.bounds.maxZ
+        ) {
+          this.removeAt(i);
+          continue;
+        }
+      }
+
+      // --- Terrain blocker (hills / lava walls / map cubes) ---
+      if (
+        this.worldBlocker &&
+        this.worldBlocker(b.mesh.position.x, b.flightY, b.mesh.position.z)
+      ) {
+        this.removeAt(i);
+        continue;
+      }
+
+      // --- Decor obstacles (trees, rocks, bushes) ---
+      let blocked = false;
+      for (const o of this.obstacles) {
+        // Vertical filter: bullet must be within this prop's height to be blocked
+        if (b.flightY < o.baseY - 0.05 || b.flightY > o.topY + 0.05) continue;
+        const dxo = o.x - b.mesh.position.x;
+        const dzo = o.z - b.mesh.position.z;
+        if (dxo * dxo + dzo * dzo <= o.radius * o.radius) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) {
+        this.removeAt(i);
+        continue;
+      }
 
       // Collision check against opposite-side targets
       const direction = new THREE.Vector3(
