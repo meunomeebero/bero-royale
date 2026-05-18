@@ -6,3 +6,4 @@ import './index.css';
 bootstrapGeneratedSiteAnalytics();
 
 createRoot(document.getElementById('root')!).render(<App />);
+
