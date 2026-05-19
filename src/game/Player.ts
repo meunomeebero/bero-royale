@@ -6,8 +6,7 @@ import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
 import type { SmokePuffs } from "./SmokePuffs";
 import type { GrassPoof } from "./GrassPoof";
-import { makePigMaterials } from "./TextureFactory";
-import { buildPigDecorations } from "./PigParts";
+import { buildPig } from "./PigParts";
 
 const PLAYER_SIZE = 0.5;
 const MOVE_SPEED = 6.5;
@@ -36,12 +35,13 @@ export class Player implements BulletTarget {
   readonly side = "player" as const;
   readonly bodyHalfHeight = PLAYER_SIZE / 2;
 
-  /** Root object: holds the body cube + gun. */
+  /** Root object: holds the pig body + gun. */
   readonly root: THREE.Group;
-  private body: THREE.Mesh;
+  private body: THREE.Group;
   private aimGroup: THREE.Group;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
+  private pigGeometries: THREE.BufferGeometry[] = [];
 
   private platform: Platform;
   private input: InputManager;
@@ -92,32 +92,29 @@ export class Player implements BulletTarget {
 
     this.root = new THREE.Group();
 
-    const bodyGeom = new THREE.BoxGeometry(
-      PLAYER_SIZE,
-      PLAYER_SIZE,
-      PLAYER_SIZE,
-    );
-    const pigMats = makePigMaterials();
-    for (const m of pigMats) {
-      m.color.copy(COLOR_HEALTHY);
-      m.emissive = EMISSIVE_HEALTHY.clone();
-      m.emissiveIntensity = 0.5;
-      m.transparent = true;
-    }
-    this.pigMaterials = pigMats;
-    // bodyMaterial points at the first material -- everything else writes to
-    // every material via syncBodyMaterials() so colors/opacity stay in sync.
-    this.bodyMaterial = pigMats[0];
-    this.body = new THREE.Mesh(bodyGeom, pigMats);
-    this.root.add(this.body);
+    // Build the voxel pig (body + head + legs + tail). The pig's root is the
+    // feet anchor: y=0 sits on the ground. We push it down by PLAYER_SIZE/2
+    // so it sits below the player root (which is positioned at body-center).
+    // The whole pig is parented to `aimGroup` so head/face always points at
+    // the aim direction. `this.body` is an intermediate handle for
+    // shake/lean/scale animations.
+    const pig = buildPig();
+    pig.root.position.y = -PLAYER_SIZE / 2;
+    // Builder makes the pig face +Z, but the aimGroup convention puts the
+    // forward axis along +X (aimYaw=0 -> dir=(1,0,0)). Rotate so the head
+    // points along +X.
+    pig.root.rotation.y = Math.PI / 2;
+    this.body = new THREE.Group();
+    this.body.add(pig.root);
+    this.pigMaterials = pig.materials;
+    this.pigGeometries = pig.geometries;
+    this.bodyMaterial = pig.materials[0];
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
-
-    // Pig face/tail decorations live in the aimGroup so they always face the
-    // player's aim direction.
-    const pigDeco = buildPigDecorations(PLAYER_SIZE);
-    this.aimGroup.add(pigDeco);
+    // The pig visual is parented to the aim group so the head always faces
+    // the aim direction along with the gun.
+    this.aimGroup.add(this.body);
 
     this.gun = new THREE.Group();
     const gunBodyGeom = new THREE.BoxGeometry(0.18, 0.14, 0.12);
@@ -543,7 +540,7 @@ export class Player implements BulletTarget {
       if (m.map) m.map.dispose();
       m.dispose();
     }
-    (this.body.geometry as THREE.BufferGeometry).dispose();
+    for (const g of this.pigGeometries) g.dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();

@@ -5,8 +5,7 @@ import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
 import type { Player } from "./Player";
 import type { SmokePuffs } from "./SmokePuffs";
-import { makePigMaterials } from "./TextureFactory";
-import { buildPigDecorations, buildNameLabel } from "./PigParts";
+import { buildPig, buildNameLabel } from "./PigParts";
 
 const BOT_SIZE = 0.5;
 const MOVE_SPEED = 3.5;
@@ -38,10 +37,11 @@ export class Bot implements BulletTarget {
   readonly bodyHalfHeight = BOT_SIZE / 2;
 
   readonly root: THREE.Group;
-  private body: THREE.Mesh;
+  private body: THREE.Group;
   private aimGroup: THREE.Group;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
+  private pigGeometries: THREE.BufferGeometry[] = [];
 
   private platform: Platform;
   private audio: AudioManager;
@@ -86,29 +86,22 @@ export class Bot implements BulletTarget {
 
     this.root = new THREE.Group();
 
-    const bodyGeom = new THREE.BoxGeometry(BOT_SIZE, BOT_SIZE, BOT_SIZE);
-    // All mobs (player + bots) are pink pigs -- bots are identified by the
-    // floating red name label above their heads, not by tint.
-    const pigMats = makePigMaterials();
-    for (const m of pigMats) {
-      m.color.copy(COLOR_HEALTHY);
-      m.emissive = EMISSIVE_HEALTHY.clone();
-      m.emissiveIntensity = 0.45;
-      m.transparent = true;
-    }
-    this.pigMaterials = pigMats;
-    this.bodyMaterial = pigMats[0];
-    this.body = new THREE.Mesh(bodyGeom, pigMats);
-    this.root.add(this.body);
+    // Voxel pig model -- same structure as the player. Parented to aimGroup
+    // so the head always points at the bot's aim/walking direction.
+    const pig = buildPig();
+    pig.root.position.y = -BOT_SIZE / 2;
+    pig.root.rotation.y = Math.PI / 2; // face +X (matches aim convention)
+    this.body = new THREE.Group();
+    this.body.add(pig.root);
+    this.pigMaterials = pig.materials;
+    this.pigGeometries = pig.geometries;
+    this.bodyMaterial = pig.materials[0];
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
+    this.aimGroup.add(this.body);
 
-    // Pig face/tail decorations rotate with the bot's aim direction
-    const pigDeco = buildPigDecorations(BOT_SIZE);
-    this.aimGroup.add(pigDeco);
-
-    // Floating red name label above the bot's head -- identifies hostiles
+    // Floating red name label above the bot's head -- identifies hostiles.
     // The id is "bot_N"; surface it as "Mob N" so it reads like a mob tag.
     const labelText = formatBotLabel(id);
     const label = buildNameLabel(labelText);
@@ -470,7 +463,7 @@ export class Bot implements BulletTarget {
       if (m.map) m.map.dispose();
       m.dispose();
     }
-    (this.body.geometry as THREE.BufferGeometry).dispose();
+    for (const g of this.pigGeometries) g.dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
