@@ -5,7 +5,7 @@ import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
 import type { Player } from "./Player";
 import type { SmokePuffs } from "./SmokePuffs";
-import { buildPig, buildNameLabel } from "./PigParts";
+import { buildNameLabel } from "./PigParts";
 
 const BOT_SIZE = 0.5;
 const MOVE_SPEED = 3.5;
@@ -23,10 +23,10 @@ const JUMP_COOLDOWN_MIN = 1.6;
 const JUMP_COOLDOWN_MAX = 3.5;
 const WANDER_INTERVAL = 2.5;
 
-const COLOR_HEALTHY = new THREE.Color("#ffffff");
+const COLOR_HEALTHY = new THREE.Color("#ff7f1f");
 const COLOR_DEAD = new THREE.Color("#3a0606");
-const COLOR_HIT = new THREE.Color("#ff2030");
-const EMISSIVE_HEALTHY = new THREE.Color("#000000");
+const COLOR_HIT = new THREE.Color("#ffffff");
+const EMISSIVE_HEALTHY = new THREE.Color("#a13a00");
 const EMISSIVE_DEAD = new THREE.Color("#1a0202");
 
 type State = "alive" | "falling" | "dead";
@@ -37,11 +37,10 @@ export class Bot implements BulletTarget {
   readonly bodyHalfHeight = BOT_SIZE / 2;
 
   readonly root: THREE.Group;
-  private body: THREE.Group;
+  private body: THREE.Mesh;
   private aimGroup: THREE.Group;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
-  private pigGeometries: THREE.BufferGeometry[] = [];
 
   private platform: Platform;
   private audio: AudioManager;
@@ -56,7 +55,6 @@ export class Bot implements BulletTarget {
   private deadTimer = 0;
   private targetScale = new THREE.Vector3(1, 1, 1);
   private bodyMaterial: THREE.MeshLambertMaterial;
-  private pigMaterials: THREE.MeshLambertMaterial[] = [];
   private health = MAX_HEALTH;
 
   private hitFlashTimer = 0;
@@ -86,23 +84,20 @@ export class Bot implements BulletTarget {
 
     this.root = new THREE.Group();
 
-    // Voxel pig model -- same structure as the player. Parented to aimGroup
-    // so the head always points at the bot's aim/walking direction.
-    const pig = buildPig();
-    pig.root.position.y = -BOT_SIZE / 2;
-    pig.root.rotation.y = Math.PI / 2; // face +X (matches aim convention)
-    this.body = new THREE.Group();
-    this.body.add(pig.root);
-    this.pigMaterials = pig.materials;
-    this.pigGeometries = pig.geometries;
-    this.bodyMaterial = pig.materials[0];
+    const bodyGeom = new THREE.BoxGeometry(BOT_SIZE, BOT_SIZE, BOT_SIZE);
+    this.bodyMaterial = new THREE.MeshLambertMaterial({
+      color: COLOR_HEALTHY.clone(),
+      emissive: EMISSIVE_HEALTHY.clone(),
+      emissiveIntensity: 0.45,
+      transparent: true,
+    });
+    this.body = new THREE.Mesh(bodyGeom, this.bodyMaterial);
+    this.root.add(this.body);
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
-    this.aimGroup.add(this.body);
 
     // Floating red name label above the bot's head -- identifies hostiles.
-    // The id is "bot_N"; surface it as "Mob N" so it reads like a mob tag.
     const labelText = formatBotLabel(id);
     const label = buildNameLabel(labelText);
     label.position.set(0, BOT_SIZE * 0.85 + 0.35, 0);
@@ -188,7 +183,6 @@ export class Bot implements BulletTarget {
     this.bodyMaterial.opacity = 1;
     this.bodyMaterial.color.copy(COLOR_HEALTHY);
     this.bodyMaterial.emissive.copy(EMISSIVE_HEALTHY);
-    this.syncPigMaterials();
     this.grounded = true;
     this.state = "alive";
     this.fallTimer = 0;
@@ -212,16 +206,6 @@ export class Bot implements BulletTarget {
     this.bodyMaterial.emissive.copy(EMISSIVE_HEALTHY).lerp(EMISSIVE_DEAD, t);
   }
 
-  private syncPigMaterials() {
-    const src = this.bodyMaterial;
-    for (const m of this.pigMaterials) {
-      if (m === src) continue;
-      m.color.copy(src.color);
-      m.emissive.copy(src.emissive);
-      m.opacity = src.opacity;
-    }
-  }
-
   update(dt: number, player: Player) {
     if (this.state === "dead") {
       this.deadTimer += dt;
@@ -232,7 +216,6 @@ export class Bot implements BulletTarget {
       this.bodyMaterial.opacity = Math.max(0.1, 1 - t);
       this.bodyMaterial.color.copy(COLOR_DEAD);
       this.bodyMaterial.emissive.copy(EMISSIVE_DEAD);
-      this.syncPigMaterials();
       this.position.copy(this.root.position);
       if (this.deadTimer >= RESPAWN_DELAY) {
         this.respawn();
@@ -248,7 +231,6 @@ export class Bot implements BulletTarget {
       this.root.rotation.z += dt * 4;
       const t = 1 - this.fallTimer / 0.7;
       this.bodyMaterial.opacity = Math.max(0, t);
-      this.syncPigMaterials();
       const s = Math.max(0.1, t);
       this.root.scale.set(s, s, s);
       this.position.copy(this.root.position);
@@ -415,7 +397,6 @@ export class Bot implements BulletTarget {
 
     if (this.hitFlashTimer > 0) this.hitFlashTimer -= dt;
     this.updateColor();
-    this.syncPigMaterials();
     this.body.scale.lerp(this.targetScale, SQUASH_LERP_VAL);
 
     this.position.copy(this.root.position);
@@ -459,11 +440,8 @@ export class Bot implements BulletTarget {
   }
 
   dispose() {
-    for (const m of this.pigMaterials) {
-      if (m.map) m.map.dispose();
-      m.dispose();
-    }
-    for (const g of this.pigGeometries) g.dispose();
+    this.bodyMaterial.dispose();
+    (this.body.geometry as THREE.BufferGeometry).dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();

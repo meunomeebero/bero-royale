@@ -6,7 +6,6 @@ import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget } from "./Bullets";
 import type { SmokePuffs } from "./SmokePuffs";
 import type { GrassPoof } from "./GrassPoof";
-import { buildPig } from "./PigParts";
 
 const PLAYER_SIZE = 0.5;
 const MOVE_SPEED = 6.5;
@@ -22,10 +21,10 @@ const MAX_HEALTH = 10;
 const RESPAWN_DELAY = 5.0; // seconds
 const HIT_FLASH_DURATION = 0.25;
 
-const COLOR_HEALTHY = new THREE.Color("#ffffff");
+const COLOR_HEALTHY = new THREE.Color("#7b2fff");
 const COLOR_DEAD = new THREE.Color("#3a0606");
 const COLOR_HIT = new THREE.Color("#ff2030");
-const EMISSIVE_HEALTHY = new THREE.Color("#000000");
+const EMISSIVE_HEALTHY = new THREE.Color("#3a0ea0");
 const EMISSIVE_DEAD = new THREE.Color("#1a0202");
 
 type State = "alive" | "falling" | "dead";
@@ -35,13 +34,12 @@ export class Player implements BulletTarget {
   readonly side = "player" as const;
   readonly bodyHalfHeight = PLAYER_SIZE / 2;
 
-  /** Root object: holds the pig body + gun. */
+  /** Root object: holds the body cube + gun. */
   readonly root: THREE.Group;
-  private body: THREE.Group;
+  private body: THREE.Mesh;
   private aimGroup: THREE.Group;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
-  private pigGeometries: THREE.BufferGeometry[] = [];
 
   private platform: Platform;
   private input: InputManager;
@@ -59,7 +57,6 @@ export class Player implements BulletTarget {
   private deadTimer = 0;
   private targetScale = new THREE.Vector3(1, 1, 1);
   private bodyMaterial: THREE.MeshLambertMaterial;
-  private pigMaterials: THREE.MeshLambertMaterial[] = [];
   private shootTimer = 0;
   private health = MAX_HEALTH;
 
@@ -92,29 +89,18 @@ export class Player implements BulletTarget {
 
     this.root = new THREE.Group();
 
-    // Build the voxel pig (body + head + legs + tail). The pig's root is the
-    // feet anchor: y=0 sits on the ground. We push it down by PLAYER_SIZE/2
-    // so it sits below the player root (which is positioned at body-center).
-    // The whole pig is parented to `aimGroup` so head/face always points at
-    // the aim direction. `this.body` is an intermediate handle for
-    // shake/lean/scale animations.
-    const pig = buildPig();
-    pig.root.position.y = -PLAYER_SIZE / 2;
-    // Builder makes the pig face +Z, but the aimGroup convention puts the
-    // forward axis along +X (aimYaw=0 -> dir=(1,0,0)). Rotate so the head
-    // points along +X.
-    pig.root.rotation.y = Math.PI / 2;
-    this.body = new THREE.Group();
-    this.body.add(pig.root);
-    this.pigMaterials = pig.materials;
-    this.pigGeometries = pig.geometries;
-    this.bodyMaterial = pig.materials[0];
+    const bodyGeom = new THREE.BoxGeometry(PLAYER_SIZE, PLAYER_SIZE, PLAYER_SIZE);
+    this.bodyMaterial = new THREE.MeshLambertMaterial({
+      color: COLOR_HEALTHY.clone(),
+      emissive: EMISSIVE_HEALTHY.clone(),
+      emissiveIntensity: 0.5,
+      transparent: true,
+    });
+    this.body = new THREE.Mesh(bodyGeom, this.bodyMaterial);
+    this.root.add(this.body);
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
-    // The pig visual is parented to the aim group so the head always faces
-    // the aim direction along with the gun.
-    this.aimGroup.add(this.body);
 
     this.gun = new THREE.Group();
     const gunBodyGeom = new THREE.BoxGeometry(0.18, 0.14, 0.12);
@@ -238,7 +224,6 @@ export class Player implements BulletTarget {
     this.bodyMaterial.opacity = 1;
     this.bodyMaterial.color.copy(COLOR_HEALTHY);
     this.bodyMaterial.emissive.copy(EMISSIVE_HEALTHY);
-    this.syncPigMaterials();
     this.grounded = true;
     this.state = "alive";
     this.fallTimer = 0;
@@ -288,21 +273,6 @@ export class Player implements BulletTarget {
       .lerp(EMISSIVE_DEAD, t);
   }
 
-  /**
-   * Copies the primary `bodyMaterial` color/emissive/opacity to every face
-   * material so the pig-textured cube tints uniformly when taking damage or
-   * fading out.
-   */
-  private syncPigMaterials() {
-    const src = this.bodyMaterial;
-    for (const m of this.pigMaterials) {
-      if (m === src) continue;
-      m.color.copy(src.color);
-      m.emissive.copy(src.emissive);
-      m.opacity = src.opacity;
-    }
-  }
-
   update(dt: number, camera: THREE.Camera) {
     // DEAD: countdown to respawn
     if (this.state === "dead") {
@@ -315,7 +285,6 @@ export class Player implements BulletTarget {
       this.bodyMaterial.opacity = Math.max(0.1, 1 - t);
       this.bodyMaterial.color.copy(COLOR_DEAD);
       this.bodyMaterial.emissive.copy(EMISSIVE_DEAD);
-      this.syncPigMaterials();
       this.position.copy(this.root.position);
       if (this.deadTimer >= RESPAWN_DELAY) {
         this.respawn();
@@ -331,7 +300,6 @@ export class Player implements BulletTarget {
       this.root.rotation.z += dt * 4;
       const t = 1 - this.fallTimer / FALL_DURATION;
       this.bodyMaterial.opacity = Math.max(0, t);
-      this.syncPigMaterials();
       const s = Math.max(0.1, t);
       this.root.scale.set(s, s, s);
       this.position.copy(this.root.position);
@@ -480,7 +448,6 @@ export class Player implements BulletTarget {
 
     // Color update (health -> red)
     this.updateColor();
-    this.syncPigMaterials();
 
     // Smooth scale lerp
     this.body.scale.lerp(this.targetScale, SQUASH_LERP);
@@ -536,11 +503,8 @@ export class Player implements BulletTarget {
   }
 
   dispose() {
-    for (const m of this.pigMaterials) {
-      if (m.map) m.map.dispose();
-      m.dispose();
-    }
-    for (const g of this.pigGeometries) g.dispose();
+    this.bodyMaterial.dispose();
+    (this.body.geometry as THREE.BufferGeometry).dispose();
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
