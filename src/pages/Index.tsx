@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { HudPanel } from "@/components/hud/HudPanel";
 import { StatsBar } from "@/components/hud/StatsBar";
 import { Crosshair } from "@/components/hud/Crosshair";
+import { AdCard } from "@/components/hud/AdCard";
 
 const INITIAL_STATS: GameStats = {
   elapsed: 0,
@@ -198,10 +199,14 @@ const Index = () => {
         </div>
       </div>
 
-      {/* Death banner (transient) */}
+      {/* Death banner + ad cards (shown during respawn countdown) */}
       {stats.isDead && !paused && (
-        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
-          <div className="relative">
+        <div className="absolute inset-0 z-40 flex items-center justify-center gap-8">
+          {/* Left ad */}
+          <AdCard />
+
+          {/* Center death banner */}
+          <div className="pointer-events-none relative">
             <div className="absolute -inset-10 bg-game-danger/10 blur-3xl rounded-full" />
             <HudPanel label="System" tone="danger" className="relative">
               <div className="px-10 py-8 flex flex-col items-center gap-2">
@@ -214,6 +219,9 @@ const Index = () => {
               </div>
             </HudPanel>
           </div>
+
+          {/* Right ad */}
+          <AdCard />
         </div>
       )}
 
