@@ -101,6 +101,20 @@ export interface KameHitEvent {
   dir: { x: number; y: number; z: number };
 }
 
+/** A melee staff swing — drives the smoke arc visual on remotes. */
+export interface MeleeEvent {
+  id: string;
+  origin: { x: number; y: number; z: number };
+  dir: { x: number; y: number; z: number };
+}
+
+/** A melee staff hit on `target` — that client applies a small knockback. */
+export interface MeleeHitEvent {
+  id: string; // attacker
+  target: string; // victim id
+  dir: { x: number; y: number; z: number };
+}
+
 /** Server announced a new power-up on the map (drives the floating pickup). */
 export interface PowerupSpawnEvent {
   id: string;
@@ -173,6 +187,8 @@ export class Multiplayer {
   private onKill?: (e: KillEvent) => void;
   private onKame?: (e: KameEvent) => void;
   private onKameHit?: (e: KameHitEvent) => void;
+  private onMelee?: (e: MeleeEvent) => void;
+  private onMeleeHit?: (e: MeleeHitEvent) => void;
   private onPowerupSpawn?: (e: PowerupSpawnEvent) => void;
   private onPowerupTake?: (e: PowerupTakeEvent) => void;
   private onCrateSpawn?: (e: CrateSpawnEvent) => void;
@@ -239,6 +255,16 @@ export class Multiplayer {
   /** Register a handler for incoming kamehameha hits (launch self if targeted). */
   setKameHitHandler(cb: (e: KameHitEvent) => void) {
     this.onKameHit = cb;
+  }
+
+  /** Register a handler for incoming melee swings (smoke arc visual). */
+  setMeleeHandler(cb: (e: MeleeEvent) => void) {
+    this.onMelee = cb;
+  }
+
+  /** Register a handler for incoming melee hits (knockback self if targeted). */
+  setMeleeHitHandler(cb: (e: MeleeHitEvent) => void) {
+    this.onMeleeHit = cb;
   }
 
   /** Register a handler for power-up spawns (render the floating pickup). */
@@ -367,6 +393,14 @@ export class Multiplayer {
           const e = payload as KameHitEvent;
           if (e && e.id !== this.id) this.onKameHit?.(e);
         },
+        melee: (payload) => {
+          const e = payload as MeleeEvent;
+          if (e && e.id !== this.id) this.onMelee?.(e);
+        },
+        meleehit: (payload) => {
+          const e = payload as MeleeHitEvent;
+          if (e && e.id !== this.id) this.onMeleeHit?.(e);
+        },
         puspawn: (payload) => {
           const e = payload as PowerupSpawnEvent;
           // Global event: server fans out to ALL (incl. late joiners re-announces).
@@ -481,6 +515,20 @@ export class Multiplayer {
   /** Tell `targetId` it was hit by our kamehameha (it launches off + dies). */
   sendKameHit(targetId: string, dir: { x: number; y: number; z: number }) {
     this.room.broadcast("kamehit", { id: this.id, target: targetId, dir });
+  }
+
+  /** Broadcast a melee staff swing so remotes drag the smoke arc. */
+  sendMelee(
+    origin: { x: number; y: number; z: number },
+    dir: { x: number; y: number; z: number },
+  ) {
+    this.room.broadcast("melee", { id: this.id, origin, dir });
+  }
+
+  /** Tell `targetId` our staff clubbed it (applies a small knockback). Damage
+   *  itself rides the normal server-authoritative "hit" path (sendHit). */
+  sendMeleeHit(targetId: string, dir: { x: number; y: number; z: number }) {
+    this.room.broadcast("meleehit", { id: this.id, target: targetId, dir });
   }
 
   /** Update presence metadata (e.g. on respawn or after a kill). */

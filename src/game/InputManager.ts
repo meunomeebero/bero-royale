@@ -7,7 +7,8 @@ export class InputManager {
   private shiftJustPressed = false;
   private mouseJustPressed = false;
   private mouseHeld = false;
-  private tabJustPressed = false; // Tab = toggle fire mode
+  private tabJustPressed = false; // Tab = cycle weapon slots
+  private hotbarJustPressed: number | null = null; // keys 1/2/3 → weapon slot 0/1/2
 
   // Mobile stick state
   private moveAxis = { x: 0, y: 0 };
@@ -82,6 +83,12 @@ export class InputManager {
     }
     if (e.code === "Tab" && !this.keys.has("Tab")) {
       this.tabJustPressed = true;
+    }
+    // Minecraft-style hotbar select: 1/2/3 → weapon slot 0/1/2.
+    if (!this.keys.has(e.code)) {
+      if (e.code === "Digit1") this.hotbarJustPressed = 0;
+      else if (e.code === "Digit2") this.hotbarJustPressed = 1;
+      else if (e.code === "Digit3") this.hotbarJustPressed = 2;
     }
     if (
       (e.code === "ShiftLeft" || e.code === "ShiftRight") &&
@@ -239,13 +246,20 @@ export class InputManager {
     return this.mouseHeld || this.aiming;
   }
 
-  /** Returns true exactly once per Tab press (toggle fire mode). */
+  /** Returns true exactly once per Tab press (cycle weapon slots). */
   consumeTab(): boolean {
     if (this.tabJustPressed) {
       this.tabJustPressed = false;
       return true;
     }
     return false;
+  }
+
+  /** Returns the weapon slot (0/1/2) selected via keys 1/2/3 since the last call. */
+  consumeHotbar(): number | null {
+    const v = this.hotbarJustPressed;
+    this.hotbarJustPressed = null;
+    return v;
   }
 
   /** Push-to-talk: true while G is held. */

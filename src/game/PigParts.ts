@@ -288,3 +288,49 @@ export function buildGun(): { group: THREE.Group; barrelTip: THREE.Object3D } {
 
   return { group, barrelTip };
 }
+
+/**
+ * A floating wooden melee staff (no hand — held by an "invisible hand" in front
+ * of the pig). `pivot` is rotated to perform the 180° swing; `tip` marks the
+ * staff head's world position for the swing smoke trail + impact origin.
+ */
+export function buildStaff(): {
+  group: THREE.Group;
+  pivot: THREE.Group;
+  tip: THREE.Object3D;
+} {
+  const group = new THREE.Group();
+  const pivot = new THREE.Group();
+  group.add(pivot);
+
+  const wood = new THREE.MeshLambertMaterial({
+    color: new THREE.Color("#9c6b3f"),
+    emissive: new THREE.Color("#3a2616"),
+    emissiveIntensity: 0.18,
+  });
+  const woodDark = new THREE.MeshLambertMaterial({
+    color: new THREE.Color("#7a4f2c"),
+    emissive: new THREE.Color("#2c1c10"),
+    emissiveIntensity: 0.18,
+  });
+
+  // The shaft extends outward from the pivot along +X so rotating the pivot
+  // around Y sweeps it in a horizontal arc in front of the pig.
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.075, 0.075), wood);
+  shaft.position.set(0.27, 0, 0);
+  pivot.add(shaft);
+
+  // A chunkier head + a small grip ring at the base for a club read.
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.15), woodDark);
+  head.position.set(0.52, 0, 0);
+  pivot.add(head);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.11), woodDark);
+  grip.position.set(0.04, 0, 0);
+  pivot.add(grip);
+
+  const tip = new THREE.Object3D();
+  tip.position.set(0.6, 0, 0);
+  pivot.add(tip);
+
+  return { group, pivot, tip };
+}

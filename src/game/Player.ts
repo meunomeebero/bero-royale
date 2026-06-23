@@ -9,7 +9,7 @@ import type { GrassPoof } from "./GrassPoof";
 import { Avatar, AVATAR_HEIGHT } from "./Avatar";
 import { ModelLibrary } from "./ModelLibrary";
 import { BlobShadow } from "./Shadow";
-import { buildGun } from "./PigParts";
+import { buildGun, buildStaff } from "./PigParts";
 import {
   MOVE_SPEED,
   JUMP_VELOCITY,
@@ -44,7 +44,15 @@ const DASH_IMPULSE = 36.0; // strong forward launch (~9 tiles)
 // "concentrated" — hold 5s to charge the super shot; release when ready to fire.
 // "boss"         — hidden easter egg (name "bero", double-tap Tab): 3× HP, 10×
 //                  size, rapid-fire mega beams at half damage.
-export type FireMode = "constant" | "concentrated" | "boss";
+export type FireMode = "constant" | "concentrated" | "boss" | "staff";
+
+/** Hotbar weapon slots (Minecraft-style): index → FireMode. "boss" is a separate
+ *  override (the "bero" easter egg), NOT a slot. */
+const SLOT_MODES: FireMode[] = ["constant", "concentrated", "staff"];
+
+// ── Melee staff (hotbar slot 3) — swing timing; damage/range live in Game ──
+const MELEE_COOLDOWN = 0.45; // seconds between swings while held
+const MELEE_SWING_DUR = 0.28; // swing animation length (the 180° sweep)
 const KAME_CHARGE = 5.0; // seconds to hold before the concentrated shot is ready
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
@@ -92,6 +100,13 @@ export class Player implements BulletTarget {
   private kameState: "idle" | "charging" | "ready" = "idle";
   private kameTimer = 0; // seconds held while "charging"
   private onKame?: (origin: THREE.Vector3, dir: THREE.Vector3, lethal: boolean) => void;
+  // Melee staff (slot 3) — floats in front, swings 180° on attack.
+  private staff!: THREE.Group;
+  private staffPivot!: THREE.Group;
+  private staffTip!: THREE.Object3D;
+  private swingTimer = 0; // >0 while the swing animation plays
+  private swingSmokeAccum = 0; // throttles the swing smoke trail
+  private onMelee?: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
   /** Optional spawn chooser — Game returns a spot far from other players so the
    *  player doesn't respawn on top of an enemy and die instantly. */
   private spawnPicker?: () => THREE.Vector3 | null;
@@ -183,6 +198,16 @@ export class Player implements BulletTarget {
     this.gunBarrelTip = barrelTip;
     this.gun.position.set(this.gunBaseX, 0, -0.3);
     this.aimGroup.add(this.gun);
+
+    // Wooden melee staff (slot 3) — floats in front like the gun, hidden until
+    // the staff weapon is selected.
+    const staffParts = buildStaff();
+    this.staff = staffParts.group;
+    this.staffPivot = staffParts.pivot;
+    this.staffTip = staffParts.tip;
+    this.staff.position.set(this.gunBaseX + 0.05, 0, -0.3);
+    this.staff.visible = false;
+    this.aimGroup.add(this.staff);
 
     this.respawn();
   }
@@ -301,10 +326,32 @@ export class Player implements BulletTarget {
     this.bossUnlocked = on;
   }
 
-  /** Normal Tab cycle: boss → constant; otherwise constant ↔ concentrated. */
+  /** Tab cycles the 3 hotbar slots (constant → concentrated → staff → …); from
+   *  the boss override it drops back to the first slot. */
   toggleFireMode() {
-    if (this.fireMode === "boss") this.setFireMode("constant");
-    else this.setFireMode(this.fireMode === "constant" ? "concentrated" : "constant");
+    const i = SLOT_MODES.indexOf(this.fireMode);
+    this.setFireMode(SLOT_MODES[i < 0 ? 0 : (i + 1) % SLOT_MODES.length]);
+  }
+
+  /** Select a hotbar slot directly (keys 1/2/3 or a HUD slot click). */
+  setWeaponSlot(slot: number) {
+    const m = SLOT_MODES[Math.max(0, Math.min(SLOT_MODES.length - 1, slot))];
+    if (m !== this.fireMode) this.setFireMode(m);
+  }
+
+  /** Active hotbar slot (0/1/2), or -1 while in the boss override. */
+  getWeaponSlot(): number {
+    return SLOT_MODES.indexOf(this.fireMode);
+  }
+
+  /** Small knockback impulse (reuses the dash-velocity mechanism). */
+  applyKnockback(dir: THREE.Vector3, force: number) {
+    this.dashVel.set(dir.x * force, 0, dir.z * force);
+  }
+
+  /** Register the melee-swing handler (Game resolves the arc hit + netcode). */
+  setOnMelee(cb: (origin: THREE.Vector3, dir: THREE.Vector3) => void) {
+    this.onMelee = cb;
   }
 
   private setFireMode(mode: FireMode) {
@@ -312,6 +359,9 @@ export class Player implements BulletTarget {
     this.fireMode = mode;
     this.kameState = "idle";
     this.kameTimer = 0;
+    // Swap the held item: wooden staff for melee, gun for every shooting mode.
+    this.staff.visible = mode === "staff";
+    this.gun.visible = mode !== "staff";
     if ((mode === "boss") !== wasBoss) this.applyBossState(mode === "boss");
   }
 
@@ -707,6 +757,9 @@ export class Player implements BulletTarget {
       }
       this.lastTabMs = now;
     }
+    // Minecraft-style hotbar select (keys 1/2/3).
+    const slot = this.input.consumeHotbar();
+    if (slot !== null) this.setWeaponSlot(slot);
 
     // Shooting. The MODE decides what holding does:
     //  • constant     → hold to autofire normal shots (comfortable).
@@ -721,6 +774,12 @@ export class Player implements BulletTarget {
       if (held && this.shootTimer <= 0) {
         this.fireKame(false); // mega beam, non-lethal (2 hits to kill)
         this.shootTimer = BOSS_CADENCE;
+      }
+    } else if (this.fireMode === "staff") {
+      if (this.kameState !== "idle") this.kameState = "idle";
+      if (held && this.shootTimer <= 0) {
+        this.swingStaff(); // 180° melee swing (3 dmg + knockback, via onMelee)
+        this.shootTimer = MELEE_COOLDOWN;
       }
     } else if (this.fireMode === "constant") {
       if (this.kameState !== "idle") this.kameState = "idle"; // safety
@@ -863,6 +922,28 @@ export class Player implements BulletTarget {
     this.gunRecoil += (0 - this.gunRecoil) * Math.min(1, 18 * dt);
     this.gun.position.x = this.gunBaseX - this.gunRecoil;
 
+    // Staff swing: sweep the pivot 180° over the swing, dragging a smoke trail
+    // along the head's arc. Settles back to rest when idle.
+    if (this.swingTimer > 0) {
+      this.swingTimer = Math.max(0, this.swingTimer - dt);
+      const t = 1 - this.swingTimer / MELEE_SWING_DUR; // 0 → 1
+      this.staffPivot.rotation.y = (-0.5 + t) * Math.PI; // -90° → +90°
+      this.swingSmokeAccum -= dt;
+      if (this.smoke && this.swingSmokeAccum <= 0) {
+        this.swingSmokeAccum = 0.03;
+        const tipPos = new THREE.Vector3();
+        this.staffTip.getWorldPosition(tipPos);
+        this.smoke.spawnPuff(
+          tipPos,
+          this.getAimDirection(this.tmpDir).clone(),
+          2,
+          "#c9b79a",
+        );
+      }
+    } else if (this.staffPivot.rotation.y !== 0) {
+      this.staffPivot.rotation.y = 0;
+    }
+
     // Footstep sound + grass particles while walking on ground
     const speedXY = Math.hypot(this.velocity.x, this.velocity.z);
     if (this.grounded && speedXY > 0.6) {
@@ -929,6 +1010,17 @@ export class Player implements BulletTarget {
       new THREE.Vector3(this.root.position.x, sy + 0.05, this.root.position.z),
       18,
     );
+  }
+
+  /** Start a melee swing: kick off the 180° animation + a whoosh, and hand the
+   *  arc-hit resolution (damage + knockback + netcode) to Game via onMelee. */
+  private swingStaff() {
+    const dir = this.getAimDirection(this.tmpDir).clone();
+    this.swingTimer = MELEE_SWING_DUR;
+    this.swingSmokeAccum = 0;
+    this.onMelee?.(this.position.clone(), dir);
+    this.audio.playJump(this.root.position, true); // soft whoosh
+    this.targetScale.set(1.2, 0.85, 1.2);
   }
 
   private shoot() {

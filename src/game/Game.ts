@@ -57,6 +57,12 @@ const AMBIENT_BOT_COUNT = 6;
 // Boss mega beam does half a normal target's max HP per hit (two hits to kill).
 const BOSS_SHOT_DAMAGE = 5;
 
+// ── Melee staff (hotbar slot 3) — arc hit resolution ──
+const MELEE_DAMAGE = 3; // HP per swing
+const MELEE_RANGE = 1.6; // staff reach (world units)
+const MELEE_ARC_DOT = -0.15; // forward cone: dot(toTarget, aim) >= this (~190°, generous)
+const MELEE_KNOCKBACK = 16; // push impulse applied to a hit target
+
 // Subtle screen shake on taking damage
 const SHAKE_DURATION = 0.28;
 const SHAKE_MAGNITUDE = 0.5;
@@ -413,6 +419,7 @@ export class Game {
         { x: dir.x, y: dir.y, z: dir.z },
       );
     });
+    this.player.setOnMelee((origin, dir) => this.handleMelee(origin, dir));
     this.kame.onHit = (target, dir, lethal, ownerId) =>
       this.onKameHit(target, dir, lethal, ownerId);
     this.bullets.registerTarget(this.player);
@@ -535,6 +542,29 @@ export class Game {
       this.kame.impactAt(hitPos);
       this.audio.playShot(hitPos, false);
       this.player.kamehamehaHit();
+    });
+    // Remote staff swing → drag a smoke arc on this client (visual only).
+    this.mp.setMeleeHandler((e) => {
+      const rp = this.remotePlayers.get(e.id);
+      const pos = rp
+        ? rp.getPosition()
+        : new THREE.Vector3(e.origin.x, e.origin.y, e.origin.z);
+      const dir = new THREE.Vector3(e.dir.x, 0, e.dir.z);
+      this.smoke.spawnPuff(
+        new THREE.Vector3(pos.x, pos.y + 0.4, pos.z),
+        dir,
+        6,
+        "#c9b79a",
+      );
+    });
+    // We got clubbed by a remote staff → small knockback (damage arrives via the
+    // server "hit" path). Best-effort: the server may re-assert our position.
+    this.mp.setMeleeHitHandler((e) => {
+      if (e.target !== this.mp?.id) return;
+      this.player.applyKnockback(
+        new THREE.Vector3(e.dir.x, 0, e.dir.z),
+        MELEE_KNOCKBACK,
+      );
     });
     // Relayed kill-feed events from other players → surface to React. Skip events
     // where WE are the victim: we self-report our own death locally (below) with
@@ -685,6 +715,53 @@ export class Game {
    *  • non-lethal (boss mega beam) → relayed as normal hits.
    *  Both deal half max HP per hit, so two hits kill (no insta-kill).
    */
+  /**
+   * Resolve a melee staff swing: damage + knockback every alive target in a
+   * forward arc within MELEE_RANGE. Local bots take damage + knockback directly;
+   * remote players take server-authoritative damage (sendHit ×N, soaks shield)
+   * plus a relayed knockback cue. Spawns impact smoke + broadcasts the swing.
+   */
+  private handleMelee(origin: THREE.Vector3, dir: THREE.Vector3) {
+    this.mp?.sendMelee(
+      { x: origin.x, y: origin.y, z: origin.z },
+      { x: dir.x, y: dir.y, z: dir.z },
+    );
+    const r2 = MELEE_RANGE * MELEE_RANGE;
+    const inArc = (px: number, pz: number): THREE.Vector3 | null => {
+      const dx = px - origin.x;
+      const dz = pz - origin.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > r2) return null;
+      const len = Math.sqrt(d2) || 1;
+      const nx = dx / len;
+      const nz = dz / len;
+      if (nx * dir.x + nz * dir.z < MELEE_ARC_DOT) return null; // behind the swing
+      return new THREE.Vector3(nx, 0, nz);
+    };
+    for (const bot of this.bots) {
+      if (!bot.isAlive()) continue;
+      const push = inArc(bot.root.position.x, bot.root.position.z);
+      if (!push) continue;
+      this.meleeImpactFx(bot.root.position, push);
+      for (let i = 0; i < MELEE_DAMAGE && bot.isAlive(); i++) bot.takeHit(push);
+      bot.knockback(push, MELEE_KNOCKBACK);
+    }
+    for (const rp of this.remotePlayers.values()) {
+      if (!rp.isAlive()) continue;
+      const p = rp.getPosition();
+      const push = inArc(p.x, p.z);
+      if (!push) continue;
+      this.meleeImpactFx(p, push);
+      for (let i = 0; i < MELEE_DAMAGE; i++) this.mp?.sendHit(rp.id);
+      this.mp?.sendMeleeHit(rp.id, { x: push.x, y: 0, z: push.z });
+    }
+  }
+
+  /** White-wood impact smoke burst at a melee-hit target. */
+  private meleeImpactFx(pos: THREE.Vector3, dir: THREE.Vector3) {
+    this.smoke.spawnPuff(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), dir, 8, "#bfae90");
+  }
+
   private onKameHit(
     target: BulletTarget,
     dir: THREE.Vector3,
@@ -1058,6 +1135,7 @@ export class Game {
           talking: this.lastTalking,
           voiceMode: this.voiceMode,
           fireMode: "constant",
+          weaponSlot: 0,
           chargeProgress: 0,
           respawnIn: 0,
           shield: 0,
@@ -1087,6 +1165,7 @@ export class Game {
         talking: this.lastTalking,
         voiceMode: this.voiceMode,
         fireMode: this.player.getFireMode(),
+        weaponSlot: this.player.getWeaponSlot(),
         chargeProgress: this.player.getChargeProgress(),
         respawnIn: Math.ceil(this.player.getRespawnRemaining()),
         shield: this.player.getShield(),
@@ -1261,6 +1340,12 @@ export class Game {
   /** Toggle fire mode (HUD button; Tab also toggles via InputManager). */
   toggleFireMode() {
     this.player?.toggleFireMode();
+    this.notifyStats();
+  }
+
+  /** Select a hotbar weapon slot (0/1/2) — from a HUD slot click/tap. */
+  selectWeaponSlot(slot: number) {
+    this.player?.setWeaponSlot(slot);
     this.notifyStats();
   }
   /** Current fire mode for the HUD toggle. */
@@ -1679,6 +1764,7 @@ export class Game {
     let lastTalkingFlag = this.lastTalking;
     let lastCharge = 0; // charge progress in whole % (drives the toggle fill)
     let lastRespawnSec = 0; // respawn countdown in whole seconds (ticks while dead)
+    let lastSlot = this.player.getWeaponSlot(); // active hotbar weapon slot
     const loop = () => {
       const dt = this.paused ? 0 : Math.min(this.clock.getDelta(), 1 / 30);
 
@@ -1872,6 +1958,7 @@ export class Game {
         const dashC = Math.floor(this.player.getDashCharges());
         const chargeC = Math.round(this.player.getChargeProgress() * 100);
         const respawnSec = Math.ceil(this.player.getRespawnRemaining());
+        const slotC = this.player.getWeaponSlot();
         if (
           sec !== lastNotifySecond ||
           hp !== lastHealth ||
@@ -1881,7 +1968,8 @@ export class Game {
           this.kills !== lastKills ||
           this.lastTalking !== lastTalkingFlag ||
           chargeC !== lastCharge ||
-          respawnSec !== lastRespawnSec
+          respawnSec !== lastRespawnSec ||
+          slotC !== lastSlot
         ) {
           lastNotifySecond = sec;
           lastHealth = hp;
@@ -1892,6 +1980,7 @@ export class Game {
           lastTalkingFlag = this.lastTalking;
           lastCharge = chargeC;
           lastRespawnSec = respawnSec;
+          lastSlot = slotC;
           this.notifyStats();
         }
       } else {
@@ -1978,6 +2067,8 @@ export interface GameStats {
   talking: boolean;
   voiceMode: VoiceMode;
   fireMode: FireMode;
+  /** Active hotbar weapon slot: 0=constant, 1=concentrated, 2=staff; -1 in boss. */
+  weaponSlot: number;
   /** 0→1 concentrated-shot charge progress (drives the HUD toggle fill). */
   chargeProgress: number;
   /** Whole seconds until the local player respawns (0 while alive). */

@@ -2,13 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Pause,
   Play,
-  MousePointer2,
   Box,
   Wind,
   LogOut,
   Mic,
-  Zap,
-  Crown,
   Settings,
   Wifi,
   Home,
@@ -32,6 +29,7 @@ import { VoiceSettingsModal } from "@/components/hud/VoiceSettingsModal";
 import { ChatPanel, type ChatMessage } from "@/components/hud/ChatPanel";
 import { PlayersList } from "@/components/hud/PlayersList";
 import { PingBadge } from "@/components/hud/PingBadge";
+import { WeaponHotbar } from "@/components/hud/WeaponHotbar";
 import { KillFeed, type KillEvent } from "@/components/hud/KillFeed";
 import { BoostBar } from "@/components/hud/BoostBar";
 import { PickupToast, type PickupEvent } from "@/components/hud/PickupToast";
@@ -56,6 +54,7 @@ const INITIAL_STATS: GameStats = {
   talking: false,
   voiceMode: "ptt",
   fireMode: "constant",
+  weaponSlot: 0,
   chargeProgress: 0,
   respawnIn: 0,
   shield: 0,
@@ -263,8 +262,8 @@ const Index = () => {
     gameRef.current?.setInputEnabled(!focused);
   }, []);
 
-  const handleToggleFireMode = useCallback(() => {
-    gameRef.current?.toggleFireMode();
+  const handleSelectSlot = useCallback((slot: number) => {
+    gameRef.current?.selectWeaponSlot(slot);
   }, []);
 
   return (
@@ -502,57 +501,16 @@ const Index = () => {
               never covers the top stats or the kill feed. Renders nothing when
               no boosts are active. */}
           <BoostBar boosts={stats.boosts} isMobile={isMobile} />
-          <div className="flex items-center gap-2.5">
-            {/* Fire-mode toggle (Tab also toggles on desktop). While charging the
-                concentrated shot, a honey bar fills under the label = loading. */}
-            {(() => {
-              const fireAccent =
-                stats.fireMode === "boss"
-                  ? HUD.danger
-                  : stats.fireMode === "concentrated"
-                    ? HUD.terracotta
-                    : HUD.rose;
-              const FireIcon =
-                stats.fireMode === "boss"
-                  ? Crown
-                  : stats.fireMode === "concentrated"
-                    ? Zap
-                    : MousePointer2;
-              const fireLabel =
-                stats.fireMode === "boss"
-                  ? "BOSS"
-                  : stats.fireMode === "concentrated"
-                    ? "Concentrado"
-                    : "Constante";
-              const charging =
-                stats.fireMode === "concentrated" && stats.chargeProgress > 0;
-              const chargeSegs = 10;
-              return (
-                <GamePanel accent={fireAccent} radius={10}>
-                  <button
-                    type="button"
-                    onPointerUp={handleToggleFireMode}
-                    aria-label="Trocar modo de tiro"
-                    style={{ touchAction: "manipulation" }}
-                    className="pointer-events-auto relative flex items-center gap-2 px-3 py-2 transition-opacity hover:opacity-90"
-                  >
-                    <IconWell icon={FireIcon} accent={fireAccent} size={26} />
-                    <span className="flex flex-col items-start gap-1">
-                      <span className="hud-text text-[13px] font-bold leading-none">
-                        {fireLabel}
-                      </span>
-                      {charging && (
-                        <SegBar
-                          segments={chargeSegs}
-                          filled={Math.round(stats.chargeProgress * chargeSegs)}
-                          accent={HUD.honey}
-                        />
-                      )}
-                    </span>
-                  </button>
-                </GamePanel>
-              );
-            })()}
+          <div className="flex items-end gap-2.5">
+            {/* Minecraft-style weapon hotbar: 1 constant · 2 concentrated · 3 staff.
+                Keys 1/2/3 or click/tap a slot. (BOSS, the "bero" double-tap-Tab
+                override, lights no slot.) */}
+            <WeaponHotbar
+              slot={stats.weaponSlot}
+              chargeProgress={stats.chargeProgress}
+              isMobile={isMobile}
+              onSelect={handleSelectSlot}
+            />
             <DashMeter charges={stats.dashCharges} max={stats.dashMaxCharges} compact />
           </div>
         </div>

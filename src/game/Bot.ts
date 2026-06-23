@@ -258,6 +258,13 @@ export class Bot implements BulletTarget {
     return true;
   }
 
+  /** External knockback impulse (e.g. a melee staff push) added to velocity. */
+  knockback(dir: THREE.Vector3, force: number): void {
+    if (this.state !== "alive") return;
+    this.velocity.x += dir.x * force;
+    this.velocity.z += dir.z * force;
+  }
+
   /** Insta-kill from a Kamehameha beam (ignores incremental health). */
   kamehamehaHit(): void {
     if (this.behavior === "ambient") return;

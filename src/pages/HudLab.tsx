@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Crown, MousePointer2, Zap } from "lucide-react";
 import type { GameStats } from "@/game/Game";
 import { StatsBar } from "@/components/hud/StatsBar";
 import { BoostBar } from "@/components/hud/BoostBar";
@@ -10,7 +9,8 @@ import { Leaderboard } from "@/components/hud/Leaderboard";
 import { PlayersList } from "@/components/hud/PlayersList";
 import { ChatPanel, type ChatMessage } from "@/components/hud/ChatPanel";
 import { PingBadge } from "@/components/hud/PingBadge";
-import { GamePanel, IconWell, KeyCap, SegBar, HUD } from "@/components/hud/primitives";
+import { GamePanel, KeyCap, SegBar, HUD } from "@/components/hud/primitives";
+import { WeaponHotbar } from "@/components/hud/WeaponHotbar";
 
 /**
  * SECRET HUD LAB (/hudlab) — renders the in-game HUD over a static cozy backdrop
@@ -99,6 +99,7 @@ export default function HudLab() {
     elapsed: 137, topScore: 24, botCount: 3, health, maxHealth: 10, isDead: false,
     dashCharges: 2, dashMaxCharges: 3, kills: 8, mode: "multiplayer", mpConnected: true,
     mpLocal: false, mpPlayers: 9, ping: 42, talking: false, voiceMode: "ptt", fireMode,
+    weaponSlot: fireMode === "concentrated" ? 1 : fireMode === "boss" ? -1 : 0,
     chargeProgress: 0.6, respawnIn: 0, shield, leaderboard: [], roster: ROSTER,
     bestRuns: BEST_RUNS, boosts,
   };
@@ -161,20 +162,14 @@ export default function HudLab() {
       >
         {showToast && <PickupToast pickup={pickup} isMobile={isMobile} />}
         <BoostBar boosts={stats.boosts} isMobile={isMobile} />
-        {/* mock controls (fire toggle + dash) for faithful stacking — mirrors the
-            real Index.tsx styling so the lab screenshot stays representative. */}
-        <div className="flex items-center gap-2.5">
-          {(() => {
-            const acc = fireMode === "boss" ? HUD.danger : fireMode === "concentrated" ? HUD.terracotta : HUD.rose;
-            const Icon = fireMode === "boss" ? Crown : fireMode === "concentrated" ? Zap : MousePointer2;
-            const label = fireMode === "boss" ? "BOSS" : fireMode === "concentrated" ? "Concentrado" : "Constante";
-            return (
-              <GamePanel accent={acc} className="flex items-center gap-2" style={{ padding: isMobile ? "6px 10px" : "7px 12px" }}>
-                <IconWell icon={Icon} accent={acc} size={isMobile ? 22 : 26} />
-                <span className="hud-text font-bold" style={{ fontSize: isMobile ? 13 : 14 }}>{label}</span>
-              </GamePanel>
-            );
-          })()}
+        {/* Weapon hotbar + dash, mirroring the real Index.tsx bottom controls. */}
+        <div className="flex items-end gap-2.5">
+          <WeaponHotbar
+            slot={stats.weaponSlot}
+            chargeProgress={stats.chargeProgress}
+            isMobile={isMobile}
+            onSelect={() => {}}
+          />
           <GamePanel accent={HUD.honey} className="flex items-center gap-2" style={{ padding: isMobile ? "6px 10px" : "7px 12px" }}>
             <SegBar segments={3} filled={2} accent={HUD.honey} isMobile={isMobile} />
             <KeyCap>Shift</KeyCap>
