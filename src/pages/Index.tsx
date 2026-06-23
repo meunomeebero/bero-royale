@@ -31,6 +31,7 @@ import { Leaderboard } from "@/components/hud/Leaderboard";
 import { VoiceSettingsModal } from "@/components/hud/VoiceSettingsModal";
 import { ChatPanel, type ChatMessage } from "@/components/hud/ChatPanel";
 import { PlayersList } from "@/components/hud/PlayersList";
+import { PingBadge } from "@/components/hud/PingBadge";
 import { KillFeed, type KillEvent } from "@/components/hud/KillFeed";
 import { BoostBar } from "@/components/hud/BoostBar";
 import { PickupToast, type PickupEvent } from "@/components/hud/PickupToast";
@@ -51,6 +52,7 @@ const INITIAL_STATS: GameStats = {
   mpConnected: false,
   mpLocal: false,
   mpPlayers: 0,
+  ping: null,
   talking: false,
   voiceMode: "ptt",
   fireMode: "constant",
@@ -288,23 +290,26 @@ const Index = () => {
           {/* Left: connection badge + chat (multiplayer only) */}
           <div className="flex flex-col items-start gap-1">
             {stats.mode === "multiplayer" && (
-              <GamePanel
-                accent={stats.mpConnected ? HUD.success : HUD.muted}
-                radius={999}
-                className="pointer-events-none flex items-center gap-1.5"
-                style={{ padding: "3px 8px 3px 3px" }}
-              >
-                <IconWell
-                  icon={stats.mpConnected ? (stats.mpLocal ? Home : Wifi) : Wifi}
+              <div className="flex items-center gap-1.5">
+                <GamePanel
                   accent={stats.mpConnected ? HUD.success : HUD.muted}
-                  size={18}
-                />
-                <span className="hud-text text-[10px] font-bold leading-none">
-                  {stats.mpConnected
-                    ? `${stats.mpLocal ? "Local" : "Online"} · ${stats.mpPlayers}`
-                    : "..."}
-                </span>
-              </GamePanel>
+                  radius={999}
+                  className="pointer-events-none flex items-center gap-1.5"
+                  style={{ padding: "3px 8px 3px 3px" }}
+                >
+                  <IconWell
+                    icon={stats.mpConnected ? (stats.mpLocal ? Home : Wifi) : Wifi}
+                    accent={stats.mpConnected ? HUD.success : HUD.muted}
+                    size={18}
+                  />
+                  <span className="hud-text text-[10px] font-bold leading-none">
+                    {stats.mpConnected
+                      ? `${stats.mpLocal ? "Local" : "Online"} · ${stats.mpPlayers}`
+                      : "..."}
+                  </span>
+                </GamePanel>
+                {!stats.mpLocal && <PingBadge ping={stats.ping} isMobile />}
+              </div>
             )}
             {stats.mode === "multiplayer" && (
               <PlayersList players={stats.roster} isMobile isBero={isBero} />
@@ -368,23 +373,26 @@ const Index = () => {
             {/* Connection badge + chat (left column) */}
             <div className="flex flex-col items-start gap-2">
               {stats.mode === "multiplayer" && (
-                <GamePanel
-                  accent={stats.mpConnected ? HUD.success : HUD.muted}
-                  radius={999}
-                  className="pointer-events-none flex items-center gap-2"
-                  style={{ padding: "4px 12px 4px 4px" }}
-                >
-                  <IconWell
-                    icon={stats.mpConnected ? (stats.mpLocal ? Home : Wifi) : Wifi}
+                <div className="flex items-center gap-2">
+                  <GamePanel
                     accent={stats.mpConnected ? HUD.success : HUD.muted}
-                    size={22}
-                  />
-                  <span className="hud-text text-[12px] font-bold leading-none">
-                    {stats.mpConnected
-                      ? `${stats.mpLocal ? "Local" : "Online"} · ${stats.mpPlayers} ${stats.mpPlayers === 1 ? "jogador" : "jogadores"}`
-                      : "Conectando..."}
-                  </span>
-                </GamePanel>
+                    radius={999}
+                    className="pointer-events-none flex items-center gap-2"
+                    style={{ padding: "4px 12px 4px 4px" }}
+                  >
+                    <IconWell
+                      icon={stats.mpConnected ? (stats.mpLocal ? Home : Wifi) : Wifi}
+                      accent={stats.mpConnected ? HUD.success : HUD.muted}
+                      size={22}
+                    />
+                    <span className="hud-text text-[12px] font-bold leading-none">
+                      {stats.mpConnected
+                        ? `${stats.mpLocal ? "Local" : "Online"} · ${stats.mpPlayers} ${stats.mpPlayers === 1 ? "jogador" : "jogadores"}`
+                        : "Conectando..."}
+                    </span>
+                  </GamePanel>
+                  {!stats.mpLocal && <PingBadge ping={stats.ping} />}
+                </div>
               )}
               {stats.mode === "multiplayer" && (
                 <PlayersList players={stats.roster} isBero={isBero} />

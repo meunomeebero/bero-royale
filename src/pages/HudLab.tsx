@@ -9,6 +9,7 @@ import type { KillEvent } from "@/components/hud/KillFeed";
 import { Leaderboard } from "@/components/hud/Leaderboard";
 import { PlayersList } from "@/components/hud/PlayersList";
 import { ChatPanel, type ChatMessage } from "@/components/hud/ChatPanel";
+import { PingBadge } from "@/components/hud/PingBadge";
 import { GamePanel, IconWell, KeyCap, SegBar, HUD } from "@/components/hud/primitives";
 
 /**
@@ -97,7 +98,7 @@ export default function HudLab() {
   const stats: GameStats = {
     elapsed: 137, topScore: 24, botCount: 3, health, maxHealth: 10, isDead: false,
     dashCharges: 2, dashMaxCharges: 3, kills: 8, mode: "multiplayer", mpConnected: true,
-    mpLocal: false, mpPlayers: 9, talking: false, voiceMode: "ptt", fireMode,
+    mpLocal: false, mpPlayers: 9, ping: 42, talking: false, voiceMode: "ptt", fireMode,
     chargeProgress: 0.6, respawnIn: 0, shield, leaderboard: [], roster: ROSTER,
     bestRuns: BEST_RUNS, boosts,
   };
@@ -143,8 +144,9 @@ export default function HudLab() {
       {/* Right: ranking */}
       <Leaderboard bestRuns={stats.bestRuns} mode="multiplayer" isMobile={isMobile} />
 
-      {/* Left: players list + chat (mirrors the real left column) */}
+      {/* Left: ping + players list + chat (mirrors the real left column) */}
       <div className="absolute left-3 top-24 flex flex-col gap-2">
+        <PingBadge ping={stats.ping} isMobile={isMobile} />
         <PlayersList players={stats.roster} isMobile={isMobile} isBero={q("bero", "1") === "1"} />
         <ChatPanel messages={CHAT} onSend={() => {}} isMobile={isMobile} />
       </div>

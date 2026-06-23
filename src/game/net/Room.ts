@@ -49,6 +49,8 @@ export interface Room {
    * applyHit in-process and emits "died" via BroadcastChannel if the target dies.
    */
   sendHit(targetId: string): void;
+  /** Round-trip latency to the server in ms, or null if unknown / local room. */
+  getPing(): number | null;
   dispose(): void;
 }
 
@@ -71,6 +73,9 @@ class ServerRoom implements Room {
   private backoff = 500;
   /** First close after a clean connection reconnects immediately (no delay). */
   private firstReconnect = true;
+  /** Latest round-trip latency (ms) from the app-level ping/pong; null = unknown. */
+  private lastPing: number | null = null;
+  private pingTimer = 0;
 
   constructor(readonly id: string, private name: string) {
     this.meta = { id };
@@ -108,6 +113,7 @@ class ServerRoom implements Room {
       // transient blip), backing off only on repeated failures.
       this.firstReconnect = true;
       this.send({ t: "join", id: this.id, meta: this.meta });
+      this.startPing();
     };
 
     ws.onmessage = (e) => {
@@ -137,11 +143,16 @@ class ServerRoom implements Room {
           this.handlers.onMessage?.[msg.event]?.(msg.payload);
           break;
         case "pong":
+          if (typeof msg.ts === "number") {
+            this.lastPing = Math.max(0, Math.round(Date.now() - msg.ts));
+          }
           break;
       }
     };
 
     ws.onclose = (e) => {
+      this.stopPing();
+      this.lastPing = null; // latency unknown while disconnected
       this.handlers.onStatus?.("error");
       // Policy / capacity rejections (room full): retry slowly (~15s) instead
       // of hammering at the 2s cap. 1013 = "try again later", 1008 = policy violation.
@@ -204,8 +215,28 @@ class ServerRoom implements Room {
     this.send({ t: "hit", target: targetId });
   }
 
+  /** App-level RTT probe: timestamped ping every 1s; pong echoes `ts` back. */
+  private startPing() {
+    this.stopPing();
+    const probe = () => this.send({ t: "ping", ts: Date.now() });
+    probe();
+    this.pingTimer = window.setInterval(probe, 1000);
+  }
+
+  private stopPing() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = 0;
+    }
+  }
+
+  getPing(): number | null {
+    return this.lastPing;
+  }
+
   dispose() {
     this.disposed = true;
+    this.stopPing();
     clearTimeout(this.reconnectTimer);
     this.send({ t: "leave" });
     // Detach handlers before closing so a dispose-triggered onclose/onerror
@@ -402,6 +433,11 @@ class LocalRoom implements Room {
 
   private post(d: LocalMsg) {
     this.bc?.postMessage(d);
+  }
+
+  /** No server round-trip in local mode. */
+  getPing(): number | null {
+    return null;
   }
 
   dispose() {

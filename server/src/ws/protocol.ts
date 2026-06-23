@@ -52,8 +52,8 @@ export type ClientMsg =
   | { t: "hit"; target: string }
   // Optional graceful leave (socket close also triggers leave).
   | { t: "leave" }
-  // Optional keepalive (server also runs ws-level ping/pong).
-  | { t: "ping" };
+  // Optional keepalive + app-level RTT probe; server echoes `ts` back in pong.
+  | { t: "ping"; ts?: number };
 
 /** Server → client frames. */
 export type ServerMsg =
@@ -74,7 +74,8 @@ export type ServerMsg =
   | { t: "presence"; members: Member[] }
   // A relayed broadcast from another member; `from` is the sender's server-known id.
   | { t: "broadcast"; event: string; payload: unknown; from: string }
-  | { t: "pong" };
+  // Echoes the client ping's `ts` so the client can compute round-trip latency.
+  | { t: "pong"; ts?: number };
 
 /** A connected socket augmented with room/identity/presence + heartbeat state. */
 export type Sock = WebSocket & {

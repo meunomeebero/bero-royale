@@ -253,7 +253,8 @@ export function attachWebSocket(server: Server): RoomHub {
           break;
         }
         case "ping": {
-          const pong: ServerMsg = { t: "pong" };
+          // Echo the client's timestamp so it can compute round-trip latency.
+          const pong: ServerMsg = { t: "pong", ts: m.ts };
           ws.send(JSON.stringify(pong));
           break;
         }

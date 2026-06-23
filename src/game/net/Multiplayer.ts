@@ -518,6 +518,11 @@ export class Multiplayer {
     return this.presence.size;
   }
 
+  /** Round-trip latency to the server in ms (null = unknown / local room). */
+  getPing(): number | null {
+    return this.room.getPing();
+  }
+
   dispose() {
     this.room.dispose();
     this.remote.clear();

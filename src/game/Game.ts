@@ -1051,6 +1051,7 @@ export class Game {
           mpConnected: this.mp?.status === "online",
           mpLocal: this.mp?.kind === "local",
           mpPlayers: this.mp?.getPlayerCount() ?? 0,
+        ping: this.mp?.getPing() ?? null,
           talking: this.lastTalking,
           voiceMode: this.voiceMode,
           fireMode: "constant",
@@ -1079,6 +1080,7 @@ export class Game {
         mpLocal: this.mp?.kind === "local",
         // Presence already includes the server-driven bots, so this counts them.
         mpPlayers: this.mp?.getPlayerCount() ?? 0,
+        ping: this.mp?.getPing() ?? null,
         talking: this.lastTalking,
         voiceMode: this.voiceMode,
         fireMode: this.player.getFireMode(),
@@ -1968,6 +1970,8 @@ export interface GameStats {
   mpConnected: boolean;
   mpLocal: boolean;
   mpPlayers: number;
+  /** Round-trip latency to the server in ms (null = unknown / local mode). */
+  ping: number | null;
   talking: boolean;
   voiceMode: VoiceMode;
   fireMode: FireMode;
