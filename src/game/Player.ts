@@ -31,8 +31,8 @@ const HIT_FLASH_DURATION = 0.25;
 const MAX_SHIELD = 10;
 /** Temporary boosts (speed/rapid) stack up to this many pickups' worth of time. */
 const STACK_MAX = 3;
-/** Super shot damage — soaked shield-first, then HP (10 = a full bar if unshielded). */
-const SUPER_DAMAGE = 10;
+/** Super shot damage — soaked shield-first, then HP (5 = half a bar → two hits to kill). */
+const SUPER_DAMAGE = 5;
 
 const DASH_MAX_CHARGES = 3; // up to 3 dashes before recharging
 const DASH_RECHARGE = 3.0; // seconds to refill one charge (9s for all 3)
@@ -275,8 +275,8 @@ export class Player implements BulletTarget {
     return this.avatar.animalName;
   }
 
-  /** Fired when a beam launches. `lethal` true = concentrated (insta-kill);
-   *  false = boss mega beam (half damage). Game spawns the beam + relays. */
+  /** Fired when a beam launches. `lethal` true = concentrated super, false = boss
+   *  mega beam — both deal half-bar damage (two hits to kill). Game spawns + relays. */
   setOnKame(cb: (origin: THREE.Vector3, dir: THREE.Vector3, lethal: boolean) => void) {
     this.onKame = cb;
   }
@@ -383,8 +383,8 @@ export class Player implements BulletTarget {
   }
 
   /**
-   * Hit by a super shot: explode IMMEDIATELY (insta-kill + gore burst + boom),
-   * rather than being knocked off the arena.
+   * Hit by a super shot: take SUPER_DAMAGE (shield-first, then HP) with a blast +
+   * boom. Half a bar per hit, so two supers kill (no insta-kill / arena knockback).
    */
   kamehamehaHit() {
     if (this.state !== "alive") return;

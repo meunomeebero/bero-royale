@@ -681,9 +681,9 @@ export class Game {
 
   /**
    * The local player's beam hit a target.
-   *  • lethal (concentrated super shot) → insta-kill with an exaggerated gore
-   *    explosion + a satisfying boom (seen/heard by the shooter immediately).
-   *  • non-lethal (boss mega beam) → half damage, so two hits kill.
+   *  • lethal (concentrated super) → one dramatic kamehit event on a remote.
+   *  • non-lethal (boss mega beam) → relayed as normal hits.
+   *  Both deal half max HP per hit, so two hits kill (no insta-kill).
    */
   private onKameHit(
     target: BulletTarget,
@@ -709,24 +709,20 @@ export class Game {
     }
     // Attribute the kill so bot-vs-bot mega kills show in the feed.
     if (target instanceof Bot && name) target.recordHitBy(name);
-    if (lethal) {
-      if (target instanceof Bot) {
-        this.kameKillFx(target.position.x, target.position.z);
-        target.kamehamehaHit();
-      } else if (target instanceof RemotePlayer) {
-        this.recentHits.set(target.id, Date.now());
-        this.mp?.sendKameHit(target.id, { x: dir.x, y: dir.y, z: dir.z });
-        const p = target.getPosition();
-        this.kameKillFx(p.x, p.z);
+    // Both the concentrated super and the boss mega beam deal BOSS_SHOT_DAMAGE
+    // (half max HP) per hit — two hits to kill, NO insta-kill.
+    if (target instanceof Bot) {
+      for (let i = 0; i < BOSS_SHOT_DAMAGE && target.isAlive(); i++) {
+        target.takeHit(dir);
       }
-    } else {
-      // Boss mega beam: half max HP per hit (two hits to kill).
-      if (target instanceof Bot) {
-        for (let i = 0; i < BOSS_SHOT_DAMAGE && target.isAlive(); i++) {
-          target.takeHit(dir);
-        }
-      } else if (target instanceof RemotePlayer) {
-        this.recentHits.set(target.id, Date.now());
+      if (!target.isAlive()) this.kameKillFx(target.position.x, target.position.z);
+    } else if (target instanceof RemotePlayer) {
+      this.recentHits.set(target.id, Date.now());
+      if (lethal) {
+        // Concentrated super: one dramatic kamehit event — victim takes
+        // SUPER_DAMAGE (5) with the impact blast, instead of N normal hits.
+        this.mp?.sendKameHit(target.id, { x: dir.x, y: dir.y, z: dir.z });
+      } else {
         for (let i = 0; i < BOSS_SHOT_DAMAGE; i++) this.mp?.sendHit(target.id);
       }
     }
