@@ -42,18 +42,20 @@ const MAX_ACTIVE = 9;
 
 /**
  * Spatial spawn ZONE per kind, by distance from the map center:
- *  - "center": combat buffs (shield/rapid) spawn where the fighting is.
- *  - "periphery": healing spawns at the edges — you retreat from the center to
- *    recover, then push back in.
- *  - "any": everywhere (mobility buffs).
+ *  - "center": combat buffs (rapid) spawn where the fighting is.
+ *  - "periphery": defensive/mobility FARMING (shield, dash, heal) + crates spawn
+ *    at the edges — players ring the outside early to build up shield & dash,
+ *    THEN push to the center to fight.
+ *  - "any": everywhere (speed).
  */
 const KIND_ZONE: Record<string, "center" | "periphery" | "any"> = {
   heal: "periphery",
   rapid: "center",
-  shield: "center",
-  super: "center", // repurposed as a shield (see client POWERUP_KINDS)
+  shield: "periphery",
+  super: "periphery", // repurposed as a shield (see client POWERUP_KINDS)
   speed: "any",
-  dash: "any",
+  dash: "periphery",
+  crate: "periphery", // crates rain on the outer ring
 };
 /** Center zone: within this radius of the map center. */
 const CENTER_RADIUS = 14;
@@ -62,9 +64,9 @@ const PERIPHERY_RADIUS = 26;
 
 // ── Destructible crates: shoot one CRATE_HP times and it bursts into power-ups ──
 const CRATE_HP = 10; // shots to destroy
-const CRATE_MAX = 9; // cap so waves don't pile up indefinitely
-const CRATE_WAVE = 3; // crates dropped per cycle (a wave falls together)
-const CRATE_INTERVAL = 8; // a wave of crates falls this often (seconds)
+const CRATE_MAX = 14; // cap so waves don't pile up indefinitely (raised for periphery farming)
+const CRATE_WAVE = 4; // crates dropped per cycle (a wave falls together)
+const CRATE_INTERVAL = 5; // a wave of crates falls this often (seconds) — faster so the edges stay stocked
 const FIRST_CRATE_DELAY = 4; // first wave soon after a player joins
 const CRATE_DROPS = 3; // power-ups expelled when a crate bursts
 const CRATE_DROP_SPREAD = 3.0; // how far (world units) the drops scatter
@@ -92,8 +94,8 @@ const KIND_WEIGHTS: { kind: string; weight: number }[] = [
   { kind: "heal", weight: 2 },
   { kind: "speed", weight: 2 },
   { kind: "rapid", weight: 2 },
-  { kind: "dash", weight: 1 },
-  { kind: "shield", weight: 1 },
+  { kind: "dash", weight: 2 },
+  { kind: "shield", weight: 3 },
   { kind: "super", weight: 1 },
 ];
 const TOTAL_WEIGHT = KIND_WEIGHTS.reduce((s, k) => s + k.weight, 0);
@@ -373,7 +375,7 @@ export class PowerUpSim {
 
   private spawnCrate(room: string) {
     const id = `srvcr_${this.seq++}`;
-    const pos = this.pickSpawn(room, "crate"); // "crate" has no zone → "any"
+    const pos = this.pickSpawn(room, "crate"); // crate zone = periphery (KIND_ZONE)
     const cr: ServerCrate = { id, x: pos.x, z: pos.z, hp: CRATE_HP };
     this.crates.set(id, cr);
     this.announceCrate(room, cr);

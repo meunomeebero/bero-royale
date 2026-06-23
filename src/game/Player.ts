@@ -34,8 +34,9 @@ const STACK_MAX = 3;
 /** Super shot damage — soaked shield-first, then HP (5 = half a bar → two hits to kill). */
 const SUPER_DAMAGE = 5;
 
-const DASH_MAX_CHARGES = 3; // up to 3 dashes before recharging
-const DASH_RECHARGE = 3.0; // seconds to refill one charge (9s for all 3)
+const DASH_MAX_CHARGES = 3; // base dashes before recharging
+const DASH_MAX_CAP = 6; // hard cap including TEMPORARY bonus bars from dash pickups
+const DASH_RECHARGE = 3.0; // seconds to refill one BASE charge (9s for all 3)
 const DASH_IMPULSE = 36.0; // strong forward launch (~9 tiles)
 
 // ── Fire modes (Tab toggles) ────────────────────────────────────────────────
@@ -214,7 +215,12 @@ export class Player implements BulletTarget {
   }
 
   getDashMaxCharges(): number {
-    return DASH_MAX_CHARGES;
+    // Grows with temporary bonus bars from dash pickups (held charges above the
+    // base), so the HUD shows the extra bars until they're spent — capped at 6.
+    return Math.min(
+      DASH_MAX_CAP,
+      Math.max(DASH_MAX_CHARGES, Math.ceil(this.dashCharges)),
+    );
   }
 
   isDashReady(): boolean {
@@ -460,9 +466,11 @@ export class Player implements BulletTarget {
     this.rapidTimer = Math.min(this.rapidTimer + seconds, seconds * STACK_MAX);
   }
 
-  /** "dash" — instantly refill all dash charges (instant). */
-  refillDash() {
-    this.dashCharges = DASH_MAX_CHARGES;
+  /** "dash" pickup — grant one TEMPORARY bonus dash bar, up to DASH_MAX_CAP (6).
+   *  Bonus bars above the base 3 do NOT recharge: they're spent as the player
+   *  dashes, and the bar count then settles back toward 3. */
+  addDashBar() {
+    this.dashCharges = Math.min(DASH_MAX_CAP, Math.floor(this.dashCharges) + 1);
   }
 
   /** "shield" — gain one accumulating shield charge (BR armor), capped at MAX_SHIELD. */
@@ -674,11 +682,15 @@ export class Player implements BulletTarget {
       this.input.consumeJump();
     }
 
-    // Dash (Shift): forward impulse spending one of up to 3 charges.
-    this.dashCharges = Math.min(
-      DASH_MAX_CHARGES,
-      this.dashCharges + dt / DASH_RECHARGE,
-    );
+    // Dash (Shift): forward impulse spending one charge. Recharge ONLY refills
+    // the base charges (up to DASH_MAX_CHARGES); temporary bonus bars above the
+    // base are one-time (spent by dashing, never recharged).
+    if (this.dashCharges < DASH_MAX_CHARGES) {
+      this.dashCharges = Math.min(
+        DASH_MAX_CHARGES,
+        this.dashCharges + dt / DASH_RECHARGE,
+      );
+    }
     if (this.input.consumeDash() && this.dashCharges >= 1) {
       this.dash();
       this.dashCharges -= 1;

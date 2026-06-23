@@ -626,7 +626,7 @@ export class Game {
         this.player.applyRapid(POWERUP_KINDS.rapid.duration);
         break;
       case "dash":
-        this.player.refillDash();
+        this.player.addDashBar();
         break;
       case "shield":
       case "super":

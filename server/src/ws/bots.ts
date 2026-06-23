@@ -84,7 +84,7 @@ const SUPER_CHARGE_SPEED = 1.0; // capped move speed while charging (drifts, not
 const SUPER_REARM = 2.5; // short re-arm after an aborted (wasted) charge
 const SUPER_CD_MIN = 9; // cooldown floor after firing
 const SUPER_CD_MAX = 14; // cooldown ceiling after firing (random in [MIN,MAX])
-const SUPER_DAMAGE = 10; // full kill (mirrors client SUPER_DAMAGE)
+const SUPER_DAMAGE = 5; // half a bar → two hits to kill (mirrors client SUPER_DAMAGE); soaks shield first via damagePlayer
 const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
 
 // ── Engager cap (anti-dogpile, owner-locked) ─────────────────────────────────
