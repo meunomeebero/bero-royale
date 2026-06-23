@@ -1,32 +1,88 @@
 import * as THREE from "three";
 import type { Platform } from "./Platform";
+import { ModelLibrary } from "./ModelLibrary";
+import { BlobShadow } from "./Shadow";
+import { mulberry32 } from "./rng";
 
 export interface DecorObstacle {
-  /** Center XZ. */
   x: number;
   z: number;
-  /** Collision radius (bullets stop when within this distance, ignoring Y). */
   radius: number;
-  /** Top Y (above ground) -- bullets above this height pass over (jumping over a stump). */
   topY: number;
-  /** Bottom Y -- bullets below ignore (purely cosmetic small props). */
   baseY: number;
 }
 
+type Anim = "sway" | "treesway" | "float" | null;
+
+interface PropSpec {
+  cat: "env" | "collectibles";
+  name: string;
+  height: number;
+  /** Bullet-collision radius; 0 = no collision. */
+  radius: number;
+  /** Contact-shadow radius; 0 = no shadow. */
+  shadow: number;
+  anim: Anim;
+}
+
+const TREE1: PropSpec = { cat: "env", name: "tree1", height: 1.3, radius: 0.26, shadow: 0.52, anim: "treesway" };
+const TREE2: PropSpec = { cat: "env", name: "tree2", height: 1.45, radius: 0.28, shadow: 0.56, anim: "treesway" };
+const MUSHROOM: PropSpec = { cat: "env", name: "grassmushroom", height: 0.55, radius: 0, shadow: 0.3, anim: "sway" };
+const FLOWER1: PropSpec = { cat: "env", name: "grassflower1", height: 0.5, radius: 0, shadow: 0.24, anim: "sway" };
+const FLOWER2: PropSpec = { cat: "env", name: "grassflower2", height: 0.5, radius: 0, shadow: 0.24, anim: "sway" };
+const GRASS1: PropSpec = { cat: "env", name: "grass1", height: 0.42, radius: 0, shadow: 0.2, anim: "sway" };
+const GRASS2: PropSpec = { cat: "env", name: "grass2", height: 0.46, radius: 0, shadow: 0.2, anim: "sway" };
+const GRASS3: PropSpec = { cat: "env", name: "grass3", height: 0.46, radius: 0, shadow: 0.2, anim: "sway" };
+
+// On lush grass-field cells: grass/flowers/mushrooms dominate.
+const FIELD_PALETTE: Array<{ weight: number; spec: PropSpec }> = [
+  { weight: 16, spec: GRASS1 }, { weight: 16, spec: GRASS2 }, { weight: 16, spec: GRASS3 },
+  { weight: 9, spec: FLOWER1 }, { weight: 9, spec: FLOWER2 },
+  { weight: 7, spec: MUSHROOM },
+];
+
+// Everywhere else: occasional trees over a grassy meadow (no crates/clutter).
+const MIXED_PALETTE: Array<{ weight: number; spec: PropSpec }> = [
+  { weight: 9, spec: TREE1 }, { weight: 9, spec: TREE2 },
+  { weight: 7, spec: MUSHROOM },
+  { weight: 7, spec: FLOWER1 }, { weight: 7, spec: FLOWER2 },
+  { weight: 9, spec: GRASS1 }, { weight: 9, spec: GRASS2 }, { weight: 9, spec: GRASS3 },
+];
+
+const FIELD_TOTAL = FIELD_PALETTE.reduce((s, p) => s + p.weight, 0);
+const MIXED_TOTAL = MIXED_PALETTE.reduce((s, p) => s + p.weight, 0);
+
+interface AnimEntry {
+  obj: THREE.Object3D;
+  anim: Anim;
+  phase: number;
+  amp: number;
+  speed: number;
+  baseY: number;
+  spin: number;
+}
+
 /**
- * Forest props scattered around the map: pine trees, oak trees, stumps and
- * small bushes / rocks. Visuals + collision data for bullets.
+ * Scatters voxel props from the asset pack across the map and gives them life:
+ * grass/flowers sway in the breeze, food collectibles bob and spin, and every
+ * prop casts a soft contact shadow. Solid props (trees, crates) register bullet
+ * collision.
  */
 export class Decor {
   readonly group: THREE.Group;
   readonly obstacles: DecorObstacle[] = [];
+  private anims: AnimEntry[] = [];
+  private shadows: BlobShadow[] = [];
+  private t = 0;
 
   constructor(platform: Platform, seed = 12345) {
     this.group = new THREE.Group();
     const bounds = platform.getBounds();
-    const rand = mulberry32(seed);
+    // Decor sub-stream: keep decor and terrain PRNGs disjoint so neither
+    // shifts the other's draw sequence.
+    const rand = mulberry32((seed ^ 0x85ebca6b) >>> 0);
 
-    const TOTAL = 130;
+    const TOTAL = 240;
     let placed = 0;
     let attempts = 0;
     while (placed < TOTAL && attempts < TOTAL * 8) {
@@ -43,216 +99,80 @@ export class Decor {
       ) {
         continue;
       }
-      if (
-        platform.isLavaAt(x + 0.5, z) ||
-        platform.isLavaAt(x - 0.5, z) ||
-        platform.isLavaAt(x, z + 0.5) ||
-        platform.isLavaAt(x, z - 0.5)
-      ) {
-        continue;
-      }
+
+      const onField = platform.isGrassField(x, z);
+      const spec = pickSpec(rand, onField);
+      const name = spec.name;
+      const height = spec.height * (0.85 + rand() * 0.3);
+      const { object } = ModelLibrary.create(spec.cat, name, height);
+
       const baseY = platform.surfaceY(x, z);
-      const pick = rand();
-      let prop: THREE.Object3D;
-      let radius = 0;
-      let height = 0;
-      if (pick < 0.45) {
-        prop = makePineTree(rand);
-        radius = 0.22;
-        height = 1.6;
-      } else if (pick < 0.7) {
-        prop = makeOakTree(rand);
-        radius = 0.28;
-        height = 1.4;
-      } else if (pick < 0.85) {
-        prop = makeBush(rand);
-        radius = 0.18;
-        height = 0.45;
-      } else if (pick < 0.95) {
-        prop = makeRock(rand);
-        radius = 0.18;
-        height = 0.35;
-      } else {
-        prop = makeStump(rand);
-        radius = 0.17;
-        height = 0.3;
+      object.position.set(x, baseY, z);
+      object.rotation.y = rand() * Math.PI * 2;
+      this.group.add(object);
+
+      // Square voxel contact shadow under the prop.
+      if (spec.shadow > 0) {
+        const shadow = new BlobShadow(spec.shadow * (0.9 + rand() * 0.3), 0.14);
+        shadow.placeStatic(x, baseY + 0.02, z);
+        this.group.add(shadow.mesh);
+        this.shadows.push(shadow);
       }
-      prop.position.set(x, baseY, z);
-      prop.rotation.y = rand() * Math.PI * 2;
-      this.group.add(prop);
-      this.obstacles.push({
-        x,
-        z,
-        radius,
-        baseY,
-        topY: baseY + height,
-      });
+
+      // Register collision + animation.
+      if (spec.radius > 0) {
+        this.obstacles.push({ x, z, radius: spec.radius, baseY, topY: baseY + height });
+      }
+      if (spec.anim) {
+        this.anims.push(animEntryFor(spec.anim, object, baseY, rand));
+      }
       placed++;
     }
   }
-}
 
-function mulberry32(a: number) {
-  return function () {
-    let t = (a += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// --- Materials (night-forest palette: dark wood + bluish-teal foliage) ----
-
-const TRUNK_MAT = new THREE.MeshLambertMaterial({
-  color: new THREE.Color("#2a1a10"),
-});
-const TRUNK_DARK_MAT = new THREE.MeshLambertMaterial({
-  color: new THREE.Color("#1a0e08"),
-});
-
-const FOLIAGE_MATS = [
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#1e3e3a") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#264a4a") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#15302e") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#2a5a52") }),
-];
-
-const ROCK_MATS = [
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#3a3a44") }),
-  new THREE.MeshLambertMaterial({ color: new THREE.Color("#26262e") }),
-];
-
-// --- Prop builders -------------------------------------------------------
-
-function makePineTree(rand: () => number): THREE.Group {
-  const g = new THREE.Group();
-  // Trunk: 2-3 stacked thin cubes
-  const trunkH = 0.4 + rand() * 0.25;
-  const trunkW = 0.12;
-  const trunk = new THREE.Mesh(
-    new THREE.BoxGeometry(trunkW, trunkH, trunkW),
-    TRUNK_MAT,
-  );
-  trunk.position.y = trunkH / 2;
-  g.add(trunk);
-  // Foliage: 3-4 stacked diminishing voxel slabs
-  const layers = 3 + Math.floor(rand() * 2);
-  const baseSize = 0.55 + rand() * 0.15;
-  const layerH = 0.22;
-  for (let i = 0; i < layers; i++) {
-    const s = baseSize * (1 - i * 0.18);
-    const mat = FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)];
-    const leaves = new THREE.Mesh(
-      new THREE.BoxGeometry(s, layerH, s),
-      mat,
-    );
-    leaves.position.y = trunkH + layerH / 2 + i * layerH * 0.9;
-    g.add(leaves);
+  /** Breeze sway, bobbing food, spinning collectibles. */
+  update(dt: number) {
+    this.t += dt;
+    const t = this.t;
+    for (const a of this.anims) {
+      if (a.anim === "sway" || a.anim === "treesway") {
+        a.obj.rotation.z = Math.sin(t * a.speed + a.phase) * a.amp;
+      } else if (a.anim === "float") {
+        a.obj.position.y = a.baseY + 0.12 + Math.sin(t * 2 + a.phase) * 0.07;
+        a.obj.rotation.y += dt * a.spin;
+      }
+    }
   }
-  return g;
+
+  dispose() {
+    for (const s of this.shadows) s.dispose();
+  }
 }
 
-function makeOakTree(rand: () => number): THREE.Group {
-  const g = new THREE.Group();
-  const trunkH = 0.45 + rand() * 0.2;
-  const trunk = new THREE.Mesh(
-    new THREE.BoxGeometry(0.16, trunkH, 0.16),
-    TRUNK_MAT,
-  );
-  trunk.position.y = trunkH / 2;
-  g.add(trunk);
-  // Wide leafy crown: 1 big cube + 4 smaller cubes around it
-  const cw = 0.7;
-  const mat = FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)];
-  const crown = new THREE.Mesh(
-    new THREE.BoxGeometry(cw, 0.45, cw),
-    mat,
-  );
-  crown.position.y = trunkH + 0.22;
-  g.add(crown);
-  for (let i = 0; i < 4; i++) {
-    const ang = (i / 4) * Math.PI * 2;
-    const m = FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)];
-    const lump = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.28, 0.32), m);
-    lump.position.set(
-      Math.cos(ang) * 0.3,
-      trunkH + 0.18 + (rand() - 0.5) * 0.1,
-      Math.sin(ang) * 0.3,
-    );
-    g.add(lump);
+function animEntryFor(
+  anim: Anim,
+  obj: THREE.Object3D,
+  baseY: number,
+  rand: () => number,
+): AnimEntry {
+  const phase = rand() * Math.PI * 2;
+  if (anim === "treesway") {
+    return { obj, anim, phase, amp: 0.04, speed: 0.9 + rand() * 0.3, baseY, spin: 0 };
   }
-  return g;
+  if (anim === "float") {
+    return { obj, anim, phase, amp: 0, speed: 2, baseY, spin: 0.8 + rand() * 0.9 };
+  }
+  // sway (grass / flowers / mushrooms)
+  return { obj, anim, phase, amp: 0.1 + rand() * 0.06, speed: 1.4 + rand() * 0.8, baseY, spin: 0 };
 }
 
-function makeBush(rand: () => number): THREE.Group {
-  const g = new THREE.Group();
-  const s = 0.24 + rand() * 0.16;
-  const main = new THREE.Mesh(
-    new THREE.BoxGeometry(s, s, s),
-    FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)],
-  );
-  main.position.y = s / 2;
-  g.add(main);
-  // Couple of smaller leafy lumps
-  for (let i = 0; i < 2; i++) {
-    const ss = 0.12 + rand() * 0.1;
-    const m = new THREE.Mesh(
-      new THREE.BoxGeometry(ss, ss, ss),
-      FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)],
-    );
-    m.position.set(
-      (rand() - 0.5) * s * 0.7,
-      ss / 2 + (rand() - 0.5) * 0.05,
-      (rand() - 0.5) * s * 0.7,
-    );
-    g.add(m);
+function pickSpec(rand: () => number, onField: boolean): PropSpec {
+  const palette = onField ? FIELD_PALETTE : MIXED_PALETTE;
+  const total = onField ? FIELD_TOTAL : MIXED_TOTAL;
+  let roll = rand() * total;
+  for (const entry of palette) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry.spec;
   }
-  return g;
-}
-
-function makeRock(rand: () => number): THREE.Group {
-  const g = new THREE.Group();
-  const s = 0.18 + rand() * 0.18;
-  const mat = ROCK_MATS[Math.floor(rand() * ROCK_MATS.length)];
-  const main = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.7, s), mat);
-  main.position.y = (s * 0.7) / 2;
-  g.add(main);
-  if (rand() < 0.6) {
-    const m2 = ROCK_MATS[Math.floor(rand() * ROCK_MATS.length)];
-    const pebble = new THREE.Mesh(
-      new THREE.BoxGeometry(s * 0.5, s * 0.4, s * 0.5),
-      m2,
-    );
-    pebble.position.set(s * 0.45, (s * 0.4) / 2, (rand() - 0.5) * s);
-    g.add(pebble);
-  }
-  g.rotation.y = rand() * Math.PI * 2;
-  return g;
-}
-
-function makeStump(rand: () => number): THREE.Group {
-  const g = new THREE.Group();
-  const stump = new THREE.Mesh(
-    new THREE.BoxGeometry(0.28, 0.2, 0.28),
-    TRUNK_MAT,
-  );
-  stump.position.y = 0.1;
-  g.add(stump);
-  // Dark "rings" on top
-  const top = new THREE.Mesh(
-    new THREE.BoxGeometry(0.3, 0.04, 0.3),
-    TRUNK_DARK_MAT,
-  );
-  top.position.y = 0.22;
-  g.add(top);
-  if (rand() < 0.4) {
-    // moss / leaves on top
-    const moss = new THREE.Mesh(
-      new THREE.BoxGeometry(0.14, 0.06, 0.14),
-      FOLIAGE_MATS[Math.floor(rand() * FOLIAGE_MATS.length)],
-    );
-    moss.position.set(0, 0.27, 0);
-    g.add(moss);
-  }
-  return g;
+  return palette[0].spec;
 }

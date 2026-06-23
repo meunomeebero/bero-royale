@@ -6,58 +6,58 @@ interface HudPanelProps {
   className?: string;
   /** Optional small label rendered at the top-left of the panel. */
   label?: string;
-  /** Highlight color for the label / accent bracket. */
-  tone?: "accent" | "cyan" | "danger" | "muted";
-  /** Show an animated scanning sweep on top. */
-  sweep?: boolean;
+  /** Tint color for the label text. */
+  tone?: "rose" | "honey" | "terracotta" | "ink" | "muted";
+  /** Corner radius tier. */
+  radius?: "chip" | "panel" | "overlay";
 }
 
-const toneClass = {
-  accent: "text-game-accent",
-  cyan: "text-game-accent-2",
-  danger: "text-game-danger",
+const toneClass: Record<NonNullable<HudPanelProps["tone"]>, string> = {
+  rose: "text-game-accent",
+  honey: "text-game-accent-2",
+  terracotta: "text-game-accent-3",
+  ink: "text-game-ink",
   muted: "text-game-muted",
 };
 
+const radiusClass: Record<NonNullable<HudPanelProps["radius"]>, string> = {
+  chip: "rounded-[10px]",
+  panel: "rounded-[12px]",
+  overlay: "rounded-[16px]",
+};
+
 /**
- * A diagonally-clipped HUD panel with bracket corners and an inner border.
- * Used as the building block for all heads-up display widgets.
+ * A warm parchment HUD panel: cream fill, clay hairline border, a crafted
+ * layered shadow and a faint paper grain. The cozy-but-refined building block
+ * for every heads-up widget.
  */
 export const HudPanel = ({
   children,
   className,
   label,
-  tone = "accent",
-  sweep = false,
+  tone = "muted",
+  radius = "chip",
 }: HudPanelProps) => {
   return (
-    <div className={cn("relative", className)}>
-      {/* Outer brackets */}
-      <div className="absolute inset-0 bracket-corners pointer-events-none">
-        <span className="br-bl" />
-        <span className="br-br" />
-      </div>
-
-      {/* Panel body */}
-      <div
-        className="clip-hud relative overflow-hidden border border-game-accent/25 bg-[var(--gradient-hud)]"
-        style={{ background: "var(--gradient-hud)" }}
-      >
-        {sweep && (
-          <div className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-game-accent/15 to-transparent animate-hud-sweep" />
-        )}
-        {label && (
-          <div
-            className={cn(
-              "absolute top-1.5 left-3 font-mono text-[9px] tracking-[0.3em] uppercase",
-              toneClass[tone],
-            )}
-          >
-            {label}
-          </div>
-        )}
-        <div className="relative">{children}</div>
-      </div>
+    <div
+      className={cn(
+        "relative overflow-hidden border-[1.5px] border-game-border bg-game-panel/95 cozy-shadow animate-rise",
+        radiusClass[radius],
+        className,
+      )}
+    >
+      <div className="pointer-events-none absolute inset-0 paper-grain opacity-70" />
+      {label && (
+        <div
+          className={cn(
+            "absolute top-2 left-3.5 text-[9px] font-semibold uppercase tracking-[0.14em] leading-none",
+            toneClass[tone],
+          )}
+        >
+          {label}
+        </div>
+      )}
+      <div className="relative">{children}</div>
     </div>
   );
 };

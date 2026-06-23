@@ -1,0 +1,15 @@
+{
+  "name": "Cozy Killer",
+  "short_name": "Cozy Killer",
+  "description": "A cozy voxel battle royale. Sweet little world, ruthless little fights.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#241019",
+  "theme_color": "#241019",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "any", "type": "image/x-icon" }
+  ]
+}

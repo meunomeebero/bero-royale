@@ -20,7 +20,7 @@ export class DustParticles {
   spawnBurst(position: THREE.Vector3, count = 8) {
     for (let i = 0; i < count; i++) {
       const mat = new THREE.MeshBasicMaterial({
-        color: new THREE.Color("#a78bfa"),
+        color: new THREE.Color("#efe0c8"),
         transparent: true,
         opacity: 0.9,
       });
@@ -54,9 +54,7 @@ export class DustParticles {
       // gravity
       p.velocity.y -= 3.0 * dt;
       p.mesh.position.addScaledVector(p.velocity, dt);
-      // small spin for juice
-      p.mesh.rotation.x += dt * 4;
-      p.mesh.rotation.z += dt * 4;
+      // axis-aligned so the dust reads as clean voxel cubes
       const t = p.life / p.maxLife;
       (p.mesh.material as THREE.MeshBasicMaterial).opacity = t * 0.9;
       const s = 0.6 + t * 0.8;
@@ -70,6 +68,6 @@ export class DustParticles {
       (p.mesh.material as THREE.Material).dispose();
     });
     this.particles = [];
-    PARTICLE_GEOM.dispose();
+    // PARTICLE_GEOM is a module-level singleton shared across Game instances; keep it.
   }
 }

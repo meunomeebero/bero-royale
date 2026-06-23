@@ -1,5 +1,13 @@
 import * as THREE from "three";
 
+/**
+ * Procedurally-built voxel pig rig (legacy). Entities (Player/Bot/RemotePlayer)
+ * no longer use this — they now render OBJ MagicaVoxel animals via `Avatar` +
+ * `ModelLibrary`. Kept for any remaining decorative/pig-specific uses; it is not
+ * the live entity body. Builds a parts pig from BoxGeometry cubes and returns a
+ * {@link PigBuild} (root group + per-instance materials/geometries to dispose).
+ */
+
 const PINK = new THREE.Color("#efa3a3");
 const PINK_DARK = new THREE.Color("#c46d6f");
 const PINK_DEEP = new THREE.Color("#a25154");
@@ -248,4 +256,35 @@ export function buildNameLabel(text: string): THREE.Sprite {
   sprite.scale.set(1.4, 0.35, 1);
   sprite.renderOrder = 999;
   return sprite;
+}
+
+/**
+ * The player's little pistol: a Group ready to drop into the aim rig (the exact
+ * geometry the in-game Player uses) plus the barrel-tip anchor (muzzle / bullet
+ * origin). Shared so the character-select preview shows EXACTLY the in-game gun.
+ */
+export function buildGun(): { group: THREE.Group; barrelTip: THREE.Object3D } {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({
+    color: new THREE.Color("#1a1a2e"),
+    emissive: new THREE.Color("#0a0a18"),
+    emissiveIntensity: 0.4,
+  });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.14, 0.12), mat);
+  group.add(body);
+
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.07, 0.07), mat);
+  barrel.position.set(0.16, 0.02, 0);
+  group.add(barrel);
+
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.14, 0.09), mat);
+  grip.position.set(-0.05, -0.12, 0);
+  group.add(grip);
+
+  const barrelTip = new THREE.Object3D();
+  barrelTip.position.set(0.28, 0.02, 0);
+  group.add(barrelTip);
+
+  return { group, barrelTip };
 }

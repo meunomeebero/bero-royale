@@ -51,37 +51,28 @@
 
     --sidebar-ring: 217.2 91.2% 59.8%;
 
-    /* Voxel game palette (cool / cyber-night) */
-    --game-bg: 240 50% 4%;
-    --game-panel: 240 45% 8%;
-    --game-accent: 265 100% 75%;
-    --game-accent-2: 195 100% 60%;
-    --game-danger: 350 100% 65%;
-    --game-success: 145 80% 55%;
-    --game-muted: 250 30% 60%;
-    --game-grid: 250 60% 50%;
+    /* Cozy Voxel Almanac HUD palette (warm crafted parchment) */
+    --game-bg: 36 46% 90%; /* #F2E6D3 warm cream loading/overlay base */
+    --game-panel: 40 52% 93%; /* #F7EEDF parchment panel fill */
+    --game-accent: 344 56% 56%; /* #D14E6E warm rose — primary */
+    --game-accent-2: 38 71% 56%; /* #E0A340 honey — Recorde */
+    --game-accent-3: 14 52% 54%; /* #C56A4E terracotta — Inimigos / combat */
+    --game-danger: 11 49% 47%; /* #B5523E muted brick — death */
+    --game-success: 86 28% 49%; /* #7FA05B sage — positive */
+    --game-muted: 26 22% 50%; /* #9B7B63 soft brown — labels */
+    --game-ink: 22 30% 18%; /* #3B291F deep cocoa — text */
+    --game-border: 36 38% 64%; /* #CBA980 clay — panel border */
 
-    /* Gradients */
-    --gradient-hud: linear-gradient(
-      135deg,
-      hsl(240 45% 8% / 0.92),
-      hsl(250 45% 6% / 0.88)
-    );
-    --gradient-accent: linear-gradient(
-      135deg,
-      hsl(265 100% 75%),
-      hsl(195 100% 60%)
-    );
-    --gradient-danger: linear-gradient(
-      135deg,
-      hsl(350 100% 65%),
-      hsl(20 100% 60%)
-    );
+    /* Flat parchment fill */
+    --gradient-hud: hsl(40 52% 93%);
 
-    /* Shadows / glows */
-    --glow-accent: 0 0 24px hsl(265 100% 75% / 0.45);
-    --glow-accent-strong: 0 0 32px hsl(265 100% 75% / 0.7);
-    --glow-cyan: 0 0 20px hsl(195 100% 60% / 0.45);
+    /* Crafted, layered warm shadow + a faint top hairline of light. */
+    --shadow-panel: 0 2px 0 rgba(110, 84, 60, 0.18),
+      0 8px 18px rgba(70, 50, 35, 0.16);
+    --inset-gloss: inset 0 1px 0 rgba(255, 252, 245, 0.6);
+
+    /* Reticle glow (restored crosshair) */
+    --glow-accent-strong: 0 0 10px hsl(344 56% 56% / 0.7);
   }
 
   .dark {
@@ -130,6 +121,7 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: "Hanken Grotesk", system-ui, sans-serif;
   }
 }
 
@@ -140,115 +132,90 @@ body,
   height: 100%;
 }
 
-/* ---------- Futuristic HUD utilities ---------- */
+/* ---------- Cozy Voxel Almanac HUD utilities ---------- */
 @layer utilities {
-  /* Diagonal corner-cut panel (clip-path) */
-  .clip-hud {
-    clip-path: polygon(
-      14px 0,
-      100% 0,
-      100% calc(100% - 14px),
-      calc(100% - 14px) 100%,
-      0 100%,
-      0 14px
-    );
+  /* Crafted layered shadow + faint top hairline of light for panels. */
+  .cozy-shadow {
+    box-shadow: var(--shadow-panel), var(--inset-gloss);
   }
-  .clip-hud-sm {
-    clip-path: polygon(
-      8px 0,
-      100% 0,
-      100% calc(100% - 8px),
-      calc(100% - 8px) 100%,
-      0 100%,
-      0 8px
+  /* Pressable voxel-keycap inner shadow (bottom edge of clay). */
+  .key-shadow {
+    box-shadow: inset 0 -2px 0 rgba(110, 84, 60, 0.32);
+  }
+  /* Subtle paper-grain so parchment reads crafted, not flat. */
+  .paper-grain {
+    background-image: radial-gradient(
+      hsl(28 30% 40% / 0.05) 0.5px,
+      transparent 0.5px
     );
+    background-size: 4px 4px;
   }
 
-  /* Scanline overlay */
-  .scanlines {
-    background-image: repeating-linear-gradient(
-      to bottom,
-      transparent 0px,
-      transparent 2px,
-      hsl(var(--game-accent) / 0.04) 3px,
-      transparent 4px
-    );
+  /* ---------- "Game HUD" system (dark cocoa-glass, GLM design) ---------- */
+  /* Hard, stepped depth shadow (zero blur) — chunky voxel bevel, no soft web glow. */
+  .hud-shadow {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.1),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.34),
+      0 3px 0 rgba(0, 0, 0, 0.45);
   }
-
-  /* Subtle vignette */
-  .vignette {
-    background: radial-gradient(
-      ellipse at center,
-      transparent 55%,
-      hsl(var(--game-bg) / 0.65) 100%
-    );
+  /* Bold display numeral with an ink outline + hard offset — readable over any
+     frame of the bright moving scene. paint-order keeps the fill over the stroke. */
+  .hud-num {
+    font-family: "Baloo 2", system-ui, sans-serif;
+    font-weight: 700;
+    color: #fff;
+    -webkit-text-stroke: 2px #241019;
+    paint-order: stroke fill;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
   }
-
-  /* Animated bracket corner accents */
-  .bracket-corners::before,
-  .bracket-corners::after,
-  .bracket-corners > .br-bl,
-  .bracket-corners > .br-br {
-    content: "";
-    position: absolute;
-    width: 10px;
-    height: 10px;
-    border-color: hsl(var(--game-accent));
-    pointer-events: none;
+  .hud-num-sm {
+    -webkit-text-stroke-width: 1.5px;
   }
-  .bracket-corners::before {
-    top: -1px;
-    left: -1px;
-    border-top: 2px solid;
-    border-left: 2px solid;
+  /* Small all-caps label sitting on a dark scrim. */
+  .hud-label {
+    color: rgba(255, 255, 255, 0.72);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
   }
-  .bracket-corners::after {
-    top: -1px;
-    right: -1px;
-    border-top: 2px solid;
-    border-right: 2px solid;
-  }
-  .bracket-corners > .br-bl {
-    bottom: -1px;
-    left: -1px;
-    border-bottom: 2px solid hsl(var(--game-accent));
-    border-left: 2px solid hsl(var(--game-accent));
-  }
-  .bracket-corners > .br-br {
-    bottom: -1px;
-    right: -1px;
-    border-bottom: 2px solid hsl(var(--game-accent));
-    border-right: 2px solid hsl(var(--game-accent));
+  /* Body text (names / messages) on a dark scrim — white with a soft ink drop so
+     it survives a stray bright frame peeking through the translucent panel. */
+  .hud-text {
+    color: #fff;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
   }
 }
 
 @layer base {
-  @keyframes pulse-glow {
-    0%,
-    100% {
-      opacity: 0.6;
-      filter: drop-shadow(0 0 6px hsl(var(--game-accent) / 0.6));
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
     }
-    50% {
+    to {
       opacity: 1;
-      filter: drop-shadow(0 0 14px hsl(var(--game-accent) / 0.9));
+      transform: translateY(0);
     }
   }
-  @keyframes hud-sweep {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(200%);
-    }
-  }
-  @keyframes blink-soft {
+  @keyframes pip-pulse {
     0%,
     100% {
       opacity: 1;
     }
     50% {
-      opacity: 0.35;
+      opacity: 0.4;
+    }
+  }
+  @keyframes soft-float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-2px);
     }
   }
   @keyframes ring-rotate {
@@ -259,17 +226,38 @@ body,
       transform: rotate(360deg);
     }
   }
-  .animate-pulse-glow {
-    animation: pulse-glow 2.2s ease-in-out infinite;
+  @keyframes nudge {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-5px);
+    }
+    40% {
+      transform: translateX(5px);
+    }
+    60% {
+      transform: translateX(-3px);
+    }
+    80% {
+      transform: translateX(3px);
+    }
   }
-  .animate-hud-sweep {
-    animation: hud-sweep 3.5s linear infinite;
+  .animate-rise {
+    animation: rise 0.35s ease-out both;
   }
-  .animate-blink-soft {
-    animation: blink-soft 1.6s ease-in-out infinite;
+  .animate-pip-pulse {
+    animation: pip-pulse 1.2s ease-in-out infinite;
+  }
+  .animate-soft-float {
+    animation: soft-float 3.5s ease-in-out infinite;
   }
   .animate-ring-rotate {
     animation: ring-rotate 6s linear infinite;
+  }
+  .animate-nudge {
+    animation: nudge 0.4s ease-in-out;
   }
 }
 

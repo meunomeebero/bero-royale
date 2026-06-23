@@ -1,76 +1,94 @@
-# Welcome to your Enter project
+# Bero Royale (Cozy Killer)
 
-[![Built with enter.pro](https://img.shields.io/badge/Build%20with-Enter.pro-FC5776?style=for-the-badge&labelColor=1F1F1F)](https://enter.pro)
+Um **battle-royale free-for-all voxel em 3D** que roda no navegador. Mundinho fofo, brigas
+implacáveis. Render em Three.js, multiplayer online com servidor próprio, voz por proximidade
+(WebRTC) e leaderboard persistente.
 
-*Automatically synced with your [enter.pro](https://enter.pro) workspace* 
-
----
-
-## Overview
-
-This repository is automatically linked to your app on [enter.pro](https://enter.pro).  
-Every change you make in Enter will be reflected here — and any updates you push to this repo will sync back seamlessly.  
-
-Enter.pro helps you **build, edit, and deploy full-stack web apps by prompting**.  
-Just describe what you want — Enter turns ideas into production-ready code.
+🎮 Produção: **https://beroroyale.shardweb.app** (canônico `cozykiller.io`)
 
 ---
 
-## Project URLs
+## O que é
 
-**Live app:** https://<project-id>-latest.preview.enter.pro  
-**Edit & build in Enter:** https://enter.pro/project/<project-id>
+- **Engine 3D** em Three.js (`src/game/`) rodando **fora** do React; o React só desenha o HUD.
+- **Multiplayer** servidor-autoritativo via relay WebSocket (snapshots de pose a 20Hz, interpolação
+  de remotos, dead-reckoning). Modo `local` (sobrevivência contra bots de IA) e `multiplayer` (FFA
+  online; bots vêm do servidor).
+- **Voz por proximidade** P2P (WebRTC mesh, push-to-talk em `G`).
+- **Leaderboard** persistente em Postgres, ranqueado por kills/tempo-vivo.
+- **Servidor único** (`server/`): um processo Node serve o SPA, a API HTTP e o WebSocket na mesma
+  porta.
 
+> Documentação de arquitetura: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
+> Performance/latência: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) ·
+> Deploy/ops: [`docs/shardcloud.md`](docs/shardcloud.md) ·
+> Método multi-agente ("mega brain"): [`docs/mega-brain.md`](docs/mega-brain.md) ·
+> Índice de docs: [`docs/README.md`](docs/README.md)
 
 ---
 
-## Continue building
+## Stack
 
-Keep developing your app directly in [Enter.pro](https://enter.pro/project/<project-id>).  
-Prompt new features, refine the UI, or connect integrations — all changes are versioned and synced automatically to GitHub.
+| Camada | Tecnologias |
+|---|---|
+| Render | **Three.js 0.184** (WebGL) |
+| UI/HUD | React 19, Vite 7, TypeScript, Tailwind 3, shadcn/ui (Radix) |
+| Rede (cliente) | WebSocket (`net/Room.ts`, `net/Multiplayer.ts`), WebRTC (`net/VoiceChat.ts`) |
+| Servidor | Node + **Elysia** (HTTP) + lib **`ws`** (WebSocket) + **postgres.js** |
+| Deploy | Shard Cloud (app Node) — ver `docs/shardcloud.md` |
 
 ---
 
-## Local development
+## Desenvolvimento local
 
-Prefer to work locally? You can clone this repo and start developing right away:
+Requer **pnpm** (o repo fixa `pnpm@8.6.12`; é um workspace com `server/`).
 
 ```bash
-# Step 1: Clone your project repository
-git clone <YOUR_GIT_URL>
+pnpm install
 
-# Step 2: Navigate into the project folder
-cd <YOUR_PROJECT_NAME>
+# Roda cliente (:8080) + servidor (:3000) juntos. O Vite faz proxy de /api e /ws para o server,
+# então as URLs são idênticas em dev e prod (same-origin).
+pnpm dev:all
 
-# Step 3: Install all dependencies
-npm install
-
-# Step 4: Start the local development server
-npm run dev
+# Ou separadamente:
+pnpm dev          # só o cliente Vite (:8080) — suficiente para o modo local/single-player
+pnpm dev:server   # só o servidor Node (:3000)
 ```
 
-Push your commits — Enter.pro will automatically detect and sync your latest changes.
+Abra http://localhost:8080. Modo `local` funciona sem servidor; `multiplayer` precisa do server.
+
+### Fallback offline de multiplayer
+`?local` na URL usa um `LocalRoom` via `BroadcastChannel` (multiplayer entre abas do mesmo
+navegador, sem servidor) — útil para testar a camada de rede.
 
 ---
 
-## Tech stack
+## Build & deploy
 
-This project uses:
+```bash
+pnpm build:deploy   # build:prod (cliente) + copy:spa + build:server
+pnpm stage          # monta deploy/ (server.js + public) e gera o manifest shardcloud
+pnpm start          # roda o build do servidor (server/dist/index.js)
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+O deploy é um **app Node** na Shard Cloud (`deploy.shardcloud`: `LANGUAGE=node`). O passo a passo
+de redeploy, credenciais e *gotchas* de produção estão em [`docs/shardcloud.md`](docs/shardcloud.md).
 
----
-
-## Deployment
-
-To deploy, open your Enter.pro project and click "Publish"
-
-Your app will automatically build and go live at your production URL.
+> ⚠️ O script `pnpm build` usa `--mode development` de propósito (preview/live-edit). Para
+> produção use sempre `build:prod` ou `build:deploy`.
 
 ---
 
-✨ Keep prompting, keep building — Enter.pro handles the rest.
+## Layout do repositório
+
+```
+src/game/            engine Three.js (loop, entidades, FX, áudio) + net/ (netcode)
+src/components/hud/   overlays React do HUD
+src/pages/            Menu.tsx (/) e Index.tsx (/play)
+server/src/           servidor Node (HTTP + WebSocket + Postgres)
+public/models/        pack de assets voxel (OBJ/MTL/PNG)
+docs/                 ARCHITECTURE.md, PERFORMANCE.md, shardcloud.md, planos de design
+```
+
+Convenções de código e estrutura detalhada: [`CodeGuideline.md`](CodeGuideline.md) e
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

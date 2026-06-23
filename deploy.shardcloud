@@ -1,0 +1,7 @@
+DISPLAY_NAME=Bero Royale
+DESCRIPTION=Bero Royale backend — Vite SPA + WebSocket multiplayer/voice + Postgres leaderboard
+LANGUAGE=node
+MEMORY=1024
+VERSION=recommended
+SUBDOMAIN=beroroyale
+CUSTOM_COMMAND=DATABASE_URL='__DATABASE_URL__' PGSSL=true NODE_ENV=production node server.js

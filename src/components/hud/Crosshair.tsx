@@ -1,61 +1,44 @@
-interface CrosshairProps {
-  x: number;
-  y: number;
-}
+import { forwardRef } from "react";
+import { HUD, INK } from "./primitives";
 
 /**
- * Futuristic targeting reticle: dual rotating rings, tick marks,
- * a central glow dot, and 4 directional brackets.
+ * Targeting reticle — four hard-edged corner brackets around an open center gap,
+ * with a small rose center dot. White with an ink outline so it reads on any
+ * frame of the bright moving scene. No soft glow, no rotation (game-HUD look,
+ * coherent with the dark cocoa-glass system).
+ *
+ * Position is driven IMPERATIVELY: the parent owns a ref and writes
+ * `el.style.transform = translate(...)` in the mousemove handler, so pointer
+ * motion triggers ZERO React reconciliation. Mounted once, never re-rendered.
  */
-export const Crosshair = ({ x, y }: CrosshairProps) => {
+const bracketBase = "absolute h-2.5 w-2.5 border-white";
+
+export const Crosshair = forwardRef<HTMLDivElement>((_props, ref) => {
   return (
     <div
-      className="pointer-events-none fixed z-50"
-      style={{
-        left: x,
-        top: y,
-        transform: "translate(-50%, -50%)",
-      }}
+      ref={ref}
+      className="pointer-events-none fixed left-0 top-0 z-50"
+      style={{ transform: "translate(-100px, -100px)" }}
     >
-      <div className="relative w-12 h-12">
-        {/* Outer rotating ring with notches */}
-        <svg
-          className="absolute inset-0 w-full h-full animate-ring-rotate text-game-accent"
-          viewBox="0 0 48 48"
-          fill="none"
-        >
-          <circle
-            cx="24"
-            cy="24"
-            r="22"
-            stroke="currentColor"
-            strokeWidth="1"
-            strokeDasharray="2 6"
-            opacity="0.85"
-          />
-        </svg>
+      <div
+        className="relative h-11 w-11"
+        // One ink outline applied to the whole group keeps every white edge crisp.
+        style={{ filter: "drop-shadow(1px 0 0 " + INK + ") drop-shadow(-1px 0 0 " + INK + ") drop-shadow(0 1px 0 " + INK + ") drop-shadow(0 -1px 0 " + INK + ")" }}
+      >
+        {/* Corner brackets */}
+        <div className={bracketBase + " left-0 top-0 rounded-tl-[2px] border-l-[3px] border-t-[3px]"} />
+        <div className={bracketBase + " right-0 top-0 rounded-tr-[2px] border-r-[3px] border-t-[3px]"} />
+        <div className={bracketBase + " bottom-0 left-0 rounded-bl-[2px] border-b-[3px] border-l-[3px]"} />
+        <div className={bracketBase + " bottom-0 right-0 rounded-br-[2px] border-b-[3px] border-r-[3px]"} />
 
-        {/* Mid stationary ring */}
-        <div className="absolute inset-2 rounded-full border border-game-accent/70" />
-
-        {/* Center dot with glow */}
+        {/* Center dot */}
         <div
-          className="absolute left-1/2 top-1/2 w-1.5 h-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-game-accent"
-          style={{ boxShadow: "var(--glow-accent-strong)" }}
+          className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+          style={{ background: HUD.rose, boxShadow: `0 0 0 1.5px ${INK}` }}
         />
-
-        {/* Directional ticks */}
-        <div className="absolute left-1/2 top-0 w-px h-2 -translate-x-1/2 bg-game-accent" />
-        <div className="absolute left-1/2 bottom-0 w-px h-2 -translate-x-1/2 bg-game-accent" />
-        <div className="absolute top-1/2 left-0 h-px w-2 -translate-y-1/2 bg-game-accent" />
-        <div className="absolute top-1/2 right-0 h-px w-2 -translate-y-1/2 bg-game-accent" />
-
-        {/* Diagonal brackets */}
-        <div className="absolute -top-1 -left-1 w-2 h-2 border-l border-t border-game-accent-2" />
-        <div className="absolute -top-1 -right-1 w-2 h-2 border-r border-t border-game-accent-2" />
-        <div className="absolute -bottom-1 -left-1 w-2 h-2 border-l border-b border-game-accent-2" />
-        <div className="absolute -bottom-1 -right-1 w-2 h-2 border-r border-b border-game-accent-2" />
       </div>
     </div>
   );
-};
+});
+
+Crosshair.displayName = "Crosshair";

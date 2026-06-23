@@ -104,11 +104,10 @@ export class SmokePuffs {
         this.smokes.splice(i, 1);
         continue;
       }
-      // Drift (very mild gravity to make it rise / float)
+      // Drift (very mild gravity to make it rise / float). Kept axis-aligned so
+      // the puffs read as clean voxel cubes rather than tumbling diamonds.
       p.velocity.y -= 0.4 * dt; // mostly buoyancy already encoded in initial velocity
       p.mesh.position.addScaledVector(p.velocity, dt);
-      p.mesh.rotation.x += p.spin * dt;
-      p.mesh.rotation.z += p.spin * dt;
       const t = p.life / p.maxLife; // 1 -> 0
       const s =
         p.endScale + (p.startScale - p.endScale) * t;
@@ -123,6 +122,7 @@ export class SmokePuffs {
       (p.mesh.material as THREE.Material).dispose();
     });
     this.smokes = [];
-    SMOKE_GEOM.dispose();
+    // SMOKE_GEOM is a module-level singleton shared across Game instances
+    // (menu → play → menu); do NOT dispose it here.
   }
 }

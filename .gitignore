@@ -12,6 +12,18 @@ dist
 dist-ssr
 *.local
 
+# Server build + staged Shard Cloud deploy artifact (generated)
+server/dist
+server/public
+deploy/
+# .shardcloud carries the secret DATABASE_URL (generated from deploy.shardcloud)
+**/.shardcloud
+
+# Local env / secrets
+.env
+.env.local
+*.zip
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -23,3 +35,4 @@ dist-ssr
 *.sln
 *.sw?
 code_template.zip
+.gstack/

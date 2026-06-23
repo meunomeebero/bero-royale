@@ -95,6 +95,6 @@ export class GrassPoof {
       (b.mesh.material as THREE.Material).dispose();
     }
     this.blades = [];
-    BLADE_GEOM.dispose();
+    // BLADE_GEOM is a module-level singleton shared across Game instances; keep it.
   }
 }

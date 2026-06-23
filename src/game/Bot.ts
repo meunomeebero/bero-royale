@@ -1,14 +1,19 @@
 import * as THREE from "three";
 import type { Platform } from "./Platform";
-import type { AudioManager } from "./AudioManager";
+import type { AudioEngine } from "./AudioEngine";
 import type { DustParticles } from "./DustParticles";
-import type { Bullets, BulletTarget } from "./Bullets";
-import type { Player } from "./Player";
+import type { Bullets, BulletTarget, BulletOwner } from "./Bullets";
 import type { SmokePuffs } from "./SmokePuffs";
 import { buildNameLabel } from "./PigParts";
+import { Avatar, AVATAR_HEIGHT } from "./Avatar";
+import { ModelLibrary } from "./ModelLibrary";
+import { BlobShadow } from "./Shadow";
+
+/** Behavior modes for Bot instances. */
+export type BotBehavior = "hunt" | "ambient";
 
 const BOT_SIZE = 0.5;
-const MOVE_SPEED = 3.5;
+const MOVE_SPEED = 4.2; // light aggression tune (was 3.5) — more pressure, still below player speed
 const ACCEL = 14;
 const JUMP_VELOCITY = 6.0;
 const GRAVITY = 18.0;
@@ -18,35 +23,58 @@ const RESPAWN_DELAY = 5.0;
 const HIT_FLASH_DURATION = 0.25;
 
 const SIGHT_RANGE = 16; // distance at which the bot starts seeing the player
-const SHOOT_COOLDOWN = 0.7;
+const SHOOT_COOLDOWN = 0.55; // light aggression tune (was 0.7) — snappier local fire
 const JUMP_COOLDOWN_MIN = 1.6;
 const JUMP_COOLDOWN_MAX = 3.5;
 const WANDER_INTERVAL = 2.5;
 
-const COLOR_HEALTHY = new THREE.Color("#ff7f1f");
-const COLOR_DEAD = new THREE.Color("#3a0606");
-const COLOR_HIT = new THREE.Color("#ffffff");
-const EMISSIVE_HEALTHY = new THREE.Color("#a13a00");
-const EMISSIVE_DEAD = new THREE.Color("#1a0202");
+// Aggressive (online) bots: faster, longer sight, snappier fire — and they can
+// charge + fire the mega beam (kamehameha) at the local player.
+const AGGRO_MOVE_SPEED = 4.8;
+const AGGRO_SIGHT_RANGE = 22;
+const AGGRO_SHOOT_COOLDOWN = 0.42;
+const BOT_KAME_CHARGE = 1.0; // telegraph wind-up (charge VFX) before the beam fires
+const BOT_KAME_COOLDOWN_MIN = 8.0; // seconds between mega beams
+const BOT_KAME_COOLDOWN_RANGE = 6.0; // + up to this, randomized
+const BOT_KAME_RANGE = 9.0; // only wind up a mega when within beam reach (~2×hearing)
 
 type State = "alive" | "falling" | "dead";
 
 export class Bot implements BulletTarget {
   readonly id: string;
-  readonly side = "bot" as const;
+  /** Side used for bullet collision filtering (bots can alternate for bot-vs-bot damage). */
+  readonly side: BulletOwner;
   readonly bodyHalfHeight = BOT_SIZE / 2;
 
   readonly root: THREE.Group;
-  private body: THREE.Mesh;
+  private body: THREE.Group;
+  private avatar: Avatar;
+  private shadow: BlobShadow;
   private aimGroup: THREE.Group;
   private gun: THREE.Group;
   private gunBarrelTip: THREE.Object3D;
+  /** Floating name sprite (owns a per-instance CanvasTexture + material). */
+  private nameLabel: THREE.Sprite;
 
   private platform: Platform;
-  private audio: AudioManager;
+  private audio: AudioEngine;
   private dust: DustParticles;
   private bullets: Bullets;
   private smoke: SmokePuffs | null = null;
+
+  /** Behavior mode — set once in the constructor. */
+  private readonly behavior: BotBehavior;
+  /** Aggressive online bot: faster/snappier + can fire the mega beam. */
+  private readonly aggressive: boolean;
+  /** Display name (random for online bots so they read as real players). */
+  private readonly displayName: string;
+  /** Who last damaged this bot (name + perf.now ms) — for kill attribution. */
+  private lastHitBy: { name: string; t: number } | null = null;
+  /** Mega-beam (kamehameha) state. */
+  private megaTimer = 0; // cooldown until the next mega beam
+  private kameCharging = false; // true during the telegraph wind-up
+  private kameChargeT = 0; // seconds charged so far
+  private onKame?: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
 
   private velocity = new THREE.Vector3(0, 0, 0);
   private grounded = true;
@@ -54,8 +82,8 @@ export class Bot implements BulletTarget {
   private fallTimer = 0;
   private deadTimer = 0;
   private targetScale = new THREE.Vector3(1, 1, 1);
-  private bodyMaterial: THREE.MeshLambertMaterial;
   private health = MAX_HEALTH;
+  private justDied = false;
 
   private hitFlashTimer = 0;
   private shakeTimer = 0;
@@ -64,19 +92,39 @@ export class Bot implements BulletTarget {
   private aimYaw = 0;
   private shootTimer = 0;
   private jumpTimer = 0;
+  /** Periodic jump timer used in "ambient" mode (independent of hunt cooldowns). */
+  private ambientJumpTimer = 0;
   private wanderTimer = 0;
   private wanderTarget = new THREE.Vector3();
+
+  // Hoisted per-frame scratch so update() allocates nothing. Reset before use.
+  private tmpMove = new THREE.Vector3();
+  private tmpScale = new THREE.Vector3();
 
   readonly position = new THREE.Vector3();
 
   constructor(
     id: string,
     platform: Platform,
-    audio: AudioManager,
+    audio: AudioEngine,
     dust: DustParticles,
     bullets: Bullets,
+    /** Optional chosen animal name; defaults to a random animal. */
+    animal?: string,
+    /** Behavior mode: "hunt" (default) targets the passed entity; "ambient" wanders + jumps as a showcase actor. */
+    behavior: BotBehavior = "hunt",
+    /** Bullet-collision side; alternate "player"/"bot" for ambient bot-vs-bot damage. */
+    side: BulletOwner = "bot",
+    /** Aggressive online bot: faster, snappier, and can fire the mega beam. */
+    aggressive = false,
+    /** Display name; defaults to "Mob N". Online bots pass a random player name. */
+    name?: string,
   ) {
     this.id = id;
+    this.side = side;
+    this.behavior = behavior;
+    this.aggressive = aggressive;
+    this.displayName = name ?? formatBotLabel(id);
     this.platform = platform;
     this.audio = audio;
     this.dust = dust;
@@ -84,24 +132,27 @@ export class Bot implements BulletTarget {
 
     this.root = new THREE.Group();
 
-    const bodyGeom = new THREE.BoxGeometry(BOT_SIZE, BOT_SIZE, BOT_SIZE);
-    this.bodyMaterial = new THREE.MeshLambertMaterial({
-      color: COLOR_HEALTHY.clone(),
-      emissive: EMISSIVE_HEALTHY.clone(),
-      emissiveIntensity: 0.45,
-      transparent: true,
-    });
-    this.body = new THREE.Mesh(bodyGeom, this.bodyMaterial);
+    // Each mob is a random voxel animal; feet at the rig's ground reference.
+    const animalName = animal ?? ModelLibrary.randomAnimalName();
+    this.avatar = new Avatar(
+      animalName,
+      AVATAR_HEIGHT,
+      -this.bodyHalfHeight,
+    );
+    this.body = this.avatar.group;
     this.root.add(this.body);
+
+    // Square voxel contact shadow that shrinks/fades as the mob jumps.
+    this.shadow = new BlobShadow(0.4, 0.16);
+    this.root.add(this.shadow.mesh);
 
     this.aimGroup = new THREE.Group();
     this.root.add(this.aimGroup);
 
-    // Floating red name label above the bot's head -- identifies hostiles.
-    const labelText = formatBotLabel(id);
-    const label = buildNameLabel(labelText);
-    label.position.set(0, BOT_SIZE * 0.85 + 0.35, 0);
-    this.root.add(label);
+    // Floating name label above the bot's head.
+    this.nameLabel = buildNameLabel(this.displayName);
+    this.nameLabel.position.set(0, BOT_SIZE * 0.85 + 0.35, 0);
+    this.root.add(this.nameLabel);
 
     // Bot pistol (red-tinted)
     this.gun = new THREE.Group();
@@ -136,6 +187,15 @@ export class Bot implements BulletTarget {
     return this.state === "alive";
   }
 
+  /** One-shot: true the frame this bot just died (for gore + kill counting). */
+  consumeJustDied(): boolean {
+    if (this.justDied) {
+      this.justDied = false;
+      return true;
+    }
+    return false;
+  }
+
   isAirborne() {
     return !this.grounded;
   }
@@ -144,24 +204,75 @@ export class Bot implements BulletTarget {
     return this.grounded;
   }
 
+  /** Player-facing name (random for online bots) for the kill feed + roster. */
+  getDisplayName(): string {
+    return this.displayName;
+  }
+
+  /** Record who last damaged this bot (for kill attribution on death). */
+  recordHitBy(name: string) {
+    this.lastHitBy = { name, t: performance.now() };
+  }
+
+  /** Name of whoever killed this bot, or null if the hit was stale (lava/fall). */
+  getLastHitByName(): string | null {
+    if (!this.lastHitBy) return null;
+    return performance.now() - this.lastHitBy.t < 4000 ? this.lastHitBy.name : null;
+  }
+
+  /** Register the mega-beam callback (Game fires the kamehameha beam). */
+  setOnKame(cb: (origin: THREE.Vector3, dir: THREE.Vector3) => void) {
+    this.onKame = cb;
+  }
+
+  /**
+   * Charge VFX state while this bot is winding up its mega beam, or null. Game
+   * reads it each frame to drive the inward particle stream (telegraph), keyed
+   * by the bot id — exactly like the player/remote charge.
+   */
+  getKameCharge(): { anchor: THREE.Vector3; t: number } | null {
+    if (!this.kameCharging || this.state !== "alive") return null;
+    return {
+      anchor: new THREE.Vector3(
+        this.root.position.x,
+        this.root.position.y + 0.35,
+        this.root.position.z,
+      ),
+      t: Math.min(1, this.kameChargeT / BOT_KAME_CHARGE),
+    };
+  }
+
   takeHit(_direction: THREE.Vector3): boolean {
+    // Ambient showcase actors are immortal — they never take damage.
+    if (this.behavior === "ambient") return false;
     if (this.state !== "alive") return false;
     this.health = Math.max(0, this.health - 1);
     this.hitFlashTimer = HIT_FLASH_DURATION;
     this.shakeTimer = 0.22;
     this.shakeAmount = 0.05;
     this.targetScale.set(1.35, 0.7, 1.35);
-    this.audio.hit();
+    this.audio.playHit(this.root.position, true);
     if (this.health <= 0) {
       this.die();
     }
     return true;
   }
 
+  /** Insta-kill from a Kamehameha beam (ignores incremental health). */
+  kamehamehaHit(): void {
+    if (this.behavior === "ambient") return;
+    if (this.state !== "alive") return;
+    this.health = 0;
+    this.die();
+  }
+
   private die() {
+    // Ambient bots are immortal; this path is guarded in takeHit but belt+suspenders.
+    if (this.behavior === "ambient") return;
     this.state = "dead";
     this.deadTimer = 0;
-    this.audio.death();
+    this.justDied = true;
+    this.audio.playDeath(this.root.position, true);
     this.dust.spawnBurst(
       new THREE.Vector3(
         this.root.position.x,
@@ -180,42 +291,47 @@ export class Bot implements BulletTarget {
     this.body.scale.set(1, 1, 1);
     this.body.position.set(0, 0, 0);
     this.targetScale.set(1, 1, 1);
-    this.bodyMaterial.opacity = 1;
-    this.bodyMaterial.color.copy(COLOR_HEALTHY);
-    this.bodyMaterial.emissive.copy(EMISSIVE_HEALTHY);
+    this.avatar.reset();
     this.grounded = true;
     this.state = "alive";
     this.fallTimer = 0;
     this.deadTimer = 0;
+    this.justDied = false;
     this.health = MAX_HEALTH;
     this.hitFlashTimer = 0;
     this.shakeTimer = 0;
     this.shootTimer = 0.5 + Math.random();
     this.jumpTimer = JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
     this.wanderTimer = 0;
+    // Stagger the first mega beam so a fresh wave doesn't all fire at once.
+    this.megaTimer = BOT_KAME_COOLDOWN_MIN * 0.5 + Math.random() * BOT_KAME_COOLDOWN_RANGE;
+    this.kameCharging = false;
+    this.kameChargeT = 0;
+    this.lastHitBy = null;
     this.position.copy(this.root.position);
   }
 
   private updateColor() {
     const t = 1 - this.health / MAX_HEALTH;
-    if (this.hitFlashTimer > 0) {
-      this.bodyMaterial.color.copy(COLOR_HIT);
-    } else {
-      this.bodyMaterial.color.copy(COLOR_HEALTHY).lerp(COLOR_DEAD, t);
-    }
-    this.bodyMaterial.emissive.copy(EMISSIVE_HEALTHY).lerp(EMISSIVE_DEAD, t);
+    this.avatar.applyTint(t, this.hitFlashTimer > 0);
   }
 
-  update(dt: number, player: Player) {
+  /**
+   * Tick the bot simulation.
+   *
+   * @param dt      Frame delta in seconds.
+   * @param target  The entity to hunt ("hunt" mode) or null (ambient/no target).
+   *                In normal local gameplay this is the local Player. In bot-vs-bot
+   *                ambient scenes the caller passes the nearest enemy bot. Passing
+   *                null makes the bot fall back to wandering regardless of mode.
+   */
+  update(dt: number, target: BulletTarget | null) {
     if (this.state === "dead") {
       this.deadTimer += dt;
-      this.root.position.y -= dt * 0.6;
-      const t = Math.min(1, this.deadTimer / RESPAWN_DELAY);
-      const s = Math.max(0.05, 1 - t);
-      this.body.scale.set(s, s, s);
-      this.bodyMaterial.opacity = Math.max(0.1, 1 - t);
-      this.bodyMaterial.color.copy(COLOR_DEAD);
-      this.bodyMaterial.emissive.copy(EMISSIVE_DEAD);
+      this.shadow.setVisible(false);
+      // Bursts into voxel gore on death (spawned by Game) — hide the body.
+      this.body.scale.setScalar(0.0001);
+      this.avatar.setOpacity(0);
       this.position.copy(this.root.position);
       if (this.deadTimer >= RESPAWN_DELAY) {
         this.respawn();
@@ -225,12 +341,13 @@ export class Bot implements BulletTarget {
 
     if (this.state === "falling") {
       this.fallTimer += dt;
+      this.shadow.setVisible(false);
       this.velocity.y -= GRAVITY * dt * 0.5;
       this.root.position.addScaledVector(this.velocity, dt);
       this.root.rotation.x += dt * 6;
       this.root.rotation.z += dt * 4;
       const t = 1 - this.fallTimer / 0.7;
-      this.bodyMaterial.opacity = Math.max(0, t);
+      this.avatar.setOpacity(Math.max(0, t));
       const s = Math.max(0.1, t);
       this.root.scale.set(s, s, s);
       this.position.copy(this.root.position);
@@ -242,65 +359,132 @@ export class Bot implements BulletTarget {
       return;
     }
 
-    // AI: see player?
-    const dx = player.position.x - this.root.position.x;
-    const dz = player.position.z - this.root.position.z;
-    const distToPlayer = Math.hypot(dx, dz);
-    const seesPlayer = player.isAlive() && distToPlayer <= SIGHT_RANGE;
+    // --- AI ---
+    const move = this.tmpMove.set(0, 0, 0);
+    const moveSpeed = this.aggressive ? AGGRO_MOVE_SPEED : MOVE_SPEED;
 
-    const move = new THREE.Vector3(0, 0, 0);
-    if (seesPlayer) {
-      // Aim at player
-      this.aimYaw = Math.atan2(dz, dx);
-      this.aimGroup.rotation.y = -this.aimYaw;
-
-      // Approach to a comfortable shooting distance
-      const desired = 6;
-      if (distToPlayer > desired + 0.5) {
-        move.set(dx, 0, dz).normalize();
-      } else if (distToPlayer < desired - 0.5) {
-        move.set(-dx, 0, -dz).normalize();
-      }
-
-      // Shoot on cooldown
-      this.shootTimer -= dt;
-      if (this.shootTimer <= 0) {
-        this.shoot();
-        this.shootTimer = SHOOT_COOLDOWN + Math.random() * 0.4;
-      }
-
-      // Occasionally jump (so it can hit airborne players)
-      this.jumpTimer -= dt;
-      if (this.grounded && this.jumpTimer <= 0) {
-        this.velocity.y = JUMP_VELOCITY;
-        this.grounded = false;
-        this.audio.jump();
-        this.targetScale.set(0.7, 1.4, 0.7);
-        this.jumpTimer =
-          JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
-      }
-    } else {
-      // Wander
+    if (this.behavior === "ambient") {
+      // Ambient showcase actor: wanders the platform and periodically jumps.
+      // Ignores the passed target entirely; immortal (takeHit is a no-op).
       this.wanderTimer -= dt;
       if (this.wanderTimer <= 0) {
         const wander = this.platform.randomSpawn(8);
         this.wanderTarget.set(wander.x, 0, wander.z);
-        this.wanderTimer = WANDER_INTERVAL + Math.random() * 2;
+        this.wanderTimer = WANDER_INTERVAL + Math.random() * 2.5;
       }
       const wdx = this.wanderTarget.x - this.root.position.x;
       const wdz = this.wanderTarget.z - this.root.position.z;
       const wd = Math.hypot(wdx, wdz);
       if (wd > 0.5) {
         move.set(wdx, 0, wdz).normalize();
-        // Face wander direction
         this.aimYaw = Math.atan2(wdz, wdx);
         this.aimGroup.rotation.y = -this.aimYaw;
       }
+
+      // Periodic jumps — keeps the showcase lively.
+      this.ambientJumpTimer -= dt;
+      if (this.grounded && this.ambientJumpTimer <= 0) {
+        this.velocity.y = JUMP_VELOCITY;
+        this.grounded = false;
+        this.audio.playJump(this.root.position, true);
+        this.targetScale.set(0.7, 1.4, 0.7);
+        // Jump every 2–5 s (independent of hunt JUMP_COOLDOWN constants).
+        this.ambientJumpTimer = 2.0 + Math.random() * 3.0;
+      }
+    } else {
+      // "hunt" mode — target the passed entity (local Player or nearest enemy bot).
+      const sight = this.aggressive ? AGGRO_SIGHT_RANGE : SIGHT_RANGE;
+      const seesTarget =
+        target !== null &&
+        target.isAlive() &&
+        Math.hypot(
+          target.position.x - this.root.position.x,
+          target.position.z - this.root.position.z,
+        ) <= sight;
+
+      if (seesTarget && target !== null) {
+        const dx = target.position.x - this.root.position.x;
+        const dz = target.position.z - this.root.position.z;
+        const distToTarget = Math.hypot(dx, dz);
+
+        // Aim at target
+        this.aimYaw = Math.atan2(dz, dx);
+        this.aimGroup.rotation.y = -this.aimYaw;
+
+        if (this.aggressive && this.kameCharging) {
+          // Winding up the mega beam: stand still (telegraph) until it fires.
+          this.kameChargeT += dt;
+          if (this.kameChargeT >= BOT_KAME_CHARGE) {
+            this.fireMega();
+            this.kameCharging = false;
+            this.megaTimer =
+              BOT_KAME_COOLDOWN_MIN + Math.random() * BOT_KAME_COOLDOWN_RANGE;
+          }
+          // move stays (0,0,0) — frozen while charging.
+        } else {
+          // Approach to a comfortable shooting distance (closer when aggressive;
+          // the non-aggressive local tune also closes a bit — 5 was 6).
+          const desired = this.aggressive ? 5 : 5;
+          if (distToTarget > desired + 0.5) {
+            move.set(dx, 0, dz).normalize();
+          } else if (distToTarget < desired - 0.5) {
+            move.set(-dx, 0, -dz).normalize();
+          }
+
+          // Shoot on cooldown
+          const shootCd = this.aggressive ? AGGRO_SHOOT_COOLDOWN : SHOOT_COOLDOWN;
+          this.shootTimer -= dt;
+          if (this.shootTimer <= 0) {
+            this.shoot();
+            this.shootTimer = shootCd + Math.random() * 0.35;
+          }
+
+          // Occasionally jump (so it can hit airborne targets)
+          this.jumpTimer -= dt;
+          if (this.grounded && this.jumpTimer <= 0) {
+            this.velocity.y = JUMP_VELOCITY;
+            this.grounded = false;
+            this.audio.playJump(this.root.position, true);
+            this.targetScale.set(0.7, 1.4, 0.7);
+            this.jumpTimer =
+              JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
+          }
+
+          // Aggressive bots periodically wind up a mega beam when they have a
+          // clear shot in range (the beam only travels ~BOT_KAME_RANGE).
+          if (this.aggressive && this.onKame) {
+            this.megaTimer -= dt;
+            if (this.megaTimer <= 0 && distToTarget <= BOT_KAME_RANGE) {
+              this.kameCharging = true;
+              this.kameChargeT = 0;
+            }
+          }
+        }
+      } else {
+        // No target in range — wander
+        this.wanderTimer -= dt;
+        if (this.wanderTimer <= 0) {
+          const wander = this.platform.randomSpawn(8);
+          this.wanderTarget.set(wander.x, 0, wander.z);
+          this.wanderTimer = WANDER_INTERVAL + Math.random() * 2;
+        }
+        const wdx = this.wanderTarget.x - this.root.position.x;
+        const wdz = this.wanderTarget.z - this.root.position.z;
+        const wd = Math.hypot(wdx, wdz);
+        if (wd > 0.5) {
+          move.set(wdx, 0, wdz).normalize();
+          // Face wander direction
+          this.aimYaw = Math.atan2(wdz, wdx);
+          this.aimGroup.rotation.y = -this.aimYaw;
+        }
+      }
     }
 
+    this.avatar.faceYaw(this.aimYaw);
+
     // Movement
-    const targetVx = move.x * MOVE_SPEED;
-    const targetVz = move.z * MOVE_SPEED;
+    const targetVx = move.x * moveSpeed;
+    const targetVz = move.z * moveSpeed;
     const lerpAmt = 1 - Math.exp(-ACCEL * dt);
     this.velocity.x += (targetVx - this.velocity.x) * lerpAmt;
     this.velocity.z += (targetVz - this.velocity.z) * lerpAmt;
@@ -342,7 +526,7 @@ export class Bot implements BulletTarget {
       this.velocity.y = 0;
       if (wasAirborne) {
         this.grounded = true;
-        this.audio.land();
+        this.audio.playLand(this.root.position, true);
         this.targetScale.set(1.4, 0.6, 1.4);
         this.dust.spawnBurst(
           new THREE.Vector3(
@@ -356,7 +540,7 @@ export class Bot implements BulletTarget {
     } else if (!hardOnPlatform && this.root.position.y < this.platform.topY) {
       if (this.state === "alive") {
         this.state = "falling";
-        this.audio.fall();
+        this.audio.playFall(this.root.position, true);
         this.grounded = false;
       }
     } else {
@@ -365,22 +549,19 @@ export class Bot implements BulletTarget {
 
     // Squash + lean
     const speedXZ = Math.hypot(this.velocity.x, this.velocity.z);
-    const speedRatio = Math.min(1, speedXZ / MOVE_SPEED);
+    const speedRatio = Math.min(1, speedXZ / moveSpeed);
     if (this.grounded) {
       const stretch = 1 + speedRatio * 0.18;
       const squish = 1 - speedRatio * 0.1;
-      this.targetScale.lerp(
-        new THREE.Vector3(squish, stretch * 0.95, squish),
-        0.18,
-      );
+      this.targetScale.lerp(this.tmpScale.set(squish, stretch * 0.95, squish), 0.18);
       if (speedRatio < 0.05) {
-        this.targetScale.lerp(new THREE.Vector3(1, 1, 1), 0.2);
+        this.targetScale.lerp(this.tmpScale.set(1, 1, 1), 0.2);
       }
     } else {
-      this.targetScale.lerp(new THREE.Vector3(1, 1, 1), 0.06);
+      this.targetScale.lerp(this.tmpScale.set(1, 1, 1), 0.06);
     }
-    const leanX = THREE.MathUtils.clamp(this.velocity.z / MOVE_SPEED, -1, 1);
-    const leanZ = THREE.MathUtils.clamp(-this.velocity.x / MOVE_SPEED, -1, 1);
+    const leanX = THREE.MathUtils.clamp(this.velocity.z / moveSpeed, -1, 1);
+    const leanZ = THREE.MathUtils.clamp(-this.velocity.x / moveSpeed, -1, 1);
     this.body.rotation.x += (leanX * 0.35 - this.body.rotation.x) * 0.18;
     this.body.rotation.z += (leanZ * 0.35 - this.body.rotation.z) * 0.18;
 
@@ -392,12 +573,19 @@ export class Bot implements BulletTarget {
       this.body.position.y = (Math.random() - 0.5) * s * 2;
       this.body.position.z = (Math.random() - 0.5) * s * 2;
     } else {
-      this.body.position.lerp(new THREE.Vector3(0, 0, 0), 0.4);
+      this.body.position.lerp(this.tmpScale.set(0, 0, 0), 0.4);
     }
 
     if (this.hitFlashTimer > 0) this.hitFlashTimer -= dt;
     this.updateColor();
     this.body.scale.lerp(this.targetScale, SQUASH_LERP_VAL);
+
+    // Contact shadow: hugs the ground and shrinks as the feet rise on a jump.
+    this.shadow.setVisible(true);
+    this.shadow.apply(
+      this.root.position.y - this.bodyHalfHeight - groundSurfY,
+      groundSurfY - this.root.position.y + 0.02,
+    );
 
     this.position.copy(this.root.position);
   }
@@ -410,12 +598,30 @@ export class Bot implements BulletTarget {
       0,
       Math.sin(this.aimYaw),
     );
-    this.bullets.spawn(muzzle, dir, "bot");
-    this.audio.shoot();
+    // Use this.side as the bullet owner so that alternating-side bots can
+    // damage each other (the collision filter skips bullets whose owner matches
+    // the target's side — opposite sides hit each other). this.id attributes the
+    // kill (e.g. "Mob 2 matou o Bero").
+    this.bullets.spawn(muzzle, dir, this.side, this.id);
+    this.audio.playShot(this.root.position, true);
     if (this.smoke) {
       this.smoke.spawnFlash(muzzle, dir);
       this.smoke.spawnPuff(muzzle, dir, 5, "#bbbbbb");
     }
+  }
+
+  /** Fire the mega beam (kamehameha) toward the current aim. Game owns the beam. */
+  private fireMega() {
+    const muzzle = new THREE.Vector3();
+    this.gunBarrelTip.getWorldPosition(muzzle);
+    const dir = new THREE.Vector3(
+      Math.cos(this.aimYaw),
+      0,
+      Math.sin(this.aimYaw),
+    );
+    this.onKame?.(muzzle.clone(), dir);
+    // Recoil pop on release.
+    this.targetScale.set(1.3, 0.82, 1.3);
   }
 
   setSmoke(smoke: SmokePuffs) {
@@ -426,7 +632,8 @@ export class Bot implements BulletTarget {
   killByHazard() {
     if (this.state !== "alive") return;
     this.health = 0;
-    this.audio.death();
+    this.justDied = true;
+    this.audio.playDeath(this.root.position, true);
     this.dust.spawnBurst(
       new THREE.Vector3(
         this.root.position.x,
@@ -440,12 +647,21 @@ export class Bot implements BulletTarget {
   }
 
   dispose() {
-    this.bodyMaterial.dispose();
-    (this.body.geometry as THREE.BufferGeometry).dispose();
+    this.avatar.dispose();
+    this.shadow.dispose();
+    // Gun geometries + its per-instance material (shared across the gun meshes;
+    // Material.dispose() is idempotent so per-mesh disposal is safe).
     this.gun.traverse((c) => {
       const m = c as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
+      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+      else if (mat) mat.dispose();
     });
+    // Name label owns a per-instance CanvasTexture (~64KB GPU) + SpriteMaterial.
+    const labelMat = this.nameLabel.material as THREE.SpriteMaterial;
+    labelMat.map?.dispose();
+    labelMat.dispose();
   }
 }
 

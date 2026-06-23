@@ -1,112 +1,79 @@
-# Code Guideline
+# Code Guideline — Bero Royale
 
-## Project Structure Overview
+Convenções e mapa de estrutura **reais** deste repositório. Para a arquitetura completa
+(netcode, servidor, fluxo de dados) veja [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Índice de docs em [`docs/README.md`](docs/README.md); o método de orquestração multi-agente
+("mega brain") usado para auditar/implementar partes deste repo está em
+[`docs/mega-brain.md`](docs/mega-brain.md).
+
+Este **não** é um app CRUD de páginas React. É um **jogo Three.js imperativo** (`src/game/`) com
+um HUD React por cima e um **servidor Node** próprio (`server/`). As regras abaixo refletem isso.
+
+## Estrutura do projeto
 
 ```
-project-root/
-  ├── public/                # Static assets (favicon, robots.txt, etc.)
-  ├── src/
-  │   ├── components/        # All reusable UI components
-  │   │   └── ui/            # Prebuilt and custom UI components, grouped by function
-  │   ├── hooks/             # Custom React hooks
-  │   ├── lib/               # Utility functions and libraries
-  │   ├── pages/             # Application pages (each page in its own subdirectory)
-  │   ├── App.tsx            # Main app component, sets up route providers
-  │   ├── router.tsx         # Router config, sets up routing
-  │   ├── main.tsx           # Entry point for the React app
-  │   └── index.css          # Global styles
-  ├── package.json           # Project metadata and scripts
-  ├── tailwind.config.ts     # Tailwind CSS configuration
-  └── ...                    # Other config and lock files
+src/
+  game/                 ENGINE — código imperativo Three.js, não componentes React
+    Game.ts             orquestrador + runLoop (rAF). Núcleo do jogo.
+    Player.ts Bot.ts RemotePlayer.ts   entidades
+    Avatar.ts ModelLibrary.ts          modelos voxel (clones OBJ, geometria compartilhada)
+    Bullets.ts + *FX (Smoke/Dust/Gore/Kamehameha/Rain/Fog/Butterflies/GrassPoof)
+    Platform.ts Decor.ts Shadow.ts     mundo (gerado a partir do world seed)
+    AudioEngine.ts      SFX procedural Web Audio
+    consts.ts           constantes de física + rede COMPARTILHADAS (SP == MP)
+    rng.ts              mulberry32 + hash determinístico (mundo a partir do seed)
+    net/                netcode
+      Room.ts           transporte (ServerRoom WebSocket / LocalRoom BroadcastChannel)
+      Multiplayer.ts    snapshots de pose + eventos one-shot + presença
+      VoiceChat.ts      voz por proximidade (WebRTC mesh)
+      LeaderboardClient.ts  REST /api/leaderboard + /api/score
+  components/
+    hud/                ~16 overlays React do HUD (StatsBar, KillFeed, Leaderboard, ChatPanel,
+                        MobileControls, Crosshair, …) — desenhados SOBRE o <canvas>
+    ui/                 primitivos shadcn/Radix
+  pages/                Menu.tsx (/) · Index.tsx (/play) · NotFound.tsx — PLANAS (1 arquivo cada)
+  router.tsx            array `routers` (NÃO <Route> JSX); App.tsx só passa pro createBrowserRouter
+  lib/ hooks/           utilitários e hooks React
+server/src/             servidor Node: index, ws/*, db, leaderboard, turn, static, env
+public/models/          pack de assets voxel (OBJ/MTL/PNG)
+docs/                   ARCHITECTURE.md, PERFORMANCE.md, shardcloud.md, planos de design
 ```
 
-## Directory Responsibilities
+> Páginas são arquivos **planos** (`pages/Menu.tsx`), registradas no array `routers` de
+> `src/router.tsx`. Não há subdiretórios de página com `index.tsx` nem `<Route>` em `App.tsx`.
 
-- **public/**: Static files served directly. Place images, icons, and robots.txt here.
-- **src/components/**: All UI components.  
-  - **ui/**: Contains atomic and composite UI components.  
-  - *Group related components into subdirectories if they share a domain or feature (e.g., `form/`, `charts/`).*
-- **src/hooks/**: Custom React hooks. Each file should export a single hook focused on one responsibility.
-- **src/lib/**: Utility functions and libraries that are not React components or hooks.
-- **src/pages/**: All route-level pages.  
-  - *Each page should have its own subdirectory if it contains more than a single file or has related logic/components.*
-- **src/App.tsx**: Sets up global providers.
-- **src/router.tsx**: Sets up routing.
-- **src/main.tsx**: Application entry point.
+## Regras específicas do engine (`src/game/`)
 
-**Important:**
-Whenever a new module (such as a component, hook, or utility) or a new page is added or removed, this document **must be updated immediately** to reflect the changes. Keeping this documentation up to date ensures that all collaborators have a clear understanding of the current project structure and its intended organization.
+- **A ponte React↔jogo é unidirecional e enxuta.** O jogo empurra um `GameStats` para o HUD; o HUD
+  **não** dirige o jogo. Evite acoplar estado de jogo a `useState` que re-renderiza por frame —
+  isso compete com o render loop. Prefira escrita imperativa via `ref` para coisas de alta
+  frequência (ex.: crosshair). Ver `docs/PERFORMANCE.md`.
+- **Sem alocação no hot path.** Nada de `new THREE.Vector3()` (ou Quaternion/Color/Array/objeto)
+  dentro de `update()`/loop. Use campos *scratch* reutilizáveis com `.set(...)`. Alocação por frame
+  = GC hitch = stutter.
+- **Geometria/material/textura compartilhados NÃO se dispõem por entidade.** Templates de
+  `ModelLibrary`/módulos de FX são compartilhados entre clones; chamar `geometry.dispose()` neles
+  corrompe todas as outras entidades vivas. Disponha só o que a entidade **possui**.
+- **Determinismo SP == MP.** Física e tuning vêm de `consts.ts`; geração de mundo vem de `rng.ts`
+  semeado pelo *world seed* do servidor. Não duplique constantes nem use `Math.random` para o mundo.
+- **Pooling/instancing para o que se repete.** Partículas, balas e props recorrentes devem usar
+  `InstancedMesh`/pool (veja `Rain.ts`/`Butterflies.ts` como referência), não 1 mesh por item.
 
-## How to Add New Code
+## Regras do netcode (`src/game/net/`, `server/src/ws/`)
 
-### 1. Adding a New Page
+- **Self é client-predicted; nunca espere ack do servidor** para aplicar movimento/tiro local.
+- **Remotos são interpolados** (`now − INTERP_DELAY_MS`) a partir de um buffer de snapshots; só
+  empurre um snapshot novo no buffer quando o pacote for **genuinamente novo** (guard de sequência).
+- **O servidor é um relay** (+ autoridade de seed e HP/alive). Novos eventos one-shot só precisam de
+  um nome de evento — o fan-out já é por nome opaco. Mantenha o caminho quente (`s` + eventos) sem
+  trabalho bloqueante e sem tocar Postgres.
 
-- **Create a subdirectory under `src/pages/` for each new page.**
-  - Example: For a "Dashboard" page, create `src/pages/dashboard/`.
-- **Place the main page component as `index.tsx` inside the subdirectory.**
-- **Add any page-specific components or logic in the same subdirectory.**
-- **Register the new route in `src/router.tsx and generate a semantic name.**
-  - Example:
-    ```tsx
-    import Dashboard from "./pages/dashboard";
-    // ...
-    {
-      path: "/dashboard",
-      name: 'dashboard',
-      element: <Dashboard />
-    }
-    ```
+## Boas práticas gerais
 
-### 2. Adding a New Component
-
-- **If you are adding a group of related components, create a subdirectory (e.g., `form/`, `charts/`).**
-- **If the component is only used by a specific page, place it in that page's subdirectory under `src/pages/`.**
-- **Each component should be focused on a single responsibility.**
-- **Small files (< 100 lines) are encouraged for a single component.**
-
-### 3. Adding a New Hook
-
-- **Create a new file in `src/hooks/` named after the hook (e.g., `use-feature.ts`).**
-- **Each file should export only one hook.**
-- **Hooks should be as small and focused as possible.**
-
-### 4. Adding Utilities
-
-- **Add utility functions to `src/lib/`.**
-- **Group related utilities in the same file or subdirectory if needed.**
-
-## Coding Best Practices
-
-- **One module, one responsibility:**  
-  Each file (component, hook, utility) should do one thing only.
-- **High cohesion, low coupling:**  
-  Keep related logic together and avoid unnecessary dependencies between modules.
-- **Naming conventions:**  
-  - Use `PascalCase` for components and page directories.
-  - Use `camelCase` for hooks and utility functions.
-  - Name page subdirectories and files after their route or feature.
-- **Component structure:**  
-  - Keep components small and focused.
-  - Extract subcomponents if a component grows too large.
-- **Page structure:**  
-  - Place all logic, hooks, and components specific to a page in its subdirectory.
-  - Only share code via `components/`, `hooks/`, or `lib/` if it is truly reusable.
-- **Documentation:**  
-  - Add comments for complex logic.
-  - Document the purpose of each module at the top of the file if not obvious.
-
-## Example: Adding a New "Profile" Page
-
-1. **Create a directory:**  
-   `src/pages/profile/`
-2. **Add the main page component:**  
-   `src/pages/profile/index.tsx`
-3. **Add page-specific components:**  
-   `src/pages/profile/ProfileHeader.tsx`, `src/pages/profile/ProfileDetails.tsx`
-4. **Register the route in `App.tsx`:**
-   ```tsx
-   import Profile from "./pages/profile";
-   // ...
-   <Route path="/profile" element={<Profile />} />
-   ```
-5. **If you need a reusable button, add it to `src/components/ui/button.tsx`.**
+- **TypeScript** em todo lado; tipos de rede espelhados entre cliente (`net/`) e
+  `server/src/ws/protocol.ts` — mudança de formato de fio exige deploy coordenado.
+- **Naming:** `PascalCase` para componentes/classes de jogo; `camelCase` para funções/utilitários.
+- **Comentários:** documente o *porquê* de matemática não-óbvia (física, interpolação) no topo do
+  módulo. Mantenha-os atualizados — comentários com números de linha cruzados tendem a derivar.
+- **Arquivos de jogo são grandes por natureza** (um engine não é "1 componentinho por arquivo"):
+  organize por responsabilidade de subsistema, não por contagem de linhas.

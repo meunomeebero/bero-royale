@@ -1,10 +1,23 @@
 import * as THREE from "three";
 
 export class InputManager {
+  private enabled = true;
   private keys: Set<string> = new Set();
   private spaceJustPressed = false;
+  private shiftJustPressed = false;
   private mouseJustPressed = false;
   private mouseHeld = false;
+  private tabJustPressed = false; // Tab = toggle fire mode
+
+  // Mobile stick state
+  private moveAxis = { x: 0, y: 0 };
+  private aimAxis = { x: 0, y: 0 };
+  private aiming = false;
+  /** True once any touch input is used — keeps aim mobile-driven (never the
+   *  absent mouse, whose centered NDC makes the facing jitter while walking). */
+  private mobileActive = false;
+  /** Last resolved mobile aim yaw, held while idle so facing never trembles. */
+  private lastMobileAimYaw = 0;
 
   /** Normalized device coordinates (-1..1) of the mouse. */
   readonly mouseNDC = new THREE.Vector2(0, 0);
@@ -31,14 +44,32 @@ export class InputManager {
   clearKeys() {
     this.keys.clear();
     this.spaceJustPressed = false;
+    this.shiftJustPressed = false;
     this.mouseJustPressed = false;
     this.mouseHeld = false;
+    this.moveAxis = { x: 0, y: 0 };
+    this.aimAxis = { x: 0, y: 0 };
+    this.aiming = false;
+    this.tabJustPressed = false;
+  }
+
+  /**
+   * Enable or disable game-key handling. When disabled (e.g. chat input is
+   * focused), all keyboard events are ignored so raw characters reach the
+   * input element and no game action (move/jump/dash/voice) fires.
+   * Mouse aim/shoot events are unaffected and keep working.
+   */
+  setEnabled(on: boolean) {
+    this.enabled = on;
+    if (!on) this.clearKeys();
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
+    if (!this.enabled) return;
     if (
       e.code === "Space" ||
       e.code.startsWith("Arrow") ||
+      e.code === "Tab" ||
       e.code === "KeyW" ||
       e.code === "KeyA" ||
       e.code === "KeyS" ||
@@ -49,10 +80,21 @@ export class InputManager {
     if (e.code === "Space" && !this.keys.has("Space")) {
       this.spaceJustPressed = true;
     }
+    if (e.code === "Tab" && !this.keys.has("Tab")) {
+      this.tabJustPressed = true;
+    }
+    if (
+      (e.code === "ShiftLeft" || e.code === "ShiftRight") &&
+      !this.keys.has("ShiftLeft") &&
+      !this.keys.has("ShiftRight")
+    ) {
+      this.shiftJustPressed = true;
+    }
     this.keys.add(e.code);
   };
 
   private onKeyUp = (e: KeyboardEvent) => {
+    if (!this.enabled) return;
     this.keys.delete(e.code);
   };
 
@@ -80,8 +122,83 @@ export class InputManager {
     e.preventDefault();
   };
 
-  /** Movement vector on the XZ plane (arrows or WASD). */
+  // ---------------------------------------------------------------------------
+  // Mobile injection API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Set the LEFT stick vector from a mobile joystick.
+   * x: right=-1..1=left, y: down=-1..1=up (screen space).
+   * Call with (0, 0) on release.
+   */
+  setMoveAxis(x: number, y: number) {
+    this.moveAxis = { x, y };
+    this.mobileActive = true;
+  }
+
+  /**
+   * Set the RIGHT stick vector from a mobile joystick (aim).
+   * Sets aiming=true when magnitude > 0.2 deadzone.
+   */
+  setAimAxis(x: number, y: number) {
+    this.aimAxis = { x, y };
+    const mag = Math.hypot(x, y);
+    this.aiming = mag > 0.2;
+    this.mobileActive = true;
+  }
+
+  /** Called on right stick release — stop aiming. */
+  clearAim() {
+    this.aiming = false;
+    this.aimAxis = { x: 0, y: 0 };
+  }
+
+  /**
+   * Returns the world aim yaw derived from the right stick while aiming,
+   * or null when the mobile aim stick is not active.
+   * World convention: atan2(dz, dx) where dz=stickY, dx=stickX.
+   */
+  getMobileAimYaw(): number | null {
+    if (!this.mobileActive) return null; // desktop → mouse-based aim
+    if (this.aiming) {
+      this.lastMobileAimYaw = Math.atan2(this.aimAxis.y, this.aimAxis.x);
+    } else if (Math.hypot(this.moveAxis.x, this.moveAxis.y) > 0.15) {
+      // Not aiming → face the WALKING direction (twin-stick feel). Never fall
+      // through to the mouse raycast, whose centered NDC points at the player
+      // and produces an erratic, trembling yaw while moving.
+      this.lastMobileAimYaw = Math.atan2(this.moveAxis.y, this.moveAxis.x);
+    }
+    return this.lastMobileAimYaw;
+  }
+
+  /** Trigger a jump from mobile UI (consumed once via consumeJump). */
+  triggerJump() {
+    this.spaceJustPressed = true;
+    this.mobileActive = true;
+  }
+
+  /** Trigger a dash from mobile UI (consumed once via consumeDash). */
+  triggerDash() {
+    this.shiftJustPressed = true;
+    this.mobileActive = true;
+  }
+
+  // ---------------------------------------------------------------------------
+
+  /** Movement vector on the XZ plane (mobile left stick when non-zero, else WASD/arrows). */
   getMoveVector(): THREE.Vector3 {
+    // Mobile axis takes priority when the stick has been pushed
+    const mobileMag = Math.hypot(this.moveAxis.x, this.moveAxis.y);
+    if (mobileMag > 0) {
+      // Clamp to length 1, map screen-space y-down to world -z (forward)
+      const scale = Math.min(1, mobileMag) / mobileMag;
+      return new THREE.Vector3(
+        this.moveAxis.x * scale,
+        0,
+        this.moveAxis.y * scale,
+      );
+    }
+
     const v = new THREE.Vector3(0, 0, 0);
     if (this.keys.has("ArrowLeft") || this.keys.has("KeyA")) v.x -= 1;
     if (this.keys.has("ArrowRight") || this.keys.has("KeyD")) v.x += 1;
@@ -100,6 +217,15 @@ export class InputManager {
     return false;
   }
 
+  /** Returns true exactly once per Shift press (dash). */
+  consumeDash(): boolean {
+    if (this.shiftJustPressed) {
+      this.shiftJustPressed = false;
+      return true;
+    }
+    return false;
+  }
+
   /** Returns true exactly once per left-mouse press. */
   consumeShoot(): boolean {
     if (this.mouseJustPressed) {
@@ -110,7 +236,21 @@ export class InputManager {
   }
 
   isShootHeld(): boolean {
-    return this.mouseHeld;
+    return this.mouseHeld || this.aiming;
+  }
+
+  /** Returns true exactly once per Tab press (toggle fire mode). */
+  consumeTab(): boolean {
+    if (this.tabJustPressed) {
+      this.tabJustPressed = false;
+      return true;
+    }
+    return false;
+  }
+
+  /** Push-to-talk: true while G is held. */
+  isVoiceHeld(): boolean {
+    return this.keys.has("KeyG");
   }
 
   dispose() {

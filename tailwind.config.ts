@@ -67,10 +67,17 @@ export default {
 				'game-panel': 'hsl(var(--game-panel))',
 				'game-accent': 'hsl(var(--game-accent))',
 				'game-accent-2': 'hsl(var(--game-accent-2))',
+				'game-accent-3': 'hsl(var(--game-accent-3))',
 				'game-danger': 'hsl(var(--game-danger))',
 				'game-success': 'hsl(var(--game-success))',
 				'game-muted': 'hsl(var(--game-muted))',
-				'game-grid': 'hsl(var(--game-grid))'
+				'game-ink': 'hsl(var(--game-ink))',
+				'game-border': 'hsl(var(--game-border))'
+			},
+			fontFamily: {
+				sans: ['Hanken Grotesk', 'system-ui', 'sans-serif'],
+				display: ['Fraunces', 'Georgia', 'serif'],
+				logo: ['"Baloo 2"', 'system-ui', 'sans-serif']
 			},
 			borderRadius: {
 				lg: 'var(--radius)',

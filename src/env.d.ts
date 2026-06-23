@@ -1,6 +1,7 @@
 /// <reference types="@rsbuild/core/types" />
 
 interface ImportMetaEnv {
+  readonly BASE_URL: string;
   readonly VITE_ENTER_ANALYTICS_ENABLED?: string;
   readonly VITE_ENTER_ANALYTICS_TOKEN?: string;
   readonly VITE_ENTER_PROJECT_ID?: string;
