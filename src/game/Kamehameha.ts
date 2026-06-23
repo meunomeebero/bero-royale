@@ -318,8 +318,21 @@ export class Kamehameha {
     }
   }
 
+  /**
+   * Public impact burst at a position. Used to land a VISIBLE blast on the local
+   * player at the exact moment a remote kamehameha kills them — otherwise the
+   * remote beam (which travels from the caster's muzzle) arrives AFTER the
+   * instant server-driven death, so you'd die before seeing anything hit you.
+   */
+  impactAt(position: THREE.Vector3) {
+    this.spawnBurst(position.clone());
+  }
+
   private dissolveBeam(b: Beam) {
-    const p = b.pos;
+    this.spawnBurst(b.pos);
+  }
+
+  private spawnBurst(p: THREE.Vector3) {
     for (let i = 0; i < 14; i++) {
       const c = new THREE.Mesh(CUBE, glowMat(i % 2 ? BLUE : BLUE_BRIGHT, 0.8));
       c.scale.setScalar(0.12 + Math.random() * 0.2);

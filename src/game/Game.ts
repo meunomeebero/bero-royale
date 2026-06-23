@@ -527,6 +527,13 @@ export class Game {
       if (e.target !== this.mp?.id) return;
       const caster = this.mp?.getRemoteStates().get(e.id)?.name;
       this.lastAttacker = { name: caster || "Alguém", t: Date.now() };
+      // Land a VISIBLE blast on us at the instant of death. The remote beam is a
+      // separate event that travels from the caster's muzzle and arrives AFTER
+      // this server-driven kill, so without this you'd die before seeing anything
+      // hit you. The impact-at-victim gives the death an immediate visible cause.
+      const hitPos = this.player.root.position.clone();
+      this.kame.impactAt(hitPos);
+      this.audio.playShot(hitPos, false);
       this.player.kamehamehaHit();
     });
     // Relayed kill-feed events from other players → surface to React. Skip events
