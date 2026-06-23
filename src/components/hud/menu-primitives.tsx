@@ -2,25 +2,27 @@ import { type CSSProperties, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HEX, HUD, INK, IconWell } from "./primitives";
+import { HEX, HUD, IconWell } from "./primitives";
 
 /**
- * Menu-screen primitives — the "Cocoa Cream" language (GLM 5.2). Same structural
- * DNA as the in-match HUD (thick ink borders, hard stepped shadows, accent rings,
- * hexagon icon wells, ribbon titles) but on a WARM CREAM surface, so menus read
- * as "menu mode" and pop forward over the blurred bright scene — while the dark
- * cocoa-glass HUD primitives are reserved for modals/dropdowns (in-game family).
+ * Menu-screen primitives — the "Cocoa Cream" language (GLM 5.2), softened.
+ * Same chunky DNA as the in-match HUD (cream panels, hard stepped shadows,
+ * hexagon icon wells, ribbon titles) but with a SINGLE soft warm-brown border
+ * (no near-black outline, no separate accent ring) — the black+orange double
+ * border read too harsh on the light cream surface (user feedback). The dark
+ * cocoa-glass HUD primitives are reserved for in-game modals/dropdowns.
  *
- * Reuses HUD primitives + utilities (.hud-num/.hud-label/.hud-text). Replaces the
- * old parchment cards + soft cozy-shadow + paper-grain.
+ * Reuses HUD primitives + utilities (.hud-num/.hud-label/.hud-text).
  */
 
 export const CREAM = "#F7EEDF";
 export const INK_TEXT = "#3B291F";
+/** Soft warm-brown border/shadow ink for cream menus (NOT the near-black HUD ink). */
+export const MENU_INK = "#5a3f2e";
 
-/** Stacked hard shadow (toy-block bevel) — no blur. */
-const stack = (n: number, soft = 0.22) =>
-  `0 ${n}px 0 ${INK}, 0 ${n + 4}px 0 rgba(0,0,0,${soft})`;
+/** Stacked hard shadow (toy-block bevel) — softened, no blur. */
+const stack = (n: number, soft = 0.14) =>
+  `0 ${n}px 0 ${MENU_INK}, 0 ${n + 3}px 0 rgba(0,0,0,${soft})`;
 
 /* ─────────────────────────── BackButton ─────────────────────────── */
 
@@ -36,7 +38,7 @@ export const BackButton = ({
     aria-label="Voltar"
     onClick={onClick}
     className="grid shrink-0 place-items-center transition-transform hover:-translate-y-0.5 active:translate-y-[2px]"
-    style={{ width: 40, height: 40, clipPath: HEX, background: accent, outline: `3px solid ${INK}` }}
+    style={{ width: 40, height: 40, clipPath: HEX, background: accent, outline: `2px solid ${MENU_INK}` }}
   >
     <ArrowLeft style={{ width: 18, height: 18, color: "#fff" }} strokeWidth={3} />
   </button>
@@ -50,7 +52,6 @@ interface ScreenShellProps {
   onBack?: () => void;
   children: ReactNode;
   footer?: ReactNode;
-  /** Max width in px (default 460). */
   maxWidth?: number;
   className?: string;
   contentClassName?: string;
@@ -72,9 +73,9 @@ export const ScreenShell = ({
     style={{
       maxWidth,
       background: CREAM,
-      border: `3px solid ${INK}`,
+      border: `2px solid ${MENU_INK}`,
       borderRadius: 16,
-      boxShadow: `0 0 0 1.5px ${accent}, 0 6px 0 rgba(0,0,0,0.42), 0 12px 26px rgba(0,0,0,0.18)`,
+      boxShadow: "0 5px 0 rgba(0,0,0,0.14), 0 14px 28px rgba(0,0,0,0.16)",
     }}
   >
     {/* Title ribbon + back */}
@@ -84,15 +85,15 @@ export const ScreenShell = ({
         className="flex flex-1 items-center"
         style={{
           background: `${accent}f0`,
-          border: `2px solid ${INK}`,
+          border: `2px solid ${MENU_INK}`,
           borderRadius: 999,
           padding: "6px 16px",
-          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.30), 0 3px 0 rgba(0,0,0,0.40)",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.30), 0 3px 0 rgba(0,0,0,0.16)",
         }}
       >
         <span
           className="font-display text-[18px] font-bold leading-none text-white"
-          style={{ textShadow: `1px 1px 0 ${INK}` }}
+          style={{ textShadow: `1px 1px 0 ${MENU_INK}` }}
         >
           {title}
         </span>
@@ -103,7 +104,7 @@ export const ScreenShell = ({
     <div className="p-4">
       <div
         className={cn("rounded-[12px] p-4", contentClassName)}
-        style={{ background: "rgba(59,41,31,0.05)", border: `1px solid ${INK}22` }}
+        style={{ background: "rgba(90,63,46,0.05)", border: `1px solid ${MENU_INK}1f` }}
       >
         {children}
       </div>
@@ -135,7 +136,6 @@ export const MenuButton = ({
 }: MenuButtonProps) => {
   const fill = primary ? HUD.rose : CREAM;
   const labelColor = primary ? "#fff" : INK_TEXT;
-  const ring = primary ? HUD.honey : accent;
   return (
     <button
       type="button"
@@ -144,22 +144,22 @@ export const MenuButton = ({
       className="group flex w-full items-center gap-3 text-left transition-transform hover:-translate-y-0.5 active:translate-y-[2px] disabled:translate-y-0 disabled:opacity-50"
       style={{
         background: disabled ? HUD.muted : fill,
-        border: `3px solid ${INK}`,
+        border: `2px solid ${MENU_INK}`,
         borderRadius: 12,
         padding: "12px 14px",
-        boxShadow: disabled ? "none" : `0 0 0 1.5px ${ring}, ${stack(5, 0.3)}`,
+        boxShadow: disabled ? "none" : stack(4, 0.16),
       }}
     >
       <IconWell icon={icon} accent={primary ? HUD.honey : accent} size={38} shape="hex" />
       <span
         className="flex-1 font-sans text-[16px] font-bold"
-        style={{ color: labelColor, textShadow: primary ? `1px 1px 0 ${INK}` : "none" }}
+        style={{ color: labelColor, textShadow: primary ? `1px 1px 0 ${MENU_INK}` : "none" }}
       >
         {label}
       </span>
       <ChevronRight
         className="transition-transform group-hover:translate-x-0.5"
-        style={{ width: 20, height: 20, color: primary ? "#fff" : INK }}
+        style={{ width: 20, height: 20, color: primary ? "#fff" : MENU_INK }}
         strokeWidth={3}
       />
     </button>
@@ -194,16 +194,16 @@ export const PlayButton = ({
     )}
     style={{
       background: disabled ? HUD.muted : HUD.rose,
-      border: `3px solid ${INK}`,
+      border: `2px solid ${MENU_INK}`,
       borderRadius: 12,
       padding: "14px 22px",
-      boxShadow: disabled ? "none" : `0 0 0 1.5px ${HUD.honey}, ${stack(6, 0.25)}`,
+      boxShadow: disabled ? "none" : stack(5, 0.18),
     }}
   >
     {Icon && <Icon style={{ width: 22, height: 22, color: "#fff" }} strokeWidth={3} />}
     <span
-      className="hud-num leading-none"
-      style={{ fontSize: 20, WebkitTextStrokeWidth: 2 }}
+      className="font-logo font-extrabold leading-none text-white"
+      style={{ fontSize: 20, letterSpacing: "0.01em", textShadow: `1.5px 1.5px 0 ${MENU_INK}` }}
     >
       {label}
     </span>
@@ -235,10 +235,10 @@ export const TextField = ({
     className={cn("flex items-center gap-2", className)}
     style={{
       background: CREAM,
-      border: `2px solid ${INK}`,
+      border: `2px solid ${MENU_INK}`,
       borderRadius: 10,
       padding: "8px 12px",
-      boxShadow: `0 3px 0 ${INK}`,
+      boxShadow: `0 3px 0 ${MENU_INK}`,
     }}
   >
     {Icon && <IconWell icon={Icon} accent={HUD.honey} size={26} />}
@@ -286,10 +286,10 @@ export const ToggleRow = ({
     className="flex w-full items-center gap-3 text-left"
     style={{
       background: CREAM,
-      border: `2px solid ${INK}`,
+      border: `2px solid ${MENU_INK}`,
       borderRadius: 10,
       padding: "10px 12px",
-      boxShadow: `0 3px 0 ${INK}`,
+      boxShadow: `0 3px 0 ${MENU_INK}`,
     }}
   >
     <IconWell icon={icon} accent={on ? accent : HUD.muted} size={32} />
@@ -304,7 +304,7 @@ export const ToggleRow = ({
         width: 52,
         height: 28,
         borderRadius: 14,
-        border: `2px solid ${INK}`,
+        border: `2px solid ${MENU_INK}`,
         background: on ? accent : CREAM,
         transition: "background 120ms steps(2)",
       }}
@@ -315,11 +315,11 @@ export const ToggleRow = ({
           width: 20,
           height: 20,
           borderRadius: "50%",
-          border: `2px solid ${INK}`,
+          border: `2px solid ${MENU_INK}`,
           background: on ? "#fff" : HUD.terracotta,
           transform: `translateY(-50%) translateX(${on ? 26 : 2}px)`,
           transition: "transform 120ms steps(2)",
-          boxShadow: `0 2px 0 ${INK}`,
+          boxShadow: `0 2px 0 ${MENU_INK}`,
         }}
       />
     </span>
@@ -342,7 +342,7 @@ interface SelectFieldProps {
   ariaLabel?: string;
 }
 
-/** Chunky game-style native select (cream pill + ink border + hex chevron). */
+/** Chunky game-style native select (cream pill + soft border + hex chevron). */
 export const SelectField = ({
   value,
   onChange,
@@ -355,10 +355,10 @@ export const SelectField = ({
     className="flex items-center gap-2"
     style={{
       background: CREAM,
-      border: `2px solid ${INK}`,
+      border: `2px solid ${MENU_INK}`,
       borderRadius: 8,
       padding: "6px 6px 6px 10px",
-      boxShadow: `0 3px 0 ${INK}`,
+      boxShadow: `0 3px 0 ${MENU_INK}`,
       opacity: disabled ? 0.5 : 1,
     }}
   >
@@ -399,11 +399,11 @@ export const KeyHint = ({
       padding: wide ? "0 10px" : 0,
       background: accent ?? CREAM,
       color: accent ? "#fff" : INK_TEXT,
-      border: `2px solid ${INK}`,
+      border: `2px solid ${MENU_INK}`,
       borderRadius: 8,
       fontSize: 13,
-      boxShadow: `0 3px 0 ${INK}`,
-      textShadow: accent ? `1px 1px 0 ${INK}` : "none",
+      boxShadow: `0 3px 0 ${MENU_INK}`,
+      textShadow: accent ? `1px 1px 0 ${MENU_INK}` : "none",
     }}
   >
     {children}
@@ -443,11 +443,9 @@ export const CharacterCard = ({
       width: size,
       height: size,
       background: CREAM,
-      border: `${selected ? 3 : 2}px solid ${selected ? HUD.rose : INK}`,
+      border: `2px solid ${selected ? HUD.rose : MENU_INK}`,
       borderRadius: 10,
-      boxShadow: selected
-        ? `0 0 0 1.5px ${HUD.honey}, 0 4px 0 ${INK}`
-        : `0 3px 0 rgba(0,0,0,0.35)`,
+      boxShadow: selected ? `0 4px 0 ${HUD.rose}` : `0 3px 0 ${MENU_INK}`,
       opacity: locked ? 0.45 : 1,
       ...style,
     }}
