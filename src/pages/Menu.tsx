@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronRight } from "lucide-react";
+import { Download, Info, Settings, User, Users } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { GameMode } from "@/game/Game";
 import { Game } from "@/game/Game";
 import { ModelLibrary } from "@/game/ModelLibrary";
@@ -11,6 +12,8 @@ import { AboutScreen } from "@/components/hud/AboutScreen";
 import { CharacterSelect } from "@/components/hud/CharacterSelect";
 import { InstructionsScreen } from "@/components/hud/InstructionsScreen";
 import { InstallScreen } from "@/components/hud/InstallScreen";
+import { MenuButton } from "@/components/hud/menu-primitives";
+import { HexBadge, HUD, INK } from "@/components/hud/primitives";
 
 const USERNAME_KEY = "voxelCube.username";
 const MODE_KEY = "voxelCube.mode";
@@ -21,6 +24,8 @@ type MenuView = "main" | "select" | "instructions" | "install" | "settings" | "a
 interface MenuItem {
   key: string;
   label: string;
+  icon: LucideIcon;
+  primary?: boolean;
   onSelect: () => void;
 }
 
@@ -119,10 +124,15 @@ const Menu = () => {
   };
 
   const items: MenuItem[] = [
-    { key: "single", label: "Single player", onSelect: () => openSelect("local") },
-    { key: "multi", label: "Multiplayer", onSelect: () => openSelect("multiplayer") },
-    { key: "settings", label: "Configurações", onSelect: () => setView("settings") },
-    { key: "about", label: "Sobre", onSelect: () => setView("about") },
+    { key: "single", label: "Single player", icon: User, onSelect: () => openSelect("local") },
+    { key: "multi", label: "Multiplayer", icon: Users, primary: true, onSelect: () => openSelect("multiplayer") },
+    { key: "settings", label: "Configurações", icon: Settings, onSelect: () => setView("settings") },
+    { key: "about", label: "Sobre", icon: Info, onSelect: () => setView("about") },
+    // Surface the "add to home screen" guide directly when play would be gated
+    // behind it (mobile browser tab) — keeps the same install view/flow.
+    ...(needsInstall
+      ? [{ key: "install", label: "Instalar app", icon: Download, onSelect: () => setView("install") } as MenuItem]
+      : []),
   ];
 
   return (
@@ -168,65 +178,76 @@ const Menu = () => {
 
       {/* ── MAIN MENU ─────────────────────────────────────────────────────── */}
       {view === "main" && (
-        <div className="relative z-10 flex w-full max-w-[360px] flex-col items-center gap-8 md:items-start animate-rise">
+        <div className="relative z-10 flex w-full max-w-[340px] flex-col items-center gap-7 md:items-start animate-rise">
           {/* Mobile-only soft halo so the centered column reads over the bright
               scene (desktop uses the left-side scrim instead). */}
           <div className="pointer-events-none absolute -inset-x-10 -inset-y-12 -z-10 rounded-[44px] bg-[radial-gradient(ellipse_at_center,rgba(24,10,16,0.6),rgba(24,10,16,0.22)_54%,transparent_78%)] blur-xl md:hidden" />
 
-          {/* Logo — chunky, beveled, two-line wordmark. */}
-          <header className="select-none text-center md:text-left">
-            <h1 className="font-logo leading-[0.84] tracking-[-0.01em]">
+          {/* Logo — Cocoa Cream "3D sticker" wordmark: white extra-bold ALL CAPS
+              with an ink outline + honey under-shadow, a rose HexBadge perched
+              top-right, and a Fraunces-italic cream subtitle. */}
+          <header className="relative select-none text-center md:text-left">
+            {/* Rose emblem perched near the wordmark. */}
+            <HexBadge
+              accent={HUD.rose}
+              size={38}
+              value="!"
+              className="absolute -right-3 -top-4 md:-right-4"
+            />
+            <h1 className="font-logo uppercase leading-[0.82] tracking-[-0.01em]">
               <span
-                className="block text-[clamp(3rem,9vw,5.2rem)] font-extrabold"
+                className="block text-[clamp(2.9rem,8.6vw,5rem)] font-extrabold"
                 style={{
-                  color: "#FBEFD8",
-                  WebkitTextStroke: "3px #2a160e",
+                  color: "#fff",
+                  WebkitTextStroke: `4px ${INK}`,
                   paintOrder: "stroke fill",
-                  textShadow:
-                    "0 5px 0 rgba(80,40,28,0.5), 0 16px 34px rgba(18,7,12,0.7)",
+                  textShadow: `0 4px 0 ${HUD.honey}, 0 9px 0 ${INK}`,
                 }}
               >
                 Cozy
               </span>
               <span
-                className="mt-1 block text-[clamp(3rem,9vw,5.2rem)] font-extrabold"
+                className="mt-1.5 block text-[clamp(2.9rem,8.6vw,5rem)] font-extrabold"
                 style={{
-                  color: "#D14E6E",
-                  WebkitTextStroke: "3px #2a160e",
+                  color: "#fff",
+                  WebkitTextStroke: `4px ${INK}`,
                   paintOrder: "stroke fill",
-                  textShadow:
-                    "0 5px 0 rgba(110,28,42,0.6), 0 16px 34px rgba(18,7,12,0.7)",
+                  textShadow: `0 4px 0 ${HUD.rose}, 0 9px 0 ${INK}`,
                 }}
               >
                 Killer
               </span>
             </h1>
-            <div className="mt-4 flex items-center justify-center gap-2.5 md:justify-start">
-              <span className="rounded-md bg-game-ink px-2 py-1 text-[11px] font-bold uppercase tracking-[0.2em] text-[#fff4e6] shadow-[0_2px_0_rgba(0,0,0,0.35)]">
-                Demo
-              </span>
-            </div>
+            <p
+              className="mt-3 font-display text-[15px] italic"
+              style={{ color: "#FBEFD8", textShadow: "0 1px 2px rgba(18,7,12,0.85)" }}
+            >
+              Fofo por fora, feroz por dentro.
+            </p>
           </header>
 
-          {/* Menu list — quiet text rows that light up on hover. */}
-          <nav className="flex w-full flex-col gap-1">
-            {items.map(({ key, label, onSelect }) => (
-              <button
+          {/* Menu stack — chunky Cocoa Cream game tiles. */}
+          <nav className="flex w-full flex-col gap-2.5">
+            {items.map(({ key, label, icon, primary, onSelect }) => (
+              <MenuButton
                 key={key}
-                type="button"
+                label={label}
+                icon={icon}
+                primary={primary}
                 onClick={onSelect}
-                className="group relative flex w-full items-center rounded-2xl px-4 py-3 text-left outline-none transition-all duration-200 hover:translate-x-1 hover:bg-[#fff4e6]/12 hover:backdrop-blur-sm focus-visible:bg-[#fff4e6]/12 focus-visible:ring-2 focus-visible:ring-game-accent/40"
-              >
-                <span className="font-logo text-[26px] font-bold text-[#fde9cf] drop-shadow-[0_2px_6px_rgba(18,7,12,0.85)] transition-colors duration-200 group-hover:text-white group-focus-visible:text-white">
-                  {label}
-                </span>
-                <ChevronRight
-                  className="ml-auto h-5 w-5 shrink-0 text-game-accent opacity-0 -translate-x-2 transition-all duration-200 group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
-                  strokeWidth={2.6}
-                />
-              </button>
+              />
             ))}
           </nav>
+
+          {/* Footer — small uppercase version tag. */}
+          <footer className="w-full text-center md:text-left">
+            <span
+              className="hud-label text-[11px]"
+              style={{ color: "rgba(251,239,216,0.78)", textShadow: "0 1px 2px rgba(18,7,12,0.85)" }}
+            >
+              Demo · v0.0
+            </span>
+          </footer>
         </div>
       )}
 

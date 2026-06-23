@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
-  ArrowLeft,
-  ChevronDown,
   Gamepad2,
   Mic,
-  Monitor,
   Music2,
   Radio,
   Volume2,
-  VolumeX,
 } from "lucide-react";
 import {
   PIXEL_FILTER_KEY,
@@ -17,10 +13,18 @@ import {
   VOICE_MUTED_KEY,
 } from "@/game/consts";
 import { cn } from "@/lib/utils";
+import { HUD, INK, IconWell, RibbonStrip } from "./primitives";
+import {
+  CREAM,
+  INK_TEXT,
+  ScreenShell,
+  SelectField,
+  ToggleRow,
+} from "./menu-primitives";
 
 /**
  * Full-screen Settings view for the menu (rendered over the blurred ambient
- * scene, same cozy parchment system as the rest of the game).
+ * scene, same "Cocoa Cream" cream-panel system as the rest of the menu).
  *
  * Two audio CHANNELS the player can independently silence:
  *   - "Efeitos sonoros"  → all procedural game SFX (footsteps, shots, death).
@@ -241,231 +245,192 @@ export const SettingsScreen = ({
     }
   };
 
-  const selectClass =
-    "w-full appearance-none rounded-xl border-[1.5px] border-game-border bg-game-bg/55 px-3.5 py-2.5 pr-10 text-[13px] font-medium text-game-ink key-shadow outline-none disabled:cursor-not-allowed disabled:opacity-50";
+  const inputOptions = [
+    { value: "", label: "Padrão do sistema" },
+    ...inputs.map((d) => ({
+      value: d.deviceId,
+      label: d.label || `Microfone ${d.deviceId.slice(0, 6)}`,
+    })),
+  ];
+
+  const outputOptions = [
+    { value: "", label: "Padrão do sistema" },
+    ...outputs.map((d) => ({
+      value: d.deviceId,
+      label: d.label || `Alto-falante ${d.deviceId.slice(0, 6)}`,
+    })),
+  ];
 
   return (
-    <div className="relative w-full max-w-[440px] max-h-[88dvh] overflow-y-auto animate-rise">
-      <div className="relative overflow-hidden rounded-[24px] border-[1.5px] border-game-border/80 bg-game-panel/90 backdrop-blur-md cozy-shadow">
-        <div className="h-1.5 w-full bg-gradient-to-r from-game-accent via-game-accent-2 to-game-accent-3" />
-        <div className="pointer-events-none absolute inset-0 paper-grain opacity-60" />
-
-        <div className="relative flex flex-col gap-5 px-6 py-6 sm:px-7">
-          {/* Header */}
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label="Voltar"
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border-[1.5px] border-game-border bg-game-bg/60 text-game-muted key-shadow outline-none transition hover:-translate-y-px hover:text-game-ink focus-visible:ring-2 focus-visible:ring-game-accent/40 active:translate-y-0"
+    <div className="max-h-[88dvh] w-full max-w-[460px] overflow-y-auto">
+      <ScreenShell
+        title="Configurações"
+        accent={HUD.honey}
+        onBack={onBack}
+        contentClassName="flex flex-col gap-5"
+      >
+        {/* ── Áudio ── */}
+        <section className="flex flex-col gap-2.5">
+          <RibbonStrip icon={Music2} accent={HUD.honey} className="self-start">
+            <span
+              className="hud-label text-[12px]"
+              style={{ color: "#fff", textShadow: `1px 1px 0 ${INK}` }}
             >
-              <ArrowLeft className="h-4 w-4" strokeWidth={2.5} />
-            </button>
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-game-muted">
-                Cozy Killer
-              </p>
-              <h2 className="font-display text-[24px] font-semibold leading-tight text-game-ink">
-                Configurações
-              </h2>
-            </div>
-          </div>
-
-          {/* ── Audio channels ── */}
-          <div className="flex flex-col gap-2.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-game-muted">
-              Som
+              Áudio
             </span>
-            <ToggleRow
-              on={sfxOn}
-              onToggle={toggleSfx}
-              title="Efeitos sonoros"
-              desc="Passos, tiros, explosões"
-              IconOn={Music2}
-              IconOff={VolumeX}
-            />
-            <ToggleRow
-              on={voiceOn}
-              onToggle={toggleVoice}
-              title="Voz das partidas"
-              desc="Ouvir os amigos por perto"
-              IconOn={Volume2}
-              IconOff={VolumeX}
-            />
-          </div>
+          </RibbonStrip>
+          <ToggleRow
+            on={sfxOn}
+            onToggle={toggleSfx}
+            title="Efeitos sonoros"
+            desc="Passos, tiros, explosões"
+            icon={Music2}
+            accent={HUD.rose}
+          />
+          <ToggleRow
+            on={voiceOn}
+            onToggle={toggleVoice}
+            title="Voz das partidas"
+            desc="Ouvir os amigos por perto"
+            icon={Volume2}
+            accent={HUD.rose}
+          />
+        </section>
 
-          {/* ── Vídeo (visual filter) ── */}
-          <div className="flex flex-col gap-2.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-game-muted">
-              Vídeo
-            </span>
-            <ToggleRow
-              on={pixelOn}
-              onToggle={togglePixel}
-              title="Modo desenho"
-              desc="Pixelado, contorno e cores de cartoon"
-              IconOn={Gamepad2}
-              IconOff={Monitor}
-            />
-          </div>
-
-          {/* ── Devices ── */}
-          <div className="flex flex-col gap-3">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-game-muted">
+        {/* ── Dispositivos ── */}
+        <section className="flex flex-col gap-3">
+          <RibbonStrip icon={Mic} accent={HUD.honey} className="self-start">
+            <span
+              className="hud-label text-[12px]"
+              style={{ color: "#fff", textShadow: `1px 1px 0 ${INK}` }}
+            >
               Dispositivos
             </span>
+          </RibbonStrip>
 
-            {permissionError && (
-              <p className="flex items-start gap-2 rounded-xl border border-game-accent-3/35 bg-game-accent-3/10 px-3 py-2 text-[12px] leading-snug text-game-accent-3">
-                <AlertCircle className="mt-px h-4 w-4 shrink-0" strokeWidth={2.25} />
-                {permissionError}
-              </p>
-            )}
-
-            {/* Microphone */}
-            <div>
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="grid h-6 w-6 place-items-center rounded-lg border border-game-border/70 bg-game-accent/12 text-game-accent">
-                  <Mic className="h-3.5 w-3.5" strokeWidth={2.25} />
-                </span>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-game-muted">
-                  Microfone
-                </span>
-              </div>
-              <div className="relative">
-                <select
-                  className={selectClass}
-                  value={selectedInput}
-                  onChange={(e) => handleInputChange(e.target.value)}
-                  aria-label="Microfone"
-                >
-                  <option value="">Padrão do sistema</option>
-                  {inputs.map((d) => (
-                    <option key={d.deviceId} value={d.deviceId}>
-                      {d.label || `Microfone ${d.deviceId.slice(0, 6)}`}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-game-muted" />
-              </div>
-            </div>
-
-            {/* Speaker */}
-            <div>
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="grid h-6 w-6 place-items-center rounded-lg border border-game-border/70 bg-game-accent-2/15 text-game-accent-2">
-                  <Volume2 className="h-3.5 w-3.5" strokeWidth={2.25} />
-                </span>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-game-muted">
-                  Alto-falante
-                </span>
-              </div>
-              <div className="relative">
-                <select
-                  className={selectClass}
-                  value={selectedOutput}
-                  onChange={(e) => handleOutputChange(e.target.value)}
-                  disabled={!canRouteOutput}
-                  aria-label="Alto-falante"
-                >
-                  <option value="">Padrão do sistema</option>
-                  {outputs.map((d) => (
-                    <option key={d.deviceId} value={d.deviceId}>
-                      {d.label || `Alto-falante ${d.deviceId.slice(0, 6)}`}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-game-muted" />
-              </div>
-              {!canRouteOutput && (
-                <p className="mt-1.5 text-[11px] leading-snug text-game-muted">
-                  Este navegador não deixa escolher a saída — use o som do
-                  sistema.
-                </p>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => void handleTestSound()}
-              disabled={testing}
-              className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl border-[1.5px] border-game-border bg-game-accent-2 px-3 py-2.5 text-[13px] font-semibold text-game-ink key-shadow outline-none transition hover:-translate-y-px hover:brightness-[1.04] focus-visible:ring-2 focus-visible:ring-game-accent/40 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+          {permissionError && (
+            <p
+              className="hud-text flex items-start gap-2 text-[12px] leading-snug"
+              style={{
+                color: INK_TEXT,
+                background: CREAM,
+                border: `2px solid ${INK}`,
+                borderRadius: 10,
+                padding: "8px 10px",
+                boxShadow: `0 3px 0 ${INK}`,
+              }}
             >
-              <Volume2
-                className={cn("h-4 w-4", testing && "animate-pulse")}
-                strokeWidth={2.5}
-              />
-              {testing ? "Tocando…" : "Testar som"}
-            </button>
+              <span className="mt-px shrink-0">
+                <IconWell icon={AlertCircle} accent={HUD.danger} size={22} />
+              </span>
+              {permissionError}
+            </p>
+          )}
+
+          {/* Microphone */}
+          <div className="flex flex-col gap-1.5">
+            <span className="hud-label text-[11px]" style={{ color: INK_TEXT }}>
+              Microfone
+            </span>
+            <SelectField
+              value={selectedInput}
+              onChange={handleInputChange}
+              options={inputOptions}
+              icon={Mic}
+              ariaLabel="Microfone"
+            />
           </div>
 
-          {/* Footnote: ground the voice radius in gameplay. */}
-          <p className="flex items-center gap-1.5 text-[11px] leading-snug text-game-muted">
-            <Radio className="h-3.5 w-3.5 shrink-0 text-game-accent" strokeWidth={2.25} />
-            Só te ouve quem estiver dentro do teu raio vermelho.
-          </p>
-        </div>
-      </div>
+          {/* Speaker */}
+          <div className="flex flex-col gap-1.5">
+            <span className="hud-label text-[11px]" style={{ color: INK_TEXT }}>
+              Alto-falante
+            </span>
+            <SelectField
+              value={selectedOutput}
+              onChange={handleOutputChange}
+              options={outputOptions}
+              icon={Volume2}
+              disabled={!canRouteOutput}
+              ariaLabel="Alto-falante"
+            />
+            {!canRouteOutput && (
+              <p
+                className="hud-text text-[11px] leading-snug"
+                style={{ color: "#9B7B63" }}
+              >
+                Este navegador não deixa escolher a saída — use o som do
+                sistema.
+              </p>
+            )}
+          </div>
+
+          {/* Test sound — chunky honey CTA. */}
+          <button
+            type="button"
+            onClick={() => void handleTestSound()}
+            disabled={testing}
+            className="mt-1 flex w-full items-center justify-center gap-2.5 transition-transform hover:-translate-y-0.5 active:translate-y-[2px] disabled:translate-y-0 disabled:opacity-60"
+            style={{
+              background: testing ? HUD.muted : HUD.honey,
+              border: `3px solid ${INK}`,
+              borderRadius: 12,
+              padding: "10px 16px",
+              boxShadow: testing
+                ? "none"
+                : `0 0 0 1.5px ${HUD.terracotta}, 0 5px 0 ${INK}, 0 9px 0 rgba(0,0,0,0.3)`,
+            }}
+          >
+            <IconWell
+              icon={Volume2}
+              accent={HUD.terracotta}
+              size={28}
+              className={cn(testing && "animate-pulse")}
+            />
+            <span
+              className="text-[14px] font-bold"
+              style={{ color: "#fff", textShadow: `1px 1px 0 ${INK}` }}
+            >
+              {testing ? "Tocando…" : "Testar som"}
+            </span>
+          </button>
+        </section>
+
+        {/* ── Vídeo ── */}
+        <section className="flex flex-col gap-2.5">
+          <RibbonStrip
+            icon={Gamepad2}
+            accent={HUD.honey}
+            className="self-start"
+          >
+            <span
+              className="hud-label text-[12px]"
+              style={{ color: "#fff", textShadow: `1px 1px 0 ${INK}` }}
+            >
+              Vídeo
+            </span>
+          </RibbonStrip>
+          <ToggleRow
+            on={pixelOn}
+            onToggle={togglePixel}
+            title="Modo desenho"
+            desc="Pixelado, contorno e cores de cartoon"
+            icon={Gamepad2}
+            accent={HUD.rose}
+          />
+        </section>
+
+        {/* Footnote: ground the voice radius in gameplay. */}
+        <p
+          className="hud-text flex items-center gap-2 text-[11px] leading-snug"
+          style={{ color: INK_TEXT }}
+        >
+          <span className="shrink-0">
+            <IconWell icon={Radio} accent={HUD.rose} size={22} />
+          </span>
+          Só te ouve quem estiver dentro do teu raio vermelho.
+        </p>
+      </ScreenShell>
     </div>
-  );
-};
-
-interface ToggleRowProps {
-  on: boolean;
-  onToggle: () => void;
-  title: string;
-  desc: string;
-  IconOn: typeof Volume2;
-  IconOff: typeof VolumeX;
-}
-
-const ToggleRow = ({
-  on,
-  onToggle,
-  title,
-  desc,
-  IconOn,
-  IconOff,
-}: ToggleRowProps) => {
-  const Icon = on ? IconOn : IconOff;
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      role="switch"
-      aria-checked={on}
-      className="group flex items-center gap-3 rounded-[16px] border-[1.5px] border-game-border bg-game-bg/45 px-3.5 py-3 text-left outline-none transition hover:border-game-accent/50 focus-visible:ring-2 focus-visible:ring-game-accent/40"
-    >
-      <span
-        className={cn(
-          "grid h-9 w-9 shrink-0 place-items-center rounded-[11px] border transition-colors",
-          on
-            ? "border-game-accent/40 bg-game-accent/15 text-game-accent"
-            : "border-game-border/60 bg-game-bg/70 text-game-muted",
-        )}
-      >
-        <Icon className="h-[18px] w-[18px]" strokeWidth={2.25} />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-[14px] font-semibold text-game-ink">{title}</span>
-        <span className="text-[11px] leading-snug text-game-muted">{desc}</span>
-      </span>
-      {/* Switch track */}
-      <span
-        className={cn(
-          "relative h-6 w-11 shrink-0 rounded-full border-[1.5px] transition-colors",
-          on
-            ? "border-game-accent bg-game-accent/85"
-            : "border-game-border bg-game-bg/80",
-        )}
-      >
-        <span
-          className={cn(
-            "absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-sm transition-all",
-            on ? "left-[22px]" : "left-[3px]",
-          )}
-        />
-      </span>
-    </button>
   );
 };

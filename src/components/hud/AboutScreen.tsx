@@ -1,14 +1,23 @@
 import { useEffect } from "react";
-import { ArrowLeft, ExternalLink, Heart, Swords } from "lucide-react";
+import { ExternalLink, Heart, Swords } from "lucide-react";
+import { ScreenShell, INK_TEXT } from "./menu-primitives";
+import { HexBadge, HUD } from "./primitives";
 
 /**
  * Full-screen "Sobre" view for the menu — who made Cozy Killer and where to
- * find more. Same cozy parchment system as the rest of the game.
+ * find more. Cocoa Cream language: a centered hex emblem, a Fraunces italic
+ * pitch, and a tidy credits list with honey hairline dividers, all on the
+ * cream ScreenShell stage.
  */
 
 interface AboutScreenProps {
   onBack: () => void;
 }
+
+/** Honey hairline divider between credit rows. */
+const Hairline = () => (
+  <span aria-hidden className="block h-px w-full" style={{ background: `${HUD.honey}66` }} />
+);
 
 export const AboutScreen = ({ onBack }: AboutScreenProps) => {
   // Esc → back.
@@ -21,71 +30,66 @@ export const AboutScreen = ({ onBack }: AboutScreenProps) => {
   }, [onBack]);
 
   return (
-    <div className="relative w-full max-w-[440px] max-h-[88dvh] overflow-y-auto animate-rise">
-      <div className="relative overflow-hidden rounded-[24px] border-[1.5px] border-game-border/80 bg-game-panel/90 backdrop-blur-md cozy-shadow">
-        <div className="h-1.5 w-full bg-gradient-to-r from-game-accent via-game-accent-2 to-game-accent-3" />
-        <div className="pointer-events-none absolute inset-0 paper-grain opacity-60" />
+    <ScreenShell title="Sobre" accent={HUD.honey} onBack={onBack} maxWidth={440}>
+      <div className="flex flex-col items-center gap-5">
+        {/* Logo emblem */}
+        <div className="flex flex-col items-center gap-2">
+          <HexBadge accent={HUD.rose} size={64} icon={Swords} />
+          <span className="hud-label text-[10px]" style={{ color: INK_TEXT }}>
+            Cozy Killer
+          </span>
+        </div>
 
-        <div className="relative flex flex-col gap-5 px-6 py-6 sm:px-7">
-          {/* Header */}
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label="Voltar"
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border-[1.5px] border-game-border bg-game-bg/60 text-game-muted key-shadow outline-none transition hover:-translate-y-px hover:text-game-ink focus-visible:ring-2 focus-visible:ring-game-accent/40 active:translate-y-0"
-            >
-              <ArrowLeft className="h-4 w-4" strokeWidth={2.5} />
-            </button>
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-game-muted">
-                Cozy Killer
-              </p>
-              <h2 className="font-display text-[24px] font-semibold leading-tight text-game-ink">
-                Sobre
-              </h2>
-            </div>
-          </div>
+        {/* Pitch — Fraunces italic intro */}
+        <p
+          className="hud-text font-display text-center text-[15px] italic leading-relaxed"
+          style={{ color: INK_TEXT, textShadow: "none" }}
+        >
+          Um mundinho fofo e voxel onde os bichinhos não fazem prisioneiros.
+          Mundo doce, lutas impiedosas. Sobreviva às ondas ou caia na arena
+          todos-contra-todos com os teus amigos.
+        </p>
 
-          {/* Pitch */}
-          <p className="text-[14px] leading-relaxed text-game-ink/90">
-            Um mundinho fofo e voxel onde os bichinhos não fazem prisioneiros.
-            Mundo doce, lutas impiedosas. Sobreviva às ondas ou caia na arena
-            todos-contra-todos com os teus amigos.
-          </p>
-
-          {/* Credit card */}
-          <div className="flex items-center gap-3 rounded-[16px] border-[1.5px] border-game-border bg-game-bg/45 px-4 py-3.5">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[13px] border border-game-accent/40 bg-game-accent/15 text-game-accent">
-              <Swords className="h-5 w-5" strokeWidth={2.25} />
-            </span>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-game-muted">
-                Feito com <Heart className="h-3 w-3 fill-game-accent text-game-accent" /> por
-              </span>
-              <span className="font-display text-[20px] font-semibold leading-tight text-game-ink">
-                Bero
-              </span>
-            </div>
-          </div>
-
-          {/* Portfolio link */}
+        {/* Credits — tidy list, honey hairline dividers */}
+        <div className="flex w-full flex-col">
+          <Hairline />
           <a
             href="https://bero.land"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-xl bg-game-accent px-5 py-3 text-[15px] font-semibold text-white outline-none transition-all duration-100 hover:brightness-[1.04] focus-visible:ring-2 focus-visible:ring-game-accent/50 active:translate-y-[3px] active:[box-shadow:0_1px_0_rgba(140,36,64,0.6)]"
-            style={{ boxShadow: "0 4px 0 rgba(140,36,64,0.6)" }}
+            className="group flex items-center gap-3 py-3 transition-transform hover:translate-x-0.5"
           >
-            <ExternalLink className="h-[18px] w-[18px]" strokeWidth={2.5} />
-            bero.land
+            <HexBadge accent={HUD.honey} size={36} icon={Heart} />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span
+                className="hud-label flex items-center gap-1 text-[10px]"
+                style={{ color: HUD.muted }}
+              >
+                Feito com
+                <Heart style={{ width: 11, height: 11, color: HUD.rose, fill: HUD.rose }} />
+                por
+              </span>
+              <span
+                className="hud-text font-sans text-[18px] font-bold leading-none"
+                style={{ color: INK_TEXT, textShadow: "none" }}
+              >
+                Bero
+              </span>
+            </span>
+            <ExternalLink
+              className="transition-transform group-hover:translate-x-0.5"
+              style={{ width: 18, height: 18, color: HUD.muted }}
+              strokeWidth={2.75}
+            />
           </a>
-
-          <p className="text-center text-[11px] text-game-muted">
-            cozykiller.io · demo
-          </p>
+          <Hairline />
         </div>
+
+        {/* Footnote */}
+        <span className="hud-label text-[10px]" style={{ color: HUD.muted }}>
+          cozykiller.io · demo
+        </span>
       </div>
-    </div>
+    </ScreenShell>
   );
 };

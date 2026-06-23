@@ -1,6 +1,8 @@
 import { useEffect } from "react";
-import { ArrowLeft, Maximize2, MoreVertical, Plus, Share } from "lucide-react";
+import { Check, Maximize2, MoreVertical, Plus, Share } from "lucide-react";
 import { isIOS } from "@/lib/useIsMobile";
+import { ScreenShell, PlayButton, INK_TEXT, CREAM } from "./menu-primitives";
+import { HexBadge, IconWell, HUD, INK } from "./primitives";
 
 /**
  * Shown on mobile when the game is opened in a browser tab (not installed).
@@ -42,33 +44,21 @@ export const InstallScreen = ({ onBack }: InstallScreenProps) => {
 
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center px-5">
-      <div className="relative w-full max-w-[440px] max-h-[88dvh] overflow-y-auto animate-rise">
-        <div className="relative overflow-hidden rounded-[24px] border-[1.5px] border-game-border/80 bg-game-panel/95 backdrop-blur-md cozy-shadow">
-          <div className="h-1.5 w-full bg-gradient-to-r from-game-accent via-game-accent-2 to-game-accent-3" />
-          <div className="pointer-events-none absolute inset-0 paper-grain opacity-60" />
-
-          <div className="relative flex flex-col gap-5 px-6 py-6 sm:px-7">
-            {/* Header */}
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={onBack}
-                aria-label="Voltar"
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border-[1.5px] border-game-border bg-game-bg/60 text-game-muted key-shadow outline-none transition hover:-translate-y-px hover:text-game-ink active:translate-y-0"
-              >
-                <ArrowLeft className="h-4 w-4" strokeWidth={2.5} />
-              </button>
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-game-muted">
-                  Cozy Killer
-                </p>
-                <h2 className="font-logo text-[24px] leading-tight text-game-ink">
-                  Jogue em tela cheia
-                </h2>
-              </div>
-            </div>
-
-            <p className="text-[14px] leading-relaxed text-game-ink/90">
+      <div className="max-h-[88dvh] w-full max-w-[440px] overflow-y-auto">
+        <ScreenShell
+          title="Instalar"
+          accent={HUD.honey}
+          onBack={onBack}
+          footer={
+            <PlayButton label="Entendi" icon={Check} onClick={onBack} />
+          }
+        >
+          <div className="flex flex-col gap-4">
+            {/* Pitch */}
+            <p
+              className="text-[14px] font-semibold leading-relaxed"
+              style={{ color: INK_TEXT }}
+            >
               No celular, o Cozy Killer funciona como <b>app em tela cheia</b> (o
               navegador não deixa esconder as barras numa aba normal). Adicione à
               tela de início e abra pelo ícone — fica tudo em tela cheia e na
@@ -82,15 +72,21 @@ export const InstallScreen = ({ onBack }: InstallScreenProps) => {
                 return (
                   <li
                     key={i}
-                    className="flex items-center gap-3 rounded-[16px] border-[1.5px] border-game-border bg-game-bg/45 px-3.5 py-3"
+                    className="flex items-center gap-3"
+                    style={{
+                      background: CREAM,
+                      border: `2px solid ${INK}`,
+                      borderRadius: 10,
+                      padding: "10px 12px",
+                      boxShadow: `0 3px 0 ${INK}`,
+                    }}
                   >
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-game-accent font-logo text-[15px] text-white">
-                      {i + 1}
-                    </span>
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[11px] border border-game-border/60 bg-game-bg/70 text-game-accent">
-                      <Icon className="h-[18px] w-[18px]" strokeWidth={2.25} />
-                    </span>
-                    <span className="text-[13px] leading-snug text-game-ink">
+                    <HexBadge accent={HUD.rose} size={34} value={i + 1} />
+                    <IconWell icon={Icon} accent={HUD.honey} size={34} />
+                    <span
+                      className="flex-1 text-[13px] font-semibold leading-snug"
+                      style={{ color: INK_TEXT }}
+                    >
                       {s.text}
                     </span>
                   </li>
@@ -98,11 +94,14 @@ export const InstallScreen = ({ onBack }: InstallScreenProps) => {
               })}
             </ol>
 
-            <p className="text-center text-[11px] text-game-muted">
+            <p
+              className="text-center text-[11px] font-semibold"
+              style={{ color: "#9B7B63" }}
+            >
               Depois de instalado, abra sempre pelo ícone do Cozy Killer.
             </p>
           </div>
-        </div>
+        </ScreenShell>
       </div>
     </div>
   );

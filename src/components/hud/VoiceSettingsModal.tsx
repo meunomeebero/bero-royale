@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, Mic, Radio, RefreshCw, Volume2, X } from "lucide-react";
+import { AlertCircle, ChevronDown, Mic, Radio, RefreshCw, Volume2 } from "lucide-react";
+import { GamePanel, HUD, INK, IconWell, RibbonStrip } from "./primitives";
+import { BackButton } from "./menu-primitives";
 
 /**
  * VoiceSettingsModal — pick the microphone + speaker used for proximity voice
- * chat, themed to match the cozy voxel-almanac HUD.
+ * chat, in the dark "Cocoa Cream" HUD family (voice = in-match comms): a dark
+ * cocoa-glass GamePanel centered over the dimmed/blurred scene.
  *
  * Behavior (unchanged from the functional version):
  * - On open, requests mic permission ONCE so the OS populates device labels
@@ -216,8 +219,17 @@ export const VoiceSettingsModal = ({
 
   if (!open) return null;
 
+  /** Section caption — uppercase label in cocoa-muted on the dark glass. */
+  const labelClass =
+    "hud-label text-[11px]";
+  /** Dark cocoa-glass native select — ink edge, inset depth, no soft glow. */
   const selectClass =
-    "w-full appearance-none rounded-xl border-[1.5px] border-game-border bg-game-bg/50 px-3.5 py-2.5 pr-10 text-[13px] font-medium text-game-ink key-shadow outline-none transition focus-visible:border-game-accent focus-visible:ring-2 focus-visible:ring-game-accent/30 disabled:cursor-not-allowed disabled:opacity-50";
+    "w-full appearance-none rounded-[8px] border-2 px-3 py-2.5 pr-10 text-[13px] font-semibold text-white outline-none transition focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-not-allowed disabled:opacity-50";
+  const selectStyle = {
+    background: "rgba(36,16,25,0.55)",
+    borderColor: INK,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), inset 0 -2px 0 rgba(0,0,0,0.34)",
+  } as const;
 
   return (
     <div
@@ -228,45 +240,41 @@ export const VoiceSettingsModal = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="voice-modal-title"
-        className="relative w-[400px] max-w-full overflow-hidden rounded-2xl border-[1.5px] border-game-border bg-game-panel paper-grain cozy-shadow animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"
+        className="w-[400px] max-w-full"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Honey-to-rose almanac ribbon across the top edge. */}
-        <div className="h-1.5 w-full bg-gradient-to-r from-game-accent via-game-accent-2 to-game-accent-3" />
-
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-game-muted">
-                Chat de voz
-              </p>
-              <h2
+        <GamePanel
+          accent={HUD.rose}
+          radius={14}
+          className="animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"
+        >
+          <div className="p-5">
+          {/* Header: ribbon title + hexagon close (HUD family). */}
+          <div className="flex items-center gap-2.5">
+            <RibbonStrip accent={HUD.rose} icon={Radio} className="flex-1">
+              <span
                 id="voice-modal-title"
-                className="font-display text-[23px] font-semibold leading-tight text-game-ink"
+                className="font-display text-[16px] font-bold leading-none text-white"
+                style={{ textShadow: `1px 1px 0 ${INK}` }}
               >
-                Voz de proximidade
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Fechar"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border-[1.5px] border-game-border bg-game-bg/60 text-game-muted key-shadow outline-none transition hover:-translate-y-px hover:text-game-ink focus-visible:ring-2 focus-visible:ring-game-accent/40 active:translate-y-0"
-            >
-              <X className="h-4 w-4" strokeWidth={2.5} />
-            </button>
+                Voz
+              </span>
+            </RibbonStrip>
+            <BackButton onClick={onClose} accent={HUD.rose} />
           </div>
 
           {/* Grounds the panel in the gameplay: the red ring = hearing radius. */}
-          <p className="mt-2 flex items-center gap-1.5 text-[12px] text-game-muted">
-            <Radio className="h-3.5 w-3.5 shrink-0 text-game-accent" strokeWidth={2.25} />
+          <p className="hud-text mt-3 flex items-center gap-1.5 text-[12px] text-white/75">
+            <Radio className="h-3.5 w-3.5 shrink-0" style={{ color: HUD.rose }} strokeWidth={2.5} />
             Só te ouve quem estiver dentro do teu raio.
           </p>
 
           {permissionError && (
-            <p className="mt-4 flex items-start gap-2 rounded-xl border border-game-accent-3/35 bg-game-accent-3/10 px-3 py-2 text-[12px] leading-snug text-game-accent-3">
-              <AlertCircle className="mt-px h-4 w-4 shrink-0" strokeWidth={2.25} />
+            <p
+              className="mt-4 flex items-start gap-2 rounded-[8px] border-2 px-3 py-2 text-[12px] font-semibold leading-snug text-white"
+              style={{ borderColor: INK, background: `${HUD.danger}33` }}
+            >
+              <AlertCircle className="mt-px h-4 w-4 shrink-0" strokeWidth={2.5} />
               {permissionError}
             </p>
           )}
@@ -274,16 +282,13 @@ export const VoiceSettingsModal = ({
           {/* Microphone (input) channel */}
           <div className="mt-5">
             <div className="mb-2 flex items-center gap-2">
-              <span className="grid h-7 w-7 place-items-center rounded-lg border border-game-border/70 bg-game-accent/12 text-game-accent">
-                <Mic className="h-4 w-4" strokeWidth={2.25} />
-              </span>
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-game-muted">
-                Microfone
-              </span>
+              <IconWell icon={Mic} accent={HUD.rose} size={28} />
+              <span className={labelClass}>Microfone</span>
             </div>
             <div className="relative">
               <select
                 className={selectClass}
+                style={selectStyle}
                 value={selectedInput}
                 onChange={(e) => handleInputChange(e.target.value)}
                 aria-label="Microfone"
@@ -295,23 +300,20 @@ export const VoiceSettingsModal = ({
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-game-muted" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/70" strokeWidth={2.5} />
             </div>
           </div>
 
           {/* Speaker (output) channel */}
           <div className="mt-4">
             <div className="mb-2 flex items-center gap-2">
-              <span className="grid h-7 w-7 place-items-center rounded-lg border border-game-border/70 bg-game-accent-2/15 text-game-accent-2">
-                <Volume2 className="h-4 w-4" strokeWidth={2.25} />
-              </span>
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-game-muted">
-                Alto-falante
-              </span>
+              <IconWell icon={Volume2} accent={HUD.honey} size={28} />
+              <span className={labelClass}>Alto-falante</span>
             </div>
             <div className="relative">
               <select
                 className={selectClass}
+                style={selectStyle}
                 value={selectedOutput}
                 onChange={(e) => handleOutputChange(e.target.value)}
                 disabled={!canRouteOutput}
@@ -324,10 +326,10 @@ export const VoiceSettingsModal = ({
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-game-muted" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/70" strokeWidth={2.5} />
             </div>
             {!canRouteOutput && (
-              <p className="mt-2 text-[11px] leading-snug text-game-muted">
+              <p className="hud-text mt-2 text-[11px] leading-snug text-white/65">
                 Este navegador não deixa escolher a saída — use as configurações
                 de som do sistema.
               </p>
@@ -341,34 +343,47 @@ export const VoiceSettingsModal = ({
                 type="button"
                 onClick={() => void handleRestart()}
                 disabled={restarting}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border-[1.5px] border-game-accent/60 bg-game-accent/15 px-3 py-2.5 text-[13px] font-semibold text-game-accent key-shadow outline-none transition hover:-translate-y-px hover:bg-game-accent/25 focus-visible:ring-2 focus-visible:ring-game-accent/40 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-2 rounded-[10px] border-[3px] px-3 py-2.5 text-[13px] font-bold text-white outline-none transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-white/30 active:translate-y-[2px] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+                style={{
+                  background: HUD.terracotta,
+                  borderColor: INK,
+                  boxShadow: `0 0 0 1.5px ${HUD.honey}, 0 5px 0 ${INK}, 0 9px 0 rgba(0,0,0,0.3)`,
+                  textShadow: `1px 1px 0 ${INK}`,
+                }}
               >
                 <RefreshCw
                   className={`h-4 w-4 ${restarting ? "animate-spin" : ""}`}
-                  strokeWidth={2.5}
+                  strokeWidth={3}
                 />
                 {restarting ? "Reiniciando…" : "Reiniciar áudio"}
               </button>
-              <p className="mt-1.5 text-center text-[11px] leading-snug text-game-muted">
+              <p className="hud-text mt-2 text-center text-[11px] leading-snug text-white/65">
                 Não está a ouvir? Reinicie o áudio.
               </p>
             </div>
           )}
 
-          {/* Pressable honey keycap: verify the chosen speaker. */}
+          {/* Pressable honey CTA: verify the chosen speaker. */}
           <button
             type="button"
             onClick={() => void handleTestSound()}
             disabled={testing}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border-[1.5px] border-game-border bg-game-accent-2 px-3 py-2.5 text-[13px] font-semibold text-game-ink key-shadow outline-none transition hover:-translate-y-px hover:brightness-[1.04] focus-visible:ring-2 focus-visible:ring-game-accent/40 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-[10px] border-[3px] px-3 py-2.5 text-[13px] font-bold text-white outline-none transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-white/30 active:translate-y-[2px] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+            style={{
+              background: HUD.honey,
+              borderColor: INK,
+              boxShadow: `0 0 0 1.5px ${HUD.rose}, 0 5px 0 ${INK}, 0 9px 0 rgba(0,0,0,0.3)`,
+              textShadow: `1px 1px 0 ${INK}`,
+            }}
           >
             <Volume2
               className={`h-4 w-4 ${testing ? "animate-pulse" : ""}`}
-              strokeWidth={2.5}
+              strokeWidth={3}
             />
             {testing ? "Tocando…" : "Testar som"}
           </button>
-        </div>
+          </div>
+        </GamePanel>
       </div>
     </div>
   );

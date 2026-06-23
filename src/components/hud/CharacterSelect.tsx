@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Play, Signal, User, Users } from "lucide-react";
+import { Check, Play, Signal, User, Users } from "lucide-react";
 import type { GameMode } from "@/game/Game";
 import { CharacterStage } from "@/game/CharacterStage";
 import { PlayerPreview } from "@/game/PlayerPreview";
 import { ModelLibrary, ANIMAL_NAMES } from "@/game/ModelLibrary";
-import { cn } from "@/lib/utils";
+import {
+  CharacterCard,
+  CREAM,
+  INK_TEXT,
+  PlayButton,
+  ScreenShell,
+  TextField,
+} from "./menu-primitives";
+import { GamePanel, HUD, INK, IconWell, RibbonStrip } from "./primitives";
 
 const DISPLAY_NAMES: Record<string, string> = {
   bear: "Urso",
@@ -36,7 +44,6 @@ export const CharacterSelect = ({ mode, onBack, onStart }: CharacterSelectProps)
   const [selected, setSelected] = useState<string>(ANIMAL_NAMES[0]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [name, setName] = useState<string>(() => localStorage.getItem(NAME_KEY) ?? "");
-  const [pressed, setPressed] = useState(false);
   const [online, setOnline] = useState<number | null>(null);
   const [ping, setPing] = useState<number | null>(null);
   const [isDesktop, setIsDesktop] = useState<boolean>(
@@ -140,6 +147,7 @@ export const CharacterSelect = ({ mode, onBack, onStart }: CharacterSelectProps)
 
   const labelAnimal = hovered ?? selected;
   const displayName = DISPLAY_NAMES[labelAnimal] ?? labelAnimal;
+  const selectedName = DISPLAY_NAMES[selected] ?? selected;
   const trimmed = name.trim();
   const canStart = trimmed.length > 0;
 
@@ -154,128 +162,21 @@ export const CharacterSelect = ({ mode, onBack, onStart }: CharacterSelectProps)
 
   const pingColor =
     ping == null
-      ? "text-game-muted"
+      ? HUD.muted
       : ping < 90
-        ? "text-game-success"
+        ? HUD.success
         : ping < 180
-          ? "text-game-accent-2"
-          : "text-game-danger";
+          ? HUD.honey
+          : HUD.danger;
 
   return (
-    <div className="absolute inset-0 flex flex-col md:flex-row">
-      {/* Mobile-only notch spacer so the roster doesn't sit under the Island. */}
+    <div className="absolute inset-0 flex flex-col">
+      {/* Mobile-only notch spacer so the panel doesn't sit under the Island. */}
       <div className="md:hidden" style={{ height: "env(safe-area-inset-top, 0px)" }} />
 
-      {/* LEFT CONTROL PANEL (bottom on mobile, left sidebar on desktop). */}
-      <aside className="relative z-20 order-2 bg-game-panel/95 paper-grain cozy-shadow md:order-1 md:h-full md:w-[340px] lg:w-[380px]">
-        <div className="h-1.5 w-full bg-gradient-to-r from-game-accent-2 via-game-accent to-game-accent-3 md:hidden" />
-        <div
-          className="flex h-full flex-col gap-4 p-4 sm:p-5"
-          style={{
-            paddingTop: "1rem",
-            paddingBottom: "max(env(safe-area-inset-bottom, 0px) + 1rem, 1rem)",
-            paddingLeft: "max(env(safe-area-inset-left, 0px) + 1rem, 1rem)",
-            paddingRight: "max(env(safe-area-inset-right, 0px) + 1rem, 1rem)",
-          }}
-        >
-          {/* Header: back + live/ping stats */}
-          <div className="flex items-center justify-between gap-2">
-            <button
-              onClick={onBack}
-              aria-label="Voltar"
-              className="group flex shrink-0 items-center gap-2 rounded-2xl border-2 border-game-border/70 bg-game-bg/60 px-3 py-2.5 font-sans text-sm font-bold text-game-ink key-shadow transition-all hover:bg-game-bg active:translate-y-0.5"
-            >
-              <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
-              <span className="hidden sm:inline">Voltar</span>
-            </button>
-
-            <div className="flex items-center gap-1.5">
-              <span className="flex items-center gap-1.5 rounded-full border-2 border-game-border/60 bg-game-bg/60 px-2.5 py-1 font-sans text-xs font-bold text-game-ink">
-                <Users className="h-3.5 w-3.5 text-game-success" />
-                {online ?? "—"}
-                <span className="text-game-muted">ao vivo</span>
-              </span>
-              <span
-                className={cn(
-                  "flex items-center gap-1 rounded-full border-2 border-game-border/60 bg-game-bg/60 px-2.5 py-1 font-sans text-xs font-bold",
-                  pingColor,
-                )}
-              >
-                <Signal className="h-3.5 w-3.5" />
-                {ping != null ? `${ping}ms` : "—"}
-              </span>
-            </div>
-          </div>
-
-          {/* Selected fighter — the hero of the panel */}
-          <div className="flex flex-col items-start">
-            <span
-              key={labelAnimal}
-              className="font-logo text-4xl leading-none text-game-ink animate-nudge sm:text-5xl"
-            >
-              {displayName}
-            </span>
-            <span
-              className="mt-1.5 block h-1.5 w-28 rounded-full"
-              style={{
-                background:
-                  "linear-gradient(to right, #E0A340 0%, #D14E6E 65%, rgba(209,78,110,0) 100%)",
-              }}
-            />
-          </div>
-
-          {/* Desktop: live in-game preview (model + name tag + gun + idle).
-              Fills the space between the name and the footer. */}
-          <div
-            ref={previewHostRef}
-            className="hidden min-h-0 md:block md:flex-1"
-          />
-
-          {/* Footer: name + start (row on mobile, stacked on desktop) */}
-          <div className="flex items-end gap-3 md:flex-col md:items-stretch">
-            <label className="flex min-w-0 flex-1 flex-col md:w-full md:flex-none">
-              <span className="mb-1 flex items-center gap-1.5 font-sans text-[10px] font-bold uppercase tracking-wider text-game-muted sm:text-xs">
-                <User className="h-3.5 w-3.5" />
-                Seu nome
-              </span>
-              <input
-                type="text"
-                value={name}
-                maxLength={NAME_MAX}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={onNameKeyDown}
-                placeholder="Escreve o teu nome…"
-                className="w-full rounded-xl border-2 border-game-border/80 bg-game-bg/70 px-3 py-2.5 font-sans text-base font-semibold text-game-ink placeholder:font-normal placeholder:text-game-muted/60 focus:outline-none sm:px-4 sm:py-3"
-              />
-            </label>
-
-            <button
-              onClick={handleStart}
-              onPointerDown={() => setPressed(true)}
-              onPointerUp={() => setPressed(false)}
-              onPointerLeave={() => setPressed(false)}
-              disabled={!canStart}
-              className={cn(
-                "group flex shrink-0 items-center justify-center gap-2 rounded-2xl border-2 px-5 py-3 font-logo text-lg tracking-wide text-white transition-all select-none md:w-full md:py-4 md:text-2xl",
-                canStart
-                  ? "cursor-pointer border-game-accent/70 bg-game-accent hover:brightness-[1.04] active:translate-y-[3px]"
-                  : "cursor-not-allowed border-game-muted/70 bg-game-muted/70",
-              )}
-              style={{
-                boxShadow: canStart
-                  ? `0 ${pressed ? 1 : 4}px 0 ${pressed ? "#8a3550" : "#9a3a54"}, 0 8px 18px rgba(36,16,25,0.35)`
-                  : "0 4px 0 rgba(0,0,0,0.15)",
-              }}
-            >
-              <Play className="h-5 w-5 fill-white sm:h-6 sm:w-6" />
-              <span>Vamos lá!</span>
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* RIGHT — 3D ROSTER over the blurred game scene. */}
-      <div className="relative z-10 order-1 min-h-0 min-w-0 flex-1 md:order-2" ref={stageHostRef}>
+      {/* FULL-BLEED 3D ROSTER — interactive voxel animals over the blurred scene.
+          Stays mounted as the ambient backdrop; the cream panel sits on top. */}
+      <div className="absolute inset-0 z-0" ref={stageHostRef}>
         <div
           className="pointer-events-none absolute inset-0"
           style={{
@@ -283,6 +184,140 @@ export const CharacterSelect = ({ mode, onBack, onStart }: CharacterSelectProps)
               "radial-gradient(120% 90% at 50% 52%, rgba(36,16,25,0) 42%, rgba(36,16,25,0.20) 100%)",
           }}
         />
+      </div>
+
+      {/* CREAM CONTROL PANEL — the Cocoa Cream menu surface, centered on top. */}
+      <div
+        className="relative z-10 flex min-h-0 flex-1 items-center justify-center overflow-y-auto"
+        style={{
+          padding: "1rem",
+          paddingTop: "max(env(safe-area-inset-top, 0px) + 1rem, 1rem)",
+          paddingBottom: "max(env(safe-area-inset-bottom, 0px) + 1rem, 1rem)",
+          paddingLeft: "max(env(safe-area-inset-left, 0px) + 1rem, 1rem)",
+          paddingRight: "max(env(safe-area-inset-right, 0px) + 1rem, 1rem)",
+        }}
+      >
+        <ScreenShell
+          title="Escolhe o teu lutador"
+          accent={HUD.rose}
+          onBack={onBack}
+          maxWidth={720}
+          footer={
+            <PlayButton
+              label="JOGAR"
+              icon={Play}
+              onClick={handleStart}
+              disabled={!canStart}
+            />
+          }
+        >
+          <div className="flex flex-col gap-4 md:flex-row md:items-stretch">
+            {/* LEFT — name + roster grid. */}
+            <div className="flex min-w-0 flex-1 flex-col gap-3.5">
+              {/* Live / ping ribbons. */}
+              <div className="flex items-center gap-2">
+                <RibbonStrip accent={HUD.success} icon={Users}>
+                  <span className="hud-num leading-none" style={{ fontSize: 14 }}>
+                    {online ?? "—"}
+                  </span>
+                  <span
+                    className="text-[11px] font-bold uppercase tracking-wide"
+                    style={{ color: "#fff", textShadow: `1px 1px 0 ${INK}` }}
+                  >
+                    ao vivo
+                  </span>
+                </RibbonStrip>
+                <RibbonStrip accent={pingColor} icon={Signal}>
+                  <span className="hud-num leading-none" style={{ fontSize: 14 }}>
+                    {ping != null ? `${ping}ms` : "—"}
+                  </span>
+                </RibbonStrip>
+              </div>
+
+              {/* Name field. */}
+              <TextField
+                value={name}
+                onChange={setName}
+                onKeyDown={onNameKeyDown}
+                placeholder="Escreve o teu nome…"
+                maxLength={NAME_MAX}
+                icon={User}
+              />
+
+              {/* Roster grid. */}
+              <div
+                className="grid gap-2.5"
+                style={{ gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))" }}
+              >
+                {ANIMAL_NAMES.map((animal) => {
+                  const isSel = animal === selected;
+                  return (
+                    <CharacterCard
+                      key={animal}
+                      selected={isSel}
+                      onClick={() => setSelected(animal)}
+                      onHover={() => setHovered(animal)}
+                      name={DISPLAY_NAMES[animal] ?? animal}
+                      size={84}
+                      style={{ width: "100%" }}
+                    >
+                      <span
+                        className="font-display text-[22px] font-bold leading-none"
+                        style={{ color: INK_TEXT }}
+                      >
+                        {(DISPLAY_NAMES[animal] ?? animal).charAt(0)}
+                      </span>
+                      {isSel && (
+                        <span
+                          className="absolute right-1 top-1 grid place-items-center"
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: "50%",
+                            background: HUD.rose,
+                            border: `2px solid ${INK}`,
+                          }}
+                        >
+                          <Check style={{ width: 12, height: 12, color: "#fff" }} strokeWidth={3.5} />
+                        </span>
+                      )}
+                    </CharacterCard>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* RIGHT — live in-game preview (desktop) in a dark cocoa-glass panel. */}
+            <div
+              className="hidden md:flex md:w-[260px] md:shrink-0 md:flex-col md:gap-2.5"
+              style={{ minHeight: 340 }}
+            >
+              <RibbonStrip accent={HUD.rose} className="justify-center">
+                <span
+                  key={labelAnimal}
+                  className="font-display text-[15px] font-bold leading-none"
+                  style={{ color: "#fff", textShadow: `1px 1px 0 ${INK}` }}
+                >
+                  {displayName}
+                </span>
+              </RibbonStrip>
+
+              <GamePanel accent={HUD.rose} radius={12} className="min-h-0 flex-1">
+                <div ref={previewHostRef} className="absolute inset-0" />
+                {/* Footer tag inside the dark stage. */}
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-2 p-2.5">
+                  <IconWell icon={User} accent={HUD.honey} size={24} />
+                  <span
+                    className="hud-label text-[10px]"
+                    style={{ color: CREAM, textShadow: `1px 1px 0 ${INK}` }}
+                  >
+                    {selectedName}
+                  </span>
+                </div>
+              </GamePanel>
+            </div>
+          </div>
+        </ScreenShell>
       </div>
     </div>
   );
