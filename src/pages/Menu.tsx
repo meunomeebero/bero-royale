@@ -26,8 +26,6 @@ interface MenuItem {
   label: string;
   icon: LucideIcon;
   primary?: boolean;
-  /** Hexagon icon-well color (color-coded per function). */
-  accent?: string;
   onSelect: () => void;
 }
 
@@ -126,10 +124,10 @@ const Menu = () => {
   };
 
   const items: MenuItem[] = [
-    { key: "single", label: "Single player", icon: User, accent: HUD.success, onSelect: () => openSelect("local") },
+    { key: "single", label: "Single player", icon: User, onSelect: () => openSelect("local") },
     { key: "multi", label: "Multiplayer", icon: Users, primary: true, onSelect: () => openSelect("multiplayer") },
-    { key: "settings", label: "Configurações", icon: Settings, accent: HUD.terracotta, onSelect: () => setView("settings") },
-    { key: "about", label: "Sobre", icon: Info, accent: HUD.honey, onSelect: () => setView("about") },
+    { key: "settings", label: "Configurações", icon: Settings, onSelect: () => setView("settings") },
+    { key: "about", label: "Sobre", icon: Info, onSelect: () => setView("about") },
     // Surface the "add to home screen" guide directly when play would be gated
     // behind it (mobile browser tab) — keeps the same install view/flow.
     ...(needsInstall
@@ -230,13 +228,12 @@ const Menu = () => {
 
           {/* Menu stack — chunky Cocoa Cream game tiles. */}
           <nav className="flex w-full flex-col gap-2.5">
-            {items.map(({ key, label, icon, primary, accent, onSelect }) => (
+            {items.map(({ key, label, icon, primary, onSelect }) => (
               <MenuButton
                 key={key}
                 label={label}
                 icon={icon}
                 primary={primary}
-                accent={accent}
                 onClick={onSelect}
               />
             ))}
