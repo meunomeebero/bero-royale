@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Platform } from "./Platform";
-import { Player, type FireMode } from "./Player";
+import { Player, type FireMode, type MeleeSample } from "./Player";
 import { Bot } from "./Bot";
 import { InputManager } from "./InputManager";
 import { AudioEngine } from "./AudioEngine";
@@ -61,11 +61,44 @@ const BOSS_SHOT_DAMAGE = 5;
 // this drives the LOCAL paths (offline bots + local-player victim).
 const SUPER_DAMAGE = 3;
 
-// ── Melee staff (hotbar slot 3) — arc hit resolution ──
+// ── Melee saber (hotbar slot 3) — swept arc hit resolution ──
 const MELEE_DAMAGE = 3; // HP per swing
-const MELEE_RANGE = 1.6; // staff reach (world units)
-const MELEE_ARC_DOT = -0.15; // forward cone: dot(toTarget, aim) >= this (~190°, generous)
+const MELEE_RANGE = 3.2; // saber reach (world units) — doubled from 1.6
+const MELEE_ARC_DOT = 0.0; // forward hemisphere (was -0.15; too wide at 2× range)
+const MELEE_SWEEP_RADIUS = 0.6; // point-to-blade-segment hit thickness
 const MELEE_KNOCKBACK = 16; // push impulse applied to a hit target
+const MELEE_DT_CLAMP = 0.1; // skip collision/parry on bigger frame steps (tab resume)
+// Saber stagger applied to a hit target.
+const MELEE_STUN = 0.25; // brief full-action freeze
+const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
+// Victim-side clamps for a RECEIVED stagger (meleehit is a blindly-relayed
+// broadcast — bound the trusted cue so it can't become a permanent stun-lock).
+const MELEE_MAX_STUN_MS = 400;
+const MELEE_MAX_FIRE_LOCK_MS = 1500;
+// Projectile parry (reflection) tuning.
+const REFLECT_CAPSULE = 0.45; // bullet-to-blade distance to count as a parry
+const REFLECT_INBOUND = 0.35; // bullet must be travelling toward the player (dot)
+const REFLECT_VTOL = 0.7; // vertical tolerance: bullet must be near the blade's height
+const REFLECT_MAX_PER_SWING = 2; // cap reflects so one swing can't delete a stream
+const PARRY_CANCEL_RADIUS = 1.2; // shooter cancels its own bullet within this of the parrier
+const STAGGER_COOLDOWN_MS = 500; // min spacing between honored staggers from one attacker
+
+/** Shortest XZ distance from point (px,pz) to the segment (ax,az)→(bx,bz). */
+function distPointSegXZ(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): number {
+  const vx = bx - ax;
+  const vz = bz - az;
+  const len2 = vx * vx + vz * vz || 1;
+  let t = ((px - ax) * vx + (pz - az) * vz) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * vx), pz - (az + t * vz));
+}
 
 // Subtle screen shake on taking damage
 const SHAKE_DURATION = 0.28;
@@ -153,6 +186,22 @@ export class Game {
   /** Destructible supply crates (multiplayer only). */
   private crates: Crates;
   private remotePlayers = new Map<string, RemotePlayer>();
+  /** Per-swing melee bookkeeping (keyed by swingId): which targets were already
+   *  hit, and how many bullets have been parried — so each swing hits a target
+   *  once and reflects at most REFLECT_MAX_PER_SWING. Trimmed to the live swing. */
+  private meleeSwingId = -1;
+  private meleeHitIds = new Set<string>();
+  private meleeReflects = 0;
+  /** Previous frame's blade segment (world) for swept collision (anti-tunnel). */
+  private meleePrevStart = new THREE.Vector3();
+  private meleePrevEnd = new THREE.Vector3();
+  /** Scratch for the interpolated blade sub-segment during a swept parry. */
+  private meleeSegA = new THREE.Vector3();
+  private meleeSegB = new THREE.Vector3();
+  /** Last time we honored ANY saber stagger (ms). A single GLOBAL gate (not keyed
+   *  on the spoofable payload attacker id) so a modified client can't rotate fake
+   *  sender ids to bypass a per-attacker limit and freeze us (stun-lock grief). */
+  private lastStaggerAt = 0;
   private mpBroadcastAccum = 0;
   /** True while the tab is backgrounded (rAF throttled to ~1Hz). Gates the
    *  network pose broadcast so we stop relaying frozen/stale poses that every
@@ -437,7 +486,15 @@ export class Game {
         { x: dir.x, y: dir.y, z: dir.z },
       );
     });
-    this.player.setOnMelee((origin, dir) => this.handleMelee(origin, dir));
+    // Swing start → broadcast only (remotes drag the slash arc). Hit + parry
+    // resolution happens per-frame in handleMeleeSample (keyed by swingId).
+    this.player.setOnMelee((origin, dir) =>
+      this.mp?.sendMelee(
+        { x: origin.x, y: origin.y, z: origin.z },
+        { x: dir.x, y: dir.y, z: dir.z },
+      ),
+    );
+    this.player.setOnMeleeSample((s) => this.handleMeleeSample(s));
     this.kame.onHit = (target, dir, lethal, ownerId) =>
       this.onKameHit(target, dir, lethal, ownerId);
     this.bullets.registerTarget(this.player);
@@ -500,7 +557,8 @@ export class Game {
       const oz = rp ? rp.root.position.z : e.origin.z;
       const origin = new THREE.Vector3(ox, e.origin.y, oz);
       const dir = new THREE.Vector3(e.dir.x, e.dir.y, e.dir.z);
-      this.bullets.spawnVisual(origin, dir, e.color);
+      // Record the shooter id so a saber parry can credit the reflected hit back.
+      this.bullets.spawnVisual(origin, dir, e.color, e.id);
       this.audio.playShot(origin, false);
       // Muzzle flash + smoke puff at the remote's rendered muzzle (mirrors
       // Player.shoot which calls spawnFlash + spawnPuff at its own muzzle).
@@ -582,6 +640,35 @@ export class Game {
         new THREE.Vector3(e.dir.x, 0, e.dir.z),
         MELEE_KNOCKBACK,
       );
+      // Saber stagger cue (client-trusted, like the knockback). Optional fields
+      // are absent from older clients → no stun applied (backward compatible).
+      // Two guards, since meleehit is a blindly-relayed broadcast whose attacker
+      // id is payload-controlled (spoofable): (1) CLAMP each duration so a single
+      // packet can't set a 1e9-ms freeze; (2) a GLOBAL min-spacing gate so no
+      // amount of spammed/forged packets can refresh the stun into a permanent
+      // lock — at worst you're stunned MELEE_MAX_STUN out of every COOLDOWN window.
+      if (e.stunMs != null) {
+        const now = Date.now();
+        if (now - this.lastStaggerAt >= STAGGER_COOLDOWN_MS) {
+          this.lastStaggerAt = now;
+          this.player.applyMeleeStagger(
+            Math.min(Math.max(0, e.stunMs), MELEE_MAX_STUN_MS) / 1000,
+            Math.min(Math.max(0, e.fireLockMs ?? 0), MELEE_MAX_FIRE_LOCK_MS) / 1000,
+            e.interruptCharge ?? false,
+          );
+        }
+      }
+    });
+    // A remote player parried OUR shot. We own the authoritative bullet, so cancel
+    // our nearest still-flying bullet near the parrying player — that's what makes
+    // their parry an actual shield (otherwise our bullet would still hit them).
+    // The reflected damage to us already arrived via that parrier's "hit".
+    this.mp.setParryHandler((e) => {
+      if (e.from !== this.mp?.id) return; // only the parried shooter acts
+      const rp = this.remotePlayers.get(e.id); // the parrying player
+      const p = rp ? rp.getPosition() : null;
+      if (!p) return;
+      this.bullets.cancelOwnedNear("player", p.x, p.z, PARRY_CANCEL_RADIUS);
     });
     // Relayed kill-feed events from other players → surface to React. Skip events
     // where WE are the victim: we self-report our own death locally (below) with
@@ -733,50 +820,151 @@ export class Game {
    *  Both deal half max HP per hit, so two hits kill (no insta-kill).
    */
   /**
-   * Resolve a melee staff swing: damage + knockback every alive target in a
-   * forward arc within MELEE_RANGE. Local bots take damage + knockback directly;
-   * remote players take server-authoritative damage (sendHit ×N, soaks shield)
-   * plus a relayed knockback cue. Spawns impact smoke + broadcasts the swing.
+   * Per-frame resolution of an in-progress saber swing. During the STRIKE phase
+   * every alive bot / remote player the rotating blade segment sweeps through
+   * takes damage + knockback + stagger — ONCE per target per swingId. During the
+   * PARRY sub-window, inbound bullets crossing the blade are reflected back at
+   * whoever fired them. Both are skipped on a big frame step (backgrounded tab)
+   * so a resumed swing can't teleport-sweep the whole arena.
    */
-  private handleMelee(origin: THREE.Vector3, dir: THREE.Vector3) {
-    this.mp?.sendMelee(
-      { x: origin.x, y: origin.y, z: origin.z },
-      { x: dir.x, y: dir.y, z: dir.z },
-    );
-    const r2 = MELEE_RANGE * MELEE_RANGE;
-    const inArc = (px: number, pz: number): THREE.Vector3 | null => {
-      const dx = px - origin.x;
-      const dz = pz - origin.z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 > r2) return null;
-      const len = Math.sqrt(d2) || 1;
-      const nx = dx / len;
-      const nz = dz / len;
-      if (nx * dir.x + nz * dir.z < MELEE_ARC_DOT) return null; // behind the swing
-      return new THREE.Vector3(nx, 0, nz);
+  private handleMeleeSample(s: MeleeSample) {
+    const newSwing = s.swingId !== this.meleeSwingId;
+    if (newSwing) {
+      this.meleeSwingId = s.swingId;
+      this.meleeHitIds.clear();
+      this.meleeReflects = 0;
+      // First frame of the swing → no previous pose to sweep from; seed it.
+      this.meleePrevStart.copy(s.bladeStart);
+      this.meleePrevEnd.copy(s.bladeEnd);
+    }
+    if (s.dt > MELEE_DT_CLAMP) {
+      this.meleePrevStart.copy(s.bladeStart); // keep prev fresh; skip hits this frame
+      this.meleePrevEnd.copy(s.bladeEnd);
+      return; // tab-resume: animate only, no hits/parry
+    }
+
+    // ── Parry: reflect inbound bullets crossing the SWEPT blade (parry window) ──
+    // Sub-step prev→current blade poses (like the strike) so a fast swing can't
+    // tunnel the thin parry capsule past a bullet it visibly swept through.
+    if (s.parry && this.meleeReflects < REFLECT_MAX_PER_SWING) {
+      const ps = this.meleePrevStart;
+      const pe = this.meleePrevEnd;
+      const pTip = Math.hypot(s.bladeEnd.x - pe.x, s.bladeEnd.z - pe.z);
+      const pSteps = Math.max(1, Math.min(8, Math.ceil(pTip / REFLECT_CAPSULE)));
+      for (let k = 1; k <= pSteps && this.meleeReflects < REFLECT_MAX_PER_SWING; k++) {
+        const f = k / pSteps;
+        this.meleeSegA.set(
+          ps.x + (s.bladeStart.x - ps.x) * f,
+          ps.y + (s.bladeStart.y - ps.y) * f,
+          ps.z + (s.bladeStart.z - ps.z) * f,
+        );
+        this.meleeSegB.set(
+          pe.x + (s.bladeEnd.x - pe.x) * f,
+          pe.y + (s.bladeEnd.y - pe.y) * f,
+          pe.z + (s.bladeEnd.z - pe.z) * f,
+        );
+        const reflected = this.bullets.reflectInArc(
+          this.meleeSegA,
+          this.meleeSegB,
+          s.origin,
+          REFLECT_CAPSULE,
+          REFLECT_INBOUND,
+          REFLECT_VTOL,
+          "player",
+          "player",
+          REFLECT_MAX_PER_SWING - this.meleeReflects,
+        );
+        for (const r of reflected) {
+          this.meleeReflects++;
+          // A reflected remote-VISUAL bullet is non-damaging locally. To make the
+          // parry an actual SHIELD (not just a counter-hit), tell the shooter to
+          // cancel their authoritative bullet (sendParry) AND credit the reflected
+          // hit back over the server "hit" path — only for a known, ALIVE remote.
+          // recentHits records it so a reflected KILL is attributed to us. (Best-
+          // effort under lag; server bots don't honor it — vs them shield partial.)
+          if (!r.wasDamaging && r.shooterId) {
+            const rp = this.remotePlayers.get(r.shooterId);
+            if (rp?.isAlive()) {
+              this.mp?.sendHit(r.shooterId);
+              this.mp?.sendParry(r.shooterId);
+              this.recentHits.set(r.shooterId, Date.now());
+            }
+          }
+          const at = new THREE.Vector3(r.x, r.y, r.z);
+          this.smoke.spawnFlash(at, s.aimDir);
+          this.smoke.spawnPuff(at, s.aimDir, 4, "#bfefff");
+        }
+      }
+    }
+
+    // ── Strike: damage every target the blade SWEEPS through, once per swing ──
+    if (s.phase !== "strike") {
+      this.meleePrevStart.copy(s.bladeStart);
+      this.meleePrevEnd.copy(s.bladeEnd);
+      return;
+    }
+    // Anti-tunnel: the blade can advance tens of degrees between frames, so test
+    // the target against several interpolated poses between the previous and the
+    // current blade segment (sub-steps ≤ SWEEP_RADIUS apart at the tip). A hit on
+    // ANY sub-pose counts. Forward gate uses the live aim; cheap far-cull first.
+    const ps = this.meleePrevStart;
+    const pe = this.meleePrevEnd;
+    const tipTravel = Math.hypot(s.bladeEnd.x - pe.x, s.bladeEnd.z - pe.z);
+    const steps = Math.max(1, Math.min(8, Math.ceil(tipTravel / MELEE_SWEEP_RADIUS)));
+    const resolve = (tx: number, tz: number): THREE.Vector3 | null => {
+      const dx = tx - s.origin.x;
+      const dz = tz - s.origin.z;
+      const dl = Math.hypot(dx, dz) || 1;
+      if (dl > MELEE_RANGE + MELEE_SWEEP_RADIUS) return null; // cheap far cull
+      if ((dx / dl) * s.aimDir.x + (dz / dl) * s.aimDir.z < MELEE_ARC_DOT) return null; // behind
+      for (let k = 1; k <= steps; k++) {
+        const f = k / steps;
+        const ax = ps.x + (s.bladeStart.x - ps.x) * f;
+        const az = ps.z + (s.bladeStart.z - ps.z) * f;
+        const bx = pe.x + (s.bladeEnd.x - pe.x) * f;
+        const bz = pe.z + (s.bladeEnd.z - pe.z) * f;
+        if (distPointSegXZ(tx, tz, ax, az, bx, bz) <= MELEE_SWEEP_RADIUS) {
+          return new THREE.Vector3(dx / dl, 0, dz / dl);
+        }
+      }
+      return null;
     };
+
     for (const bot of this.bots) {
-      if (!bot.isAlive()) continue;
-      const push = inArc(bot.root.position.x, bot.root.position.z);
+      if (!bot.isAlive() || this.meleeHitIds.has(bot.id)) continue;
+      const push = resolve(bot.root.position.x, bot.root.position.z);
       if (!push) continue;
+      this.meleeHitIds.add(bot.id);
       this.meleeImpactFx(bot.root.position, push);
       for (let i = 0; i < MELEE_DAMAGE && bot.isAlive(); i++) bot.takeHit(push);
       bot.knockback(push, MELEE_KNOCKBACK);
+      bot.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
     }
     for (const rp of this.remotePlayers.values()) {
-      if (!rp.isAlive()) continue;
+      if (!rp.isAlive() || this.meleeHitIds.has(rp.id)) continue;
       const p = rp.getPosition();
-      const push = inArc(p.x, p.z);
+      const push = resolve(p.x, p.z);
       if (!push) continue;
+      this.meleeHitIds.add(rp.id);
       this.meleeImpactFx(p, push);
       for (let i = 0; i < MELEE_DAMAGE; i++) this.mp?.sendHit(rp.id);
-      this.mp?.sendMeleeHit(rp.id, { x: push.x, y: 0, z: push.z });
+      this.mp?.sendMeleeHit(
+        rp.id,
+        { x: push.x, y: 0, z: push.z },
+        MELEE_STUN * 1000,
+        MELEE_FIRE_LOCK * 1000,
+        true,
+      );
     }
+
+    // Remember this pose so the next frame can sweep the gap between them.
+    this.meleePrevStart.copy(s.bladeStart);
+    this.meleePrevEnd.copy(s.bladeEnd);
   }
 
-  /** White-wood impact smoke burst at a melee-hit target. */
+  /** Cyan energy-impact burst at a saber-hit target. */
   private meleeImpactFx(pos: THREE.Vector3, dir: THREE.Vector3) {
-    this.smoke.spawnPuff(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), dir, 8, "#bfae90");
+    this.smoke.spawnPuff(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), dir, 8, "#7fe8ff");
   }
 
   private onKameHit(

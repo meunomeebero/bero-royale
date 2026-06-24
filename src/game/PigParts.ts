@@ -290,11 +290,17 @@ export function buildGun(): { group: THREE.Group; barrelTip: THREE.Object3D } {
 }
 
 /**
- * A floating wooden melee staff (no hand — held by an "invisible hand" in front
- * of the pig). `pivot` is rotated to perform the 180° swing; `tip` marks the
- * staff head's world position for the swing smoke trail + impact origin.
+ * A floating lightsaber-style energy sword (no hand — held by an "invisible
+ * hand" in front of the cube). `pivot` is rotated to perform the baseball-bat
+ * swing; `tip` marks the blade-end world position for the slash trail + impact
+ * origin. The blade extends along the pivot's local +X so rotating the pivot
+ * around Y sweeps it in a horizontal arc in front of the body.
+ *
+ * Voxel look: a dark metallic hilt + guard, a bright emissive core blade
+ * (MeshBasicMaterial = full-bright, ignores scene light → reads as energy), and
+ * a slightly larger additive glow shell for the saber bloom.
  */
-export function buildStaff(): {
+export function buildSaber(): {
   group: THREE.Group;
   pivot: THREE.Group;
   tip: THREE.Object3D;
@@ -303,33 +309,59 @@ export function buildStaff(): {
   const pivot = new THREE.Group();
   group.add(pivot);
 
-  const wood = new THREE.MeshLambertMaterial({
-    color: new THREE.Color("#9c6b3f"),
-    emissive: new THREE.Color("#3a2616"),
-    emissiveIntensity: 0.18,
-  });
-  const woodDark = new THREE.MeshLambertMaterial({
-    color: new THREE.Color("#7a4f2c"),
-    emissive: new THREE.Color("#2c1c10"),
-    emissiveIntensity: 0.18,
-  });
+  // Visual blade length tuned so the world-space tip reaches ~MELEE_RANGE (3.2)
+  // from the body center (mount ~0.5 + hilt 0.24 + blade) → the swept hit test
+  // (which uses this live segment) matches exactly what the player sees.
+  const BLADE_LEN = 2.45;
 
-  // The shaft extends outward from the pivot along +X so rotating the pivot
-  // around Y sweeps it in a horizontal arc in front of the pig.
-  const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.075, 0.075), wood);
-  shaft.position.set(0.27, 0, 0);
-  pivot.add(shaft);
+  // Hilt — short dark metallic grip at the base (sits on the body side).
+  const hilt = new THREE.Mesh(
+    new THREE.BoxGeometry(0.26, 0.1, 0.1),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color("#22262b"),
+      metalness: 0.8,
+      roughness: 0.3,
+    }),
+  );
+  hilt.position.set(0.05, 0, 0);
+  pivot.add(hilt);
 
-  // A chunkier head + a small grip ring at the base for a club read.
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.15), woodDark);
-  head.position.set(0.52, 0, 0);
-  pivot.add(head);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.11), woodDark);
-  grip.position.set(0.04, 0, 0);
-  pivot.add(grip);
+  // Guard — a thin perpendicular bar where the blade emits.
+  const guard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.05, 0.05, 0.22),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color("#5a606a"),
+      metalness: 0.9,
+      roughness: 0.25,
+    }),
+  );
+  guard.position.set(0.2, 0, 0);
+  pivot.add(guard);
+
+  // Blade core — full-bright cyan energy (MeshBasicMaterial ignores lighting).
+  const blade = new THREE.Mesh(
+    new THREE.BoxGeometry(BLADE_LEN, 0.07, 0.07),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color("#d6ffff") }),
+  );
+  blade.position.set(0.24 + BLADE_LEN / 2, 0, 0);
+  pivot.add(blade);
+
+  // Glow shell — larger, additive, transparent → the saber bloom halo.
+  const glow = new THREE.Mesh(
+    new THREE.BoxGeometry(BLADE_LEN + 0.04, 0.16, 0.16),
+    new THREE.MeshBasicMaterial({
+      color: new THREE.Color("#3fd0ff"),
+      transparent: true,
+      opacity: 0.32,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }),
+  );
+  glow.position.copy(blade.position);
+  pivot.add(glow);
 
   const tip = new THREE.Object3D();
-  tip.position.set(0.6, 0, 0);
+  tip.position.set(0.24 + BLADE_LEN, 0, 0);
   pivot.add(tip);
 
   return { group, pivot, tip };

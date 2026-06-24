@@ -18,12 +18,21 @@ interface Bullet {
   traveled: number;
   /** Max XZ distance before forced expiry (= 2 * HEARING_RADIUS). */
   maxRange: number;
+  /** Original shooter id for a remote VISUAL bullet (so a saber parry can credit
+   *  the reflected damage back to that player via the server "hit" path). "" if
+   *  unknown / not a remote shot. */
+  shooterId: string;
+  /** How many times this bullet has been saber-reflected (capped to prevent
+   *  infinite player↔player ping-pong). */
+  reflections: number;
 }
 
 const BULLET_GEOM = new THREE.BoxGeometry(0.1, 0.1, 0.1);
 const BULLET_SPEED = 22;
 const BULLET_LIFE = 1.6;
 const HIT_RADIUS = 0.35; // squared distance check uses radius
+/** A bullet may be saber-reflected at most this many times (anti ping-pong). */
+const MAX_BULLET_REFLECTIONS = 1;
 /**
  * Maximum XZ travel distance for any bullet (local or visual-remote).
  * Caps at 2 * HEARING_RADIUS so bullets never fly past the audio horizon.
@@ -145,6 +154,8 @@ export class Bullets {
       damaging: true,
       traveled: 0,
       maxRange: BULLET_MAX_RANGE,
+      shooterId: "",
+      reflections: 0,
     });
     this.group.add(mesh);
   }
@@ -152,9 +163,15 @@ export class Bullets {
   /**
    * Spawns a visual-only bullet for a remote player's shot. Travels and expires
    * exactly like a normal bullet (same speed/life/fade/bounds/obstacles) but never
-   * applies damage — damage stays on the trusted 'hit' relay path.
+   * applies damage — damage stays on the trusted 'hit' relay path. `shooterId`
+   * records who fired it so a saber parry can credit the reflected hit back.
    */
-  spawnVisual(origin: THREE.Vector3, direction: THREE.Vector3, color: string) {
+  spawnVisual(
+    origin: THREE.Vector3,
+    direction: THREE.Vector3,
+    color: string,
+    shooterId: string = "",
+  ) {
     const mat = new THREE.MeshBasicMaterial({
       color: new THREE.Color(color),
       transparent: true,
@@ -176,8 +193,131 @@ export class Bullets {
       damaging: false,
       traveled: 0,
       maxRange: BULLET_MAX_RANGE,
+      shooterId,
+      reflections: 0,
     });
     this.group.add(mesh);
+  }
+
+  /**
+   * Saber parry: reflect every inbound bullet whose flight crosses the LIVE blade
+   * segment (`bladeStart` → `bladeEnd`, world XZ) back toward whoever fired it, up
+   * to `maxCount`. A reflected damaging (bot) bullet flips ownership to the
+   * parrying side and now damages the enemy on its return path. A reflected remote
+   * VISUAL bullet stays non-damaging locally (PvP damage is server-authoritative)
+   * — the caller credits it via the "hit" path using the returned `shooterId`.
+   *
+   * Gates: point-to-segment XZ distance ≤ `capsule` (so the reflect tracks the
+   * blade's actual position, not the body), plus an inbound gate (bullet must be
+   * travelling toward `playerPos`) so a shot that already passed can't be parried.
+   * Returns one entry per reflected bullet (with the contact XYZ for FX).
+   */
+  reflectInArc(
+    bladeStart: THREE.Vector3,
+    bladeEnd: THREE.Vector3,
+    playerPos: THREE.Vector3,
+    capsule: number,
+    inboundDot: number,
+    vTol: number,
+    newOwner: BulletOwner,
+    newOwnerId: string,
+    maxCount: number,
+  ): Array<{
+    prevOwnerId: string;
+    shooterId: string;
+    wasDamaging: boolean;
+    x: number;
+    y: number;
+    z: number;
+  }> {
+    const out: Array<{
+      prevOwnerId: string;
+      shooterId: string;
+      wasDamaging: boolean;
+      x: number;
+      y: number;
+      z: number;
+    }> = [];
+    const sx = bladeStart.x;
+    const sz = bladeStart.z;
+    const segX = bladeEnd.x - sx;
+    const segZ = bladeEnd.z - sz;
+    const segLen2 = segX * segX + segZ * segZ || 1;
+
+    const bladeY = (bladeStart.y + bladeEnd.y) * 0.5;
+
+    for (const b of this.bullets) {
+      if (out.length >= maxCount) break;
+      if (b.ownerId === newOwnerId) continue; // never reflect our own shots
+      if (b.reflections >= MAX_BULLET_REFLECTIONS) continue;
+      // Vertical gate: only parry bullets flying at roughly the blade's height
+      // (the segment test is XZ-only, so without this a bullet far above/below
+      // the visible blade could be reflected).
+      if (Math.abs(b.flightY - bladeY) > vTol) continue;
+
+      const bx = b.mesh.position.x;
+      const bz = b.mesh.position.z;
+
+      // Inbound gate: bullet velocity must point back toward the player.
+      const vlen = Math.hypot(b.velocity.x, b.velocity.z) || 1;
+      let towardX = playerPos.x - bx;
+      let towardZ = playerPos.z - bz;
+      const tlen = Math.hypot(towardX, towardZ) || 1;
+      towardX /= tlen;
+      towardZ /= tlen;
+      if ((b.velocity.x / vlen) * towardX + (b.velocity.z / vlen) * towardZ < inboundDot) {
+        continue;
+      }
+
+      // Point-to-segment distance (XZ): project the bullet onto the blade segment.
+      let t = ((bx - sx) * segX + (bz - sz) * segZ) / segLen2;
+      t = Math.max(0, Math.min(1, t));
+      const cx = sx + t * segX;
+      const cz = sz + t * segZ;
+      if (Math.hypot(bx - cx, bz - cz) > capsule) continue;
+
+      // ── Reflect ──
+      const prevOwnerId = b.ownerId;
+      const shooterId = b.shooterId;
+      const wasDamaging = b.damaging;
+      b.velocity.x = -b.velocity.x;
+      b.velocity.z = -b.velocity.z;
+      b.owner = newOwner;
+      b.ownerId = newOwnerId;
+      b.reflections += 1;
+      b.traveled = 0;
+      b.life = BULLET_LIFE;
+      // A reflected remote-visual bullet stays non-damaging locally (avoids
+      // double-damage; the server resolves PvP via the credited "hit").
+      out.push({ prevOwnerId, shooterId, wasDamaging, x: bx, y: b.mesh.position.y, z: bz });
+    }
+    return out;
+  }
+
+  /**
+   * Shooter-side parry response: a remote player parried one of OUR shots, so
+   * remove our nearest still-flying damaging bullet (owned by `ownerId`) within
+   * `radius` of the parry point (the parrying player's position). This is what
+   * makes the parry actually SHIELD the defender in human-vs-human play — without
+   * it our authoritative bullet would still report a hit on them. Returns true if
+   * a bullet was cancelled. (No shot-ids: the nearest inbound own-bullet is the
+   * match; a stray miss is harmless.)
+   */
+  cancelOwnedNear(ownerId: string, x: number, z: number, radius: number): boolean {
+    let best = -1;
+    let bestD2 = radius * radius;
+    for (let i = 0; i < this.bullets.length; i++) {
+      const b = this.bullets[i];
+      if (!b.damaging || b.ownerId !== ownerId) continue;
+      const d2 = (b.mesh.position.x - x) ** 2 + (b.mesh.position.z - z) ** 2;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        best = i;
+      }
+    }
+    if (best < 0) return false;
+    this.removeAt(best);
+    return true;
   }
 
   update(dt: number) {

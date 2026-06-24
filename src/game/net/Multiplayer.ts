@@ -108,11 +108,26 @@ export interface MeleeEvent {
   dir: { x: number; y: number; z: number };
 }
 
-/** A melee staff hit on `target` — that client applies a small knockback. */
+/** A saber hit on `target` — that client applies knockback + (optionally) a
+ *  stagger (brief stun + constant-fire lockout + charge interrupt). The stun
+ *  fields are optional so older clients/messages simply apply knockback only. */
 export interface MeleeHitEvent {
   id: string; // attacker
   target: string; // victim id
   dir: { x: number; y: number; z: number };
+  /** Full-action freeze duration (ms). Absent → no stagger (legacy). */
+  stunMs?: number;
+  /** Constant-fire lockout duration (ms). */
+  fireLockMs?: number;
+  /** Whether the hit interrupts an in-progress concentrated-super charge. */
+  interruptCharge?: boolean;
+}
+
+/** A player parried a shot fired by `from`. The shooter's client cancels its own
+ *  authoritative bullet near the parrying player so the parry actually shields. */
+export interface ParryEvent {
+  id: string; // the parrying player
+  from: string; // the shooter whose bullet was parried
 }
 
 /** Server announced a new power-up on the map (drives the floating pickup). */
@@ -190,6 +205,7 @@ export class Multiplayer {
   private onHp?: (e: { health: number; shield: number }) => void;
   private onMelee?: (e: MeleeEvent) => void;
   private onMeleeHit?: (e: MeleeHitEvent) => void;
+  private onParry?: (e: ParryEvent) => void;
   private onPowerupSpawn?: (e: PowerupSpawnEvent) => void;
   private onPowerupTake?: (e: PowerupTakeEvent) => void;
   private onCrateSpawn?: (e: CrateSpawnEvent) => void;
@@ -271,6 +287,10 @@ export class Multiplayer {
   /** Register a handler for incoming melee hits (knockback self if targeted). */
   setMeleeHitHandler(cb: (e: MeleeHitEvent) => void) {
     this.onMeleeHit = cb;
+  }
+
+  setParryHandler(cb: (e: ParryEvent) => void) {
+    this.onParry = cb;
   }
 
   /** Register a handler for power-up spawns (render the floating pickup). */
@@ -414,6 +434,10 @@ export class Multiplayer {
           const e = payload as MeleeHitEvent;
           if (e && e.id !== this.id) this.onMeleeHit?.(e);
         },
+        parry: (payload) => {
+          const e = payload as ParryEvent;
+          if (e && e.id !== this.id) this.onParry?.(e);
+        },
         puspawn: (payload) => {
           const e = payload as PowerupSpawnEvent;
           // Global event: server fans out to ALL (incl. late joiners re-announces).
@@ -538,10 +562,31 @@ export class Multiplayer {
     this.room.broadcast("melee", { id: this.id, origin, dir });
   }
 
-  /** Tell `targetId` our staff clubbed it (applies a small knockback). Damage
-   *  itself rides the normal server-authoritative "hit" path (sendHit). */
-  sendMeleeHit(targetId: string, dir: { x: number; y: number; z: number }) {
-    this.room.broadcast("meleehit", { id: this.id, target: targetId, dir });
+  /** Tell `targetId` our saber struck it: knockback + an optional stagger (stun /
+   *  fire-lock / charge interrupt). Damage itself rides the server-authoritative
+   *  "hit" path (sendHit). Stun fields are omitted when not staggering so the
+   *  payload stays backward-compatible. */
+  sendMeleeHit(
+    targetId: string,
+    dir: { x: number; y: number; z: number },
+    stunMs?: number,
+    fireLockMs?: number,
+    interruptCharge?: boolean,
+  ) {
+    this.room.broadcast("meleehit", {
+      id: this.id,
+      target: targetId,
+      dir,
+      stunMs,
+      fireLockMs,
+      interruptCharge,
+    });
+  }
+
+  /** Tell the room we parried `shooterId`'s shot so that shooter cancels its own
+   *  authoritative bullet near us (the parry then actually shields). */
+  sendParry(shooterId: string) {
+    this.room.broadcast("parry", { id: this.id, from: shooterId });
   }
 
   /** Update presence metadata (e.g. on respawn or after a kill). */

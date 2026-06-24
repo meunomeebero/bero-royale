@@ -37,6 +37,7 @@ const BOT_KAME_CHARGE = 1.0; // telegraph wind-up (charge VFX) before the beam f
 const BOT_KAME_COOLDOWN_MIN = 8.0; // seconds between mega beams
 const BOT_KAME_COOLDOWN_RANGE = 6.0; // + up to this, randomized
 const BOT_KAME_RANGE = 9.0; // only wind up a mega when within beam reach (~2×hearing)
+const BOT_KAME_INTERRUPT_PENALTY = 1.0; // saber-interrupted charge can't re-wind for this long
 
 type State = "alive" | "falling" | "dead";
 
@@ -88,6 +89,12 @@ export class Bot implements BulletTarget {
   private hitFlashTimer = 0;
   private shakeTimer = 0;
   private shakeAmount = 0;
+
+  // Saber stagger: full action freeze (stunTimer) + a longer constant-fire
+  // lockout (constantFireLockTimer). Both decay in update(); knockback velocity
+  // still integrates while stunned (the push must land).
+  private stunTimer = 0;
+  private constantFireLockTimer = 0;
 
   private aimYaw = 0;
   private shootTimer = 0;
@@ -258,11 +265,37 @@ export class Bot implements BulletTarget {
     return true;
   }
 
-  /** External knockback impulse (e.g. a melee staff push) added to velocity. */
+  /** External knockback impulse (e.g. a saber push) added to velocity. */
   knockback(dir: THREE.Vector3, force: number): void {
     if (this.state !== "alive") return;
     this.velocity.x += dir.x * force;
     this.velocity.z += dir.z * force;
+  }
+
+  /**
+   * Saber stagger: a brief full-action freeze + a longer constant-fire lockout,
+   * and (optionally) an interruption of any in-progress mega-beam charge — which
+   * is reset to zero AND penalized so the bot can't immediately re-charge.
+   * Timers refresh with max() (never stack) so repeated hits can't stun-lock.
+   */
+  applyMeleeStagger(
+    stunSeconds: number,
+    constantFireLockSeconds: number,
+    interruptCharge: boolean,
+  ): void {
+    if (this.state !== "alive") return;
+    this.stunTimer = Math.max(this.stunTimer, stunSeconds);
+    this.constantFireLockTimer = Math.max(
+      this.constantFireLockTimer,
+      constantFireLockSeconds,
+    );
+    // Block an instant shot the moment the lock expires.
+    this.shootTimer = Math.max(this.shootTimer, constantFireLockSeconds);
+    if (interruptCharge && this.kameCharging) {
+      this.kameCharging = false;
+      this.kameChargeT = 0;
+      this.megaTimer = Math.max(this.megaTimer, BOT_KAME_INTERRUPT_PENALTY);
+    }
   }
 
   /** Insta-kill from a Kamehameha beam (ignores incremental health). */
@@ -314,6 +347,8 @@ export class Bot implements BulletTarget {
     this.megaTimer = BOT_KAME_COOLDOWN_MIN * 0.5 + Math.random() * BOT_KAME_COOLDOWN_RANGE;
     this.kameCharging = false;
     this.kameChargeT = 0;
+    this.stunTimer = 0;
+    this.constantFireLockTimer = 0;
     this.lastHitBy = null;
     this.position.copy(this.root.position);
   }
@@ -366,11 +401,23 @@ export class Bot implements BulletTarget {
       return;
     }
 
+    // Saber stagger timers decay every frame regardless of AI branch.
+    if (this.stunTimer > 0) this.stunTimer = Math.max(0, this.stunTimer - dt);
+    if (this.constantFireLockTimer > 0) {
+      this.constantFireLockTimer = Math.max(0, this.constantFireLockTimer - dt);
+    }
+
     // --- AI ---
     const move = this.tmpMove.set(0, 0, 0);
     const moveSpeed = this.aggressive ? AGGRO_MOVE_SPEED : MOVE_SPEED;
+    const stunned = this.stunTimer > 0;
 
-    if (this.behavior === "ambient") {
+    if (stunned) {
+      // Frozen: no steering, aim, shooting, or charge transitions — but gravity
+      // and the existing (knockback) velocity still integrate below so the push
+      // lands and the bot can be shoved off a ledge while staggered.
+      this.aimGroup.rotation.y = -this.aimYaw;
+    } else if (this.behavior === "ambient") {
       // Ambient showcase actor: wanders the platform and periodically jumps.
       // Ignores the passed target entirely; immortal (takeHit is a no-op).
       this.wanderTimer -= dt;
@@ -438,10 +485,10 @@ export class Bot implements BulletTarget {
             move.set(-dx, 0, -dz).normalize();
           }
 
-          // Shoot on cooldown
+          // Shoot on cooldown — suppressed while saber-locked out of fire.
           const shootCd = this.aggressive ? AGGRO_SHOOT_COOLDOWN : SHOOT_COOLDOWN;
           this.shootTimer -= dt;
-          if (this.shootTimer <= 0) {
+          if (this.shootTimer <= 0 && this.constantFireLockTimer <= 0) {
             this.shoot();
             this.shootTimer = shootCd + Math.random() * 0.35;
           }

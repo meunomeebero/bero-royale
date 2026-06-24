@@ -9,7 +9,7 @@ import type { GrassPoof } from "./GrassPoof";
 import { Avatar, AVATAR_HEIGHT } from "./Avatar";
 import { ModelLibrary } from "./ModelLibrary";
 import { BlobShadow } from "./Shadow";
-import { buildGun, buildStaff } from "./PigParts";
+import { buildGun, buildSaber } from "./PigParts";
 import {
   MOVE_SPEED,
   JUMP_VELOCITY,
@@ -48,9 +48,80 @@ export type FireMode = "constant" | "concentrated" | "boss" | "staff";
  *  override (the "bero" easter egg), NOT a slot. */
 const SLOT_MODES: FireMode[] = ["constant", "concentrated", "staff"];
 
-// ── Melee staff (hotbar slot 3) — swing timing; damage/range live in Game ──
-const MELEE_COOLDOWN = 0.45; // seconds between swings while held
-const MELEE_SWING_DUR = 0.28; // swing animation length (the 180° sweep)
+/**
+ * Per-frame snapshot of an in-progress saber swing. Emitted by Player every
+ * frame the swing is active; Game uses it to resolve arc hits (strike phase,
+ * once per target per `swingId`) and bullet parry (parry sub-window). The blade
+ * segment is the live world-space `pivot → tip` so collision matches the visual.
+ */
+export interface MeleeSample {
+  swingId: number;
+  /** "windup" | "strike" | "recovery" — only "strike" deals damage. */
+  phase: "windup" | "strike" | "recovery";
+  /** True while inside the reflection (parry) sub-window. */
+  parry: boolean;
+  /** Frame delta — Game suppresses collision/parry on huge steps (tab resume). */
+  dt: number;
+  /** Player body center (swing origin). */
+  origin: THREE.Vector3;
+  /** Normalized XZ aim/facing direction at swing start. */
+  aimDir: THREE.Vector3;
+  /** Live blade segment in world space (pivot end → tip end). */
+  bladeStart: THREE.Vector3;
+  bladeEnd: THREE.Vector3;
+}
+
+// ── Melee saber (hotbar slot 3) — swing timing; damage/range live in Game ──
+const MELEE_COOLDOWN = 0.55; // seconds between swings while held (was 0.45; offsets 2× range + parry)
+const MELEE_SWING_DUR = 0.4; // full swing: wind-up + 180° strike + recovery
+// Baseball-bat swing on the pivot's local Y. Rest = blade perpendicular (out to
+// the side, ~90° to forward). Wind-up pulls 45° counter-clockwise, then the
+// strike sweeps 180° clockwise; the remainder eases back to rest.
+const SABER_REST_YAW = -Math.PI / 2; // perpendicular rest pose
+const SABER_WINDUP_YAW = SABER_REST_YAW - Math.PI / 4; // +45° CCW wind-up peak
+const SABER_STRIKE_YAW = SABER_WINDUP_YAW + Math.PI; // 180° CW strike end
+const SWING_WINDUP_END_T = 0.25; // wind-up occupies the first 25% of the swing
+const SWING_STRIKE_END_T = 0.78; // strike (hit window) runs 25%→78%; rest = recovery
+// Parry window (fraction of the swing) — when the blade can reflect bullets.
+const SWING_PARRY_START_T = 0.2;
+const SWING_PARRY_END_T = 0.6;
+// Saber stagger taken BY the local player from a remote saber hit.
+const MELEE_STUN = 0.25; // brief full-action freeze
+const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
+// Floating-saber mount: rest distance in front of the body, and the clearance
+// radius the swept blade must keep from the body center (body half-width 0.25 +
+// margin for the voxel avatar overhang). During the backward wind-up the mount
+// is pushed out to CLEAR_R/|sin(yaw)| so the blade never touches the cube.
+const BASE_SABER_MOUNT = 0.5;
+const SABER_CLEAR_R = 0.55;
+const SABER_MAX_MOUNT = 1.1;
+
+function easeOutCubic(x: number): number {
+  return 1 - Math.pow(1 - x, 3);
+}
+function easeInOutCubic(x: number): number {
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+}
+/**
+ * Pivot yaw over a normalized swing t∈[0,1]: a snappy 45° wind-up (rest→windup,
+ * easeOut), a powered 180° strike (windup→strike end, easeInOut), then an
+ * easeInOut recovery back to the rest pose. Shared by the local player and (later)
+ * remote saber rendering so both clients see the identical arc.
+ */
+function sampleSaberYaw(t: number): number {
+  if (t < SWING_WINDUP_END_T) {
+    const u = easeOutCubic(t / SWING_WINDUP_END_T);
+    return SABER_REST_YAW + (SABER_WINDUP_YAW - SABER_REST_YAW) * u;
+  }
+  if (t < SWING_STRIKE_END_T) {
+    const u = easeInOutCubic(
+      (t - SWING_WINDUP_END_T) / (SWING_STRIKE_END_T - SWING_WINDUP_END_T),
+    );
+    return SABER_WINDUP_YAW + (SABER_STRIKE_YAW - SABER_WINDUP_YAW) * u;
+  }
+  const u = easeInOutCubic((t - SWING_STRIKE_END_T) / (1 - SWING_STRIKE_END_T));
+  return SABER_STRIKE_YAW + (SABER_REST_YAW - SABER_STRIKE_YAW) * u;
+}
 const KAME_CHARGE = 3.0; // seconds to hold before the concentrated shot is ready (recharge cadence)
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
@@ -98,13 +169,25 @@ export class Player implements BulletTarget {
   private kameState: "idle" | "charging" | "ready" = "idle";
   private kameTimer = 0; // seconds held while "charging"
   private onKame?: (origin: THREE.Vector3, dir: THREE.Vector3, lethal: boolean) => void;
-  // Melee staff (slot 3) — floats in front, swings 180° on attack.
+  // Melee saber (slot 3) — floats in front, baseball-bat swing on attack.
   private staff!: THREE.Group;
   private staffPivot!: THREE.Group;
   private staffTip!: THREE.Object3D;
   private swingTimer = 0; // >0 while the swing animation plays
-  private swingSmokeAccum = 0; // throttles the swing smoke trail
+  private swingElapsed = 0; // seconds since the swing started
+  private swingId = 0; // bumped per swing; Game keys its per-swing hit-set on this
+  private swingSmokeAccum = 0; // throttles the slash trail
+  private swingDustAccum = 0; // throttles the ground dust along the arc
+  // Fired once at swing start (broadcast the swing for remotes).
   private onMelee?: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
+  // Fired every frame during the swing — Game resolves arc hits + bullet parry.
+  private onMeleeSample?: (s: MeleeSample) => void;
+  // Saber stagger taken by the local player (from a remote saber hit).
+  private stunTimer = 0;
+  private fireLockTimer = 0;
+  // Scratch reused each swing sample (no per-frame allocation).
+  private swingBladeStart = new THREE.Vector3();
+  private swingBladeEnd = new THREE.Vector3();
   /** Optional spawn chooser — Game returns a spot far from other players so the
    *  player doesn't respawn on top of an enemy and die instantly. */
   private spawnPicker?: () => THREE.Vector3 | null;
@@ -197,13 +280,15 @@ export class Player implements BulletTarget {
     this.gun.position.set(this.gunBaseX, 0, -0.3);
     this.aimGroup.add(this.gun);
 
-    // Wooden melee staff (slot 3) — floats in front like the gun, hidden until
-    // the staff weapon is selected.
-    const staffParts = buildStaff();
-    this.staff = staffParts.group;
-    this.staffPivot = staffParts.pivot;
-    this.staffTip = staffParts.tip;
-    this.staff.position.set(this.gunBaseX + 0.05, 0, -0.3);
+    // Energy saber (slot 3) — floats in front of the cube, held by an invisible
+    // hand. Mounted on local +X (= aim/forward); the per-frame mount distance is
+    // pushed out during the wind-up so the swept blade never touches the body.
+    const saberParts = buildSaber();
+    this.staff = saberParts.group;
+    this.staffPivot = saberParts.pivot;
+    this.staffTip = saberParts.tip;
+    this.staff.position.set(BASE_SABER_MOUNT, 0.05, 0);
+    this.staffPivot.rotation.y = SABER_REST_YAW;
     this.staff.visible = false;
     this.aimGroup.add(this.staff);
 
@@ -347,9 +432,44 @@ export class Player implements BulletTarget {
     this.dashVel.set(dir.x * force, 0, dir.z * force);
   }
 
-  /** Register the melee-swing handler (Game resolves the arc hit + netcode). */
+  /** Register the swing-start handler (Game broadcasts the swing for remotes). */
   setOnMelee(cb: (origin: THREE.Vector3, dir: THREE.Vector3) => void) {
     this.onMelee = cb;
+  }
+
+  /** Register the per-frame swing sampler (Game resolves arc hits + bullet parry). */
+  setOnMeleeSample(cb: (s: MeleeSample) => void) {
+    this.onMeleeSample = cb;
+  }
+
+  /** True while a saber stagger is freezing this player's actions. */
+  isStunned(): boolean {
+    return this.stunTimer > 0;
+  }
+
+  /** Cancel any in-progress concentrated-super charge (saber interruption). */
+  cancelKameCharge() {
+    if (this.kameState !== "idle") {
+      this.kameState = "idle";
+      this.kameTimer = 0;
+    }
+  }
+
+  /**
+   * Take a saber stagger from a remote attacker: a brief full-action freeze + a
+   * constant-fire lockout, and (optionally) interruption of the concentrated
+   * super charge — resetting it to zero. Timers refresh via max() so repeated
+   * hits can't stun-lock. Knockback rides the separate applyKnockback() cue.
+   */
+  applyMeleeStagger(
+    stunSeconds: number,
+    fireLockSeconds: number,
+    interruptCharge: boolean,
+  ) {
+    if (this.state !== "alive") return;
+    this.stunTimer = Math.max(this.stunTimer, stunSeconds);
+    this.fireLockTimer = Math.max(this.fireLockTimer, fireLockSeconds);
+    if (interruptCharge) this.cancelKameCharge();
   }
 
   private setFireMode(mode: FireMode) {
@@ -357,7 +477,12 @@ export class Player implements BulletTarget {
     this.fireMode = mode;
     this.kameState = "idle";
     this.kameTimer = 0;
-    // Swap the held item: wooden staff for melee, gun for every shooting mode.
+    // Cancel any in-flight swing so a hidden saber can't keep resolving hits.
+    this.swingTimer = 0;
+    this.swingElapsed = 0;
+    this.staffPivot.rotation.y = SABER_REST_YAW;
+    this.staff.position.x = BASE_SABER_MOUNT;
+    // Swap the held item: energy saber for melee, gun for every shooting mode.
     this.staff.visible = mode === "staff";
     this.gun.visible = mode !== "staff";
     if ((mode === "boss") !== wasBoss) this.applyBossState(mode === "boss");
@@ -619,6 +744,13 @@ export class Player implements BulletTarget {
     this.shakeTimer = 0;
     this.kameState = "idle";
     this.kameTimer = 0;
+    // Clear any saber swing/stagger state carried across the death.
+    this.swingTimer = 0;
+    this.swingElapsed = 0;
+    this.stunTimer = 0;
+    this.fireLockTimer = 0;
+    this.staffPivot.rotation.y = SABER_REST_YAW;
+    this.staff.position.x = BASE_SABER_MOUNT;
     // Power-up boosts + shield are lost on death (you respawn fresh — BR style).
     this.speedTimer = 0;
     this.rapidTimer = 0;
@@ -698,17 +830,24 @@ export class Player implements BulletTarget {
     // Aim
     this.updateAim(camera);
 
+    // Saber stagger timers decay every frame. While stunned, all action input
+    // (move/jump/dash/fire/swing) is suppressed; knockback velocity (dashVel)
+    // still carries the push. The constant-fire lock outlives the stun.
+    if (this.stunTimer > 0) this.stunTimer = Math.max(0, this.stunTimer - dt);
+    if (this.fireLockTimer > 0) this.fireLockTimer = Math.max(0, this.fireLockTimer - dt);
+    const stunned = this.stunTimer > 0;
+
     // Movement. The "speed" power-up multiplies the top speed ×1.6 while active.
     const move = this.input.getMoveVector();
     const effSpeed = MOVE_SPEED * (this.speedTimer > 0 ? 1.6 : 1);
-    const targetVx = move.x * effSpeed;
-    const targetVz = move.z * effSpeed;
+    const targetVx = stunned ? 0 : move.x * effSpeed;
+    const targetVz = stunned ? 0 : move.z * effSpeed;
     const lerpAmt = 1 - Math.exp(-ACCEL * dt);
     this.velocity.x += (targetVx - this.velocity.x) * lerpAmt;
     this.velocity.z += (targetVz - this.velocity.z) * lerpAmt;
 
-    // Jump
-    if (this.grounded && this.input.consumeJump()) {
+    // Jump (suppressed while stunned; still drain the buffered press).
+    if (!stunned && this.grounded && this.input.consumeJump()) {
       this.velocity.y = JUMP_VELOCITY;
       this.grounded = false;
       this.audio.playJump(this.root.position, true);
@@ -741,7 +880,7 @@ export class Player implements BulletTarget {
         this.dashCharges + dt / DASH_RECHARGE,
       );
     }
-    if (this.input.consumeDash() && this.dashCharges >= 1) {
+    if (this.input.consumeDash() && !stunned && this.dashCharges >= 1) {
       this.dash();
       this.dashCharges -= 1;
     }
@@ -768,22 +907,26 @@ export class Player implements BulletTarget {
     //  • boss         → hold to RAPID-FIRE mega beams (half damage, no insta-kill).
     this.shootTimer -= dt;
     this.input.consumeShoot(); // drain the one-shot press (modes use the hold state)
-    const held = this.input.isShootHeld();
+    // While stunned, no weapon acts (but an already-committed swing finishes its
+    // animation below — the stagger blocks the NEXT action, not the current one).
+    const held = !stunned && this.input.isShootHeld();
     if (this.fireMode === "boss") {
       if (this.kameState !== "idle") this.kameState = "idle";
-      if (held && this.shootTimer <= 0) {
+      // Boss rapid-beam is "constant-like" fire → also held off by the saber lock.
+      if (held && this.shootTimer <= 0 && this.fireLockTimer <= 0) {
         this.fireKame(false); // mega beam, non-lethal (2 hits to kill)
         this.shootTimer = BOSS_CADENCE;
       }
     } else if (this.fireMode === "staff") {
       if (this.kameState !== "idle") this.kameState = "idle";
-      if (held && this.shootTimer <= 0) {
-        this.swingStaff(); // 180° melee swing (3 dmg + knockback, via onMelee)
+      // Don't restart a swing while one is mid-flight (keeps swingId stable).
+      if (held && this.shootTimer <= 0 && this.swingTimer <= 0) {
+        this.swingStaff();
         this.shootTimer = MELEE_COOLDOWN;
       }
     } else if (this.fireMode === "constant") {
       if (this.kameState !== "idle") this.kameState = "idle"; // safety
-      if (held) this.tryPistol();
+      if (held && this.fireLockTimer <= 0) this.tryPistol(); // saber locks constant fire ~1s
     } else if (this.kameState === "idle") {
       if (held) {
         this.kameState = "charging";
@@ -922,26 +1065,76 @@ export class Player implements BulletTarget {
     this.gunRecoil += (0 - this.gunRecoil) * Math.min(1, 18 * dt);
     this.gun.position.x = this.gunBaseX - this.gunRecoil;
 
-    // Staff swing: sweep the pivot 180° over the swing, dragging a smoke trail
-    // along the head's arc. Settles back to rest when idle.
+    // Saber swing: baseball-bat motion — 45° CCW wind-up, then a 180° CW strike,
+    // then ease back to the perpendicular rest pose. The pivot mount is pushed
+    // forward during the backward wind-up so the blade never touches the body.
     if (this.swingTimer > 0) {
       this.swingTimer = Math.max(0, this.swingTimer - dt);
-      const t = 1 - this.swingTimer / MELEE_SWING_DUR; // 0 → 1
-      this.staffPivot.rotation.y = (-0.5 + t) * Math.PI; // -90° → +90°
-      this.swingSmokeAccum -= dt;
-      if (this.smoke && this.swingSmokeAccum <= 0) {
-        this.swingSmokeAccum = 0.03;
-        const tipPos = new THREE.Vector3();
-        this.staffTip.getWorldPosition(tipPos);
-        this.smoke.spawnPuff(
-          tipPos,
-          this.getAimDirection(this.tmpDir).clone(),
-          2,
-          "#c9b79a",
-        );
+      this.swingElapsed += dt;
+      const t = Math.min(1, this.swingElapsed / MELEE_SWING_DUR); // 0 → 1
+      const yaw = sampleSaberYaw(t);
+      this.staffPivot.rotation.y = yaw;
+      // Dynamic forward mount: clear the cube during the backward part of the arc.
+      const cosY = Math.cos(yaw);
+      let mountX = BASE_SABER_MOUNT;
+      if (cosY < 0) {
+        const sinY = Math.abs(Math.sin(yaw)) || 1;
+        mountX = Math.min(SABER_MAX_MOUNT, Math.max(mountX, SABER_CLEAR_R / sinY));
       }
-    } else if (this.staffPivot.rotation.y !== 0) {
-      this.staffPivot.rotation.y = 0;
+      this.staff.position.x = mountX;
+      this.staff.updateWorldMatrix(true, true); // fresh blade transform for the sample
+
+      const phase: MeleeSample["phase"] =
+        t < SWING_WINDUP_END_T ? "windup" : t < SWING_STRIKE_END_T ? "strike" : "recovery";
+
+      // Emit the per-frame sample so Game resolves arc hits + bullet parry against
+      // the LIVE blade segment (pivot → tip in world space).
+      if (this.onMeleeSample) {
+        this.staffPivot.getWorldPosition(this.swingBladeStart);
+        this.staffTip.getWorldPosition(this.swingBladeEnd);
+        this.onMeleeSample({
+          swingId: this.swingId,
+          phase,
+          parry: t >= SWING_PARRY_START_T && t <= SWING_PARRY_END_T,
+          dt,
+          // Live body center — root.position already advanced this frame (esp.
+          // mid-dash), whereas this.position only syncs at end of update(). Using
+          // it keeps the range/cone/inbound gates consistent with the blade.
+          origin: this.root.position,
+          aimDir: this.getAimDirection(this.tmpDir),
+          bladeStart: this.swingBladeStart,
+          bladeEnd: this.swingBladeEnd,
+        });
+      }
+
+      // Slash trail (cyan energy puffs along the blade tip) during the strike.
+      if (this.smoke && phase === "strike") {
+        this.swingSmokeAccum -= dt;
+        if (this.swingSmokeAccum <= 0) {
+          this.swingSmokeAccum = 0.02;
+          const tipPos = new THREE.Vector3();
+          this.staffTip.getWorldPosition(tipPos);
+          this.smoke.spawnPuff(tipPos, this.getAimDirection(this.tmpDir).clone(), 1, "#7fe8ff");
+        }
+        // Ground dust kicked up along the arc.
+        this.swingDustAccum -= dt;
+        if (this.swingDustAccum <= 0) {
+          this.swingDustAccum = 0.05;
+          const sy = this.platform.surfaceY(this.root.position.x, this.root.position.z);
+          this.dust.spawnBurst(
+            new THREE.Vector3(this.root.position.x, sy + 0.02, this.root.position.z),
+            4,
+          );
+        }
+      }
+    } else if (this.staffPivot.rotation.y !== SABER_REST_YAW) {
+      // Settle smoothly back to the perpendicular rest pose and reset the mount.
+      this.staffPivot.rotation.y +=
+        (SABER_REST_YAW - this.staffPivot.rotation.y) * Math.min(1, 18 * dt);
+      if (Math.abs(this.staffPivot.rotation.y - SABER_REST_YAW) < 0.002) {
+        this.staffPivot.rotation.y = SABER_REST_YAW;
+      }
+      this.staff.position.x = BASE_SABER_MOUNT;
     }
 
     // Footstep sound + grass particles while walking on ground
@@ -1016,8 +1209,13 @@ export class Player implements BulletTarget {
    *  arc-hit resolution (damage + knockback + netcode) to Game via onMelee. */
   private swingStaff() {
     const dir = this.getAimDirection(this.tmpDir).clone();
+    this.swingId = (this.swingId + 1) & 0xffff;
     this.swingTimer = MELEE_SWING_DUR;
+    this.swingElapsed = 0;
     this.swingSmokeAccum = 0;
+    this.swingDustAccum = 0;
+    // Broadcast the swing (remotes drag the slash arc). Damage + parry are now
+    // resolved per-frame in Game via the onMeleeSample callback, NOT here.
     this.onMelee?.(this.position.clone(), dir);
     this.audio.playJump(this.root.position, true); // soft whoosh
     this.targetScale.set(1.2, 0.85, 1.2);
