@@ -70,6 +70,8 @@ interface Beam {
   /** Stable id of the caster (player/bot id) for kill attribution. */
   ownerId: string;
   trailAccum: number;
+  /** Set once a saber parry has reflected this beam (caps it at one reflect). */
+  reflected: boolean;
 }
 
 /**
@@ -236,7 +238,75 @@ export class Kamehameha {
       ownerSide,
       ownerId,
       trailAccum: 0,
+      reflected: false,
     });
+  }
+
+  /**
+   * Saber parry of the concentrated super: reflect every inbound beam whose head
+   * crosses the LIVE blade segment back toward whoever cast it, up to `maxCount`.
+   * A reflected beam flips to the parrying side (`newOwnerSide`/`newOwnerId`) and
+   * becomes damaging, so on its return path it lands via the normal beam→onHit
+   * path (killing a local bot, or sending the server-authoritative super hit to a
+   * remote/server caster). Mirrors Bullets.reflectInArc. Returns the contact XYZ.
+   */
+  reflectInArc(
+    bladeStart: THREE.Vector3,
+    bladeEnd: THREE.Vector3,
+    playerPos: THREE.Vector3,
+    capsule: number,
+    inboundDot: number,
+    vTol: number,
+    newOwnerSide: BulletOwner,
+    newOwnerId: string,
+    maxCount: number,
+  ): Array<{ x: number; y: number; z: number }> {
+    const out: Array<{ x: number; y: number; z: number }> = [];
+    const sx = bladeStart.x;
+    const sz = bladeStart.z;
+    const segX = bladeEnd.x - sx;
+    const segZ = bladeEnd.z - sz;
+    const segLen2 = segX * segX + segZ * segZ || 1;
+    const bladeY = (bladeStart.y + bladeEnd.y) * 0.5;
+
+    for (const b of this.beams) {
+      if (out.length >= maxCount) break;
+      // Only reflect DAMAGING beams. A remote/server super arrives here as a
+      // non-damaging visual COPY — the caster's authoritative beam still resolves
+      // server-side, so "reflecting" the copy would look like a parry but the hit
+      // would land anyway. Authoritative MP super-parry is deferred (needs a
+      // server cancel path, like bullets' sendParry). Damaging beams (a local
+      // bot's telegraphed super) reflect fully: reversed + re-owned, they fly back.
+      if (!b.damaging) continue;
+      if (b.reflected || b.ownerId === newOwnerId) continue; // own / already reflected
+      if (Math.abs(b.pos.y - bladeY) > vTol) continue; // vertical gate
+
+      const bx = b.pos.x;
+      const bz = b.pos.z;
+      // Inbound: the beam must be heading toward the player.
+      let tx = playerPos.x - bx;
+      let tz = playerPos.z - bz;
+      const tl = Math.hypot(tx, tz) || 1;
+      tx /= tl;
+      tz /= tl;
+      if (b.dir.x * tx + b.dir.z * tz < inboundDot) continue;
+
+      // Distance from the beam head to the blade segment (XZ).
+      let u = ((bx - sx) * segX + (bz - sz) * segZ) / segLen2;
+      u = Math.max(0, Math.min(1, u));
+      if (Math.hypot(bx - (sx + u * segX), bz - (sz + u * segZ)) > capsule) continue;
+
+      // ── Reflect ──
+      b.dir.x = -b.dir.x;
+      b.dir.z = -b.dir.z;
+      b.ownerSide = newOwnerSide;
+      b.ownerId = newOwnerId;
+      b.damaging = true; // now lands on the return path via the normal onHit
+      b.traveled = 0;
+      b.reflected = true;
+      out.push({ x: bx, y: b.pos.y, z: bz });
+    }
+    return out;
   }
 
   update(dt: number) {
@@ -282,6 +352,12 @@ export class Kamehameha {
           if (tgt.id === b.ownerId) continue; // never hit the caster
           // Local bots can't mega networked remotes (server-authoritative).
           if (b.ownerSide === "bot" && tgt.remote) continue;
+          // A JUMPED-over target dodges a bot super — its feet clear the beam's
+          // flight height (matches the server bot-super's "airborne = dodge" rule,
+          // so jumping is real counterplay). Player-cast beams keep the XZ test.
+          if (b.ownerSide === "bot" && tgt.position.y - tgt.bodyHalfHeight > b.pos.y + 0.2) {
+            continue;
+          }
           const dx = tgt.position.x - b.pos.x;
           const dz = tgt.position.z - b.pos.z;
           if (dx * dx + dz * dz <= BEAM_HIT_RADIUS * BEAM_HIT_RADIUS) {

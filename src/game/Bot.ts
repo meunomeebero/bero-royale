@@ -37,8 +37,15 @@ const BOT_KAME_CHARGE = 1.0; // telegraph wind-up (charge VFX) before the beam f
 const BOT_KAME_COOLDOWN_MIN = 8.0; // seconds between mega beams
 const BOT_KAME_COOLDOWN_RANGE = 6.0; // + up to this, randomized
 const BOT_KAME_RANGE = 9.0; // only wind up a mega when within beam reach (~2×hearing)
+const BOT_KAME_ABORT_RANGE = 11.0; // mid-charge: abort if the target slips past this
+const BOT_KAME_REARM = 2.5; // short re-arm after an aborted (wasted) charge
 const BOT_KAME_INTERRUPT_PENALTY = 1.0; // saber-interrupted charge can't re-wind for this long
 const MELEE_STAGGER_FREE = 0.5; // guaranteed un-staggerable window after each stagger
+// Saber knockback "pulinho": a decaying horizontal impulse (independent of the AI
+// velocity so it isn't damped by the stun-freeze) + a small vertical hop back.
+const KB_DECAY = 9.0; // exponential decay of the knockback impulse (per second)
+const KB_DURATION = 0.32; // seconds the impulse is tracked
+const KB_HOP = 3.4; // upward pop on a saber hit (a little hop, < JUMP_VELOCITY 6)
 
 type State = "alive" | "falling" | "dead";
 
@@ -98,6 +105,13 @@ export class Bot implements BulletTarget {
   private stunTimer = 0;
   private constantFireLockTimer = 0;
   private staggerFreeT = 0;
+  // Decaying saber-knockback impulse (separate from AI velocity → survives the
+  // stun-freeze so the "pulinho para trás" is actually visible).
+  private kbVx = 0;
+  private kbVz = 0;
+  private kbT = 0;
+  // While >0 the body pulses WHITE (impact / "atordoado" feedback).
+  private flashT = 0;
 
   private aimYaw = 0;
   private shootTimer = 0;
@@ -268,11 +282,20 @@ export class Bot implements BulletTarget {
     return true;
   }
 
-  /** External knockback impulse (e.g. a saber push) added to velocity. */
+  /**
+   * Saber push: a decaying horizontal impulse + a small upward HOP ("pulinho para
+   * trás"). The impulse rides its own channel (integrated in update, NOT the AI
+   * velocity), so the stun-freeze can't damp it — the knockback stays visible.
+   */
   knockback(dir: THREE.Vector3, force: number): void {
     if (this.state !== "alive") return;
-    this.velocity.x += dir.x * force;
-    this.velocity.z += dir.z * force;
+    this.kbVx = dir.x * force;
+    this.kbVz = dir.z * force;
+    this.kbT = KB_DURATION;
+    if (this.grounded) {
+      this.velocity.y = KB_HOP; // hop back
+      this.grounded = false;
+    }
   }
 
   /**
@@ -294,6 +317,9 @@ export class Bot implements BulletTarget {
     if (this.staggerFreeT > 0) return; // still inside the previous stagger's gate
     this.stunTimer = stunSeconds;
     this.constantFireLockTimer = constantFireLockSeconds;
+    // Pulse WHITE for the whole "atordoado" window (the no-shoot duration), so the
+    // hit reads as a stun, not just a one-frame flash.
+    this.flashT = constantFireLockSeconds;
     // Block an instant shot the moment the lock expires.
     this.shootTimer = Math.max(this.shootTimer, constantFireLockSeconds);
     if (interruptCharge && this.kameCharging) {
@@ -357,13 +383,20 @@ export class Bot implements BulletTarget {
     this.stunTimer = 0;
     this.constantFireLockTimer = 0;
     this.staggerFreeT = 0;
+    this.kbVx = 0;
+    this.kbVz = 0;
+    this.kbT = 0;
+    this.flashT = 0;
     this.lastHitBy = null;
     this.position.copy(this.root.position);
   }
 
   private updateColor() {
     const t = 1 - this.health / MAX_HEALTH;
-    this.avatar.applyTint(t, this.hitFlashTimer > 0);
+    // White on a fresh hit, then a ~10Hz pulse for the rest of the stagger window
+    // ("continua a piscar em branco enquanto estiver atordoado").
+    const stunPulse = this.flashT > 0 && Math.floor(this.flashT * 10) % 2 === 0;
+    this.avatar.applyTint(t, this.hitFlashTimer > 0 || stunPulse);
   }
 
   /**
@@ -415,6 +448,7 @@ export class Bot implements BulletTarget {
       this.constantFireLockTimer = Math.max(0, this.constantFireLockTimer - dt);
     }
     if (this.staggerFreeT > 0) this.staggerFreeT = Math.max(0, this.staggerFreeT - dt);
+    if (this.flashT > 0) this.flashT = Math.max(0, this.flashT - dt);
 
     // --- AI ---
     const move = this.tmpMove.set(0, 0, 0);
@@ -465,6 +499,9 @@ export class Bot implements BulletTarget {
           target.position.z - this.root.position.z,
         ) <= sight;
 
+      // Target left sight mid-charge → abort (else the charge + its VFX freeze).
+      if (this.kameCharging && !seesTarget) this.abortKameCharge();
+
       if (seesTarget && target !== null) {
         const dx = target.position.x - this.root.position.x;
         const dz = target.position.z - this.root.position.z;
@@ -474,14 +511,20 @@ export class Bot implements BulletTarget {
         this.aimYaw = Math.atan2(dz, dx);
         this.aimGroup.rotation.y = -this.aimYaw;
 
-        if (this.aggressive && this.kameCharging) {
+        if (this.kameCharging) {
           // Winding up the mega beam: stand still (telegraph) until it fires.
-          this.kameChargeT += dt;
-          if (this.kameChargeT >= BOT_KAME_CHARGE) {
-            this.fireMega();
-            this.kameCharging = false;
-            this.megaTimer =
-              BOT_KAME_COOLDOWN_MIN + Math.random() * BOT_KAME_COOLDOWN_RANGE;
+          // ABORT if the target dashed out of beam reach mid-charge (don't fire a
+          // wasted beam at someone who escaped); a short re-arm avoids instant retry.
+          if (distToTarget > BOT_KAME_ABORT_RANGE) {
+            this.abortKameCharge();
+          } else {
+            this.kameChargeT += dt;
+            if (this.kameChargeT >= BOT_KAME_CHARGE) {
+              this.fireMega();
+              this.kameCharging = false;
+              this.megaTimer =
+                BOT_KAME_COOLDOWN_MIN + Math.random() * BOT_KAME_COOLDOWN_RANGE;
+            }
           }
           // move stays (0,0,0) — frozen while charging.
         } else {
@@ -513,9 +556,11 @@ export class Bot implements BulletTarget {
               JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
           }
 
-          // Aggressive bots periodically wind up a mega beam when they have a
-          // clear shot in range (the beam only travels ~BOT_KAME_RANGE).
-          if (this.aggressive && this.onKame) {
+          // Bots periodically wind up a TELEGRAPHED mega beam (BOT_KAME_CHARGE
+          // wind-up) when they have a clear shot in range — dodgeable AND now
+          // saber-parryable. Any bot with an onKame handler may do this (local
+          // bots included), so the super-parry has something to deflect offline.
+          if (this.onKame) {
             this.megaTimer -= dt;
             if (this.megaTimer <= 0 && distToTarget <= BOT_KAME_RANGE) {
               this.kameCharging = true;
@@ -557,6 +602,21 @@ export class Bot implements BulletTarget {
 
     // Apply
     this.root.position.addScaledVector(this.velocity, dt);
+
+    // Saber knockback impulse: integrated on its own decaying channel so the
+    // stun-freeze (which zeroes the AI velocity) can't damp the push.
+    if (this.kbT > 0) {
+      this.kbT -= dt;
+      this.root.position.x += this.kbVx * dt;
+      this.root.position.z += this.kbVz * dt;
+      const k = Math.exp(-KB_DECAY * dt);
+      this.kbVx *= k;
+      this.kbVz *= k;
+      if (this.kbT <= 0) {
+        this.kbVx = 0;
+        this.kbVz = 0;
+      }
+    }
 
     // Ground collision / edge
     const groundSurfY = this.platform.surfaceY(
@@ -685,6 +745,15 @@ export class Bot implements BulletTarget {
     this.onKame?.(muzzle.clone(), dir);
     // Recoil pop on release.
     this.targetScale.set(1.3, 0.82, 1.3);
+  }
+
+  /** Cancel a mega wind-up cleanly (target escaped / left sight): no beam, short
+   *  re-arm so a wasted telegraph isn't punished forever. Clearing kameCharging
+   *  also drops the charge VFX (Game reads getKameCharge() each frame). */
+  private abortKameCharge() {
+    this.kameCharging = false;
+    this.kameChargeT = 0;
+    this.megaTimer = Math.max(this.megaTimer, BOT_KAME_REARM);
   }
 
   setSmoke(smoke: SmokePuffs) {

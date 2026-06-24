@@ -56,8 +56,9 @@ const SLOT_MODES: FireMode[] = ["constant", "concentrated", "staff"];
  */
 export interface MeleeSample {
   swingId: number;
-  /** "windup" | "strike" | "recovery" — only "strike" deals damage. */
-  phase: "windup" | "strike" | "recovery";
+  /** "windup" | "strike" — only "strike" deals damage (the return to rest is the
+   *  post-swing settle, not a sampled phase). */
+  phase: "windup" | "strike";
   /** True while inside the reflection (parry) sub-window. */
   parry: boolean;
   /** Frame delta — Game suppresses collision/parry on huge steps (tab resume). */
@@ -79,16 +80,19 @@ const MELEE_SWING_DUR = 0.4; // full swing: wind-up + 180° strike + recovery
 // the side, ~90° to forward). Wind-up pulls 45° counter-clockwise, then the
 // strike sweeps 180° clockwise; the remainder eases back to rest.
 const SABER_REST_YAW = -Math.PI / 2; // perpendicular rest pose
-const SABER_WINDUP_YAW = SABER_REST_YAW - Math.PI / 4; // +45° CCW wind-up peak
-const SABER_STRIKE_YAW = SABER_WINDUP_YAW + Math.PI; // 180° CW strike end
-const SWING_WINDUP_END_T = 0.25; // wind-up occupies the first 25% of the swing
-const SWING_STRIKE_END_T = 0.78; // strike (hit window) runs 25%→78%; rest = recovery
-// Parry window (fraction of the swing) — when the blade can reflect bullets.
+const SABER_WINDUP_YAW = SABER_REST_YAW - Math.PI / 4; // 45° CCW wind-up peak
+const SABER_STRIKE_YAW = SABER_WINDUP_YAW + Math.PI; // full 180° CW strike, ends at the follow-through
+const SWING_WINDUP_END_T = 0.18; // short wind-up; the strike owns the rest of the swing
+// (No in-swing "recovery": the strike runs all the way to t=1 and HOLDS at the
+//  follow-through; the gentle settle in update() eases the blade back to rest after
+//  the swing — otherwise the blade snapped back mid-swing and the 180° looked cut.)
+// Parry window (fraction of the swing) — when the blade can reflect projectiles.
 const SWING_PARRY_START_T = 0.2;
-const SWING_PARRY_END_T = 0.6;
+const SWING_PARRY_END_T = 0.75;
 // Saber stagger taken BY the local player from a remote saber hit.
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
+const SABER_HOP = 3.4; // small upward "pulinho" on a saber hit (< JUMP_VELOCITY 6)
 // Floating-saber mount: rest distance in front of the body, and the clearance
 // radius the swept blade must keep from the body center (body half-width 0.25 +
 // margin for the voxel avatar overhang). During the backward wind-up the mount
@@ -112,16 +116,12 @@ function easeInOutCubic(x: number): number {
 function sampleSaberYaw(t: number): number {
   if (t < SWING_WINDUP_END_T) {
     const u = easeOutCubic(t / SWING_WINDUP_END_T);
-    return SABER_REST_YAW + (SABER_WINDUP_YAW - SABER_REST_YAW) * u;
+    return SABER_REST_YAW + (SABER_WINDUP_YAW - SABER_REST_YAW) * u; // rest → wind-up
   }
-  if (t < SWING_STRIKE_END_T) {
-    const u = easeInOutCubic(
-      (t - SWING_WINDUP_END_T) / (SWING_STRIKE_END_T - SWING_WINDUP_END_T),
-    );
-    return SABER_WINDUP_YAW + (SABER_STRIKE_YAW - SABER_WINDUP_YAW) * u;
-  }
-  const u = easeInOutCubic((t - SWING_STRIKE_END_T) / (1 - SWING_STRIKE_END_T));
-  return SABER_STRIKE_YAW + (SABER_REST_YAW - SABER_STRIKE_YAW) * u;
+  // Strike: the full 180° sweep over the rest of the swing, ending HELD at the
+  // follow-through. The return to rest is the gentle settle in update(), not here.
+  const u = easeInOutCubic((t - SWING_WINDUP_END_T) / (1 - SWING_WINDUP_END_T));
+  return SABER_WINDUP_YAW + (SABER_STRIKE_YAW - SABER_WINDUP_YAW) * u;
 }
 const KAME_CHARGE = 3.0; // seconds to hold before the concentrated shot is ready (recharge cadence)
 const BOSS_HP_MULT = 3; // boss has triple HP
@@ -186,6 +186,7 @@ export class Player implements BulletTarget {
   // Saber stagger taken by the local player (from a remote saber hit).
   private stunTimer = 0;
   private fireLockTimer = 0;
+  private staggerFlashT = 0; // >0 → body pulses white (saber-hit "atordoado" feedback)
   // Scratch reused each swing sample (no per-frame allocation).
   private swingBladeStart = new THREE.Vector3();
   private swingBladeEnd = new THREE.Vector3();
@@ -470,6 +471,13 @@ export class Player implements BulletTarget {
     if (this.state !== "alive") return;
     this.stunTimer = Math.max(this.stunTimer, stunSeconds);
     this.fireLockTimer = Math.max(this.fireLockTimer, fireLockSeconds);
+    // Pulse white for the whole no-shoot window + a small backward hop so a saber
+    // hit reads as a stagger (the horizontal push rides applyKnockback's dashVel).
+    this.staggerFlashT = Math.max(this.staggerFlashT, fireLockSeconds);
+    if (this.grounded) {
+      this.velocity.y = SABER_HOP;
+      this.grounded = false;
+    }
     if (interruptCharge) this.cancelKameCharge();
   }
 
@@ -750,6 +758,7 @@ export class Player implements BulletTarget {
     this.swingElapsed = 0;
     this.stunTimer = 0;
     this.fireLockTimer = 0;
+    this.staggerFlashT = 0;
     this.staffPivot.rotation.y = SABER_REST_YAW;
     this.staff.position.x = BASE_SABER_MOUNT;
     // Power-up boosts + shield are lost on death (you respawn fresh — BR style).
@@ -795,7 +804,9 @@ export class Player implements BulletTarget {
   /** Tint the animal toward red as health drops, white flash on hit. */
   private updateColor() {
     const t = 1 - this.health / this.getMaxHealth(); // 0 healthy → 1 dead
-    this.avatar.applyTint(t, this.hitFlashTimer > 0);
+    // White on a fresh hit, then a ~10Hz pulse for the rest of the stagger window.
+    const stunPulse = this.staggerFlashT > 0 && Math.floor(this.staggerFlashT * 10) % 2 === 0;
+    this.avatar.applyTint(t, this.hitFlashTimer > 0 || stunPulse);
   }
 
   update(dt: number, camera: THREE.Camera) {
@@ -844,6 +855,7 @@ export class Player implements BulletTarget {
     // still carries the push. The constant-fire lock outlives the stun.
     if (this.stunTimer > 0) this.stunTimer = Math.max(0, this.stunTimer - dt);
     if (this.fireLockTimer > 0) this.fireLockTimer = Math.max(0, this.fireLockTimer - dt);
+    if (this.staggerFlashT > 0) this.staggerFlashT = Math.max(0, this.staggerFlashT - dt);
     const stunned = this.stunTimer > 0;
 
     // Movement. The "speed" power-up multiplies the top speed ×1.6 while active.
@@ -1093,8 +1105,9 @@ export class Player implements BulletTarget {
       this.staff.position.x = mountX;
       this.staff.updateWorldMatrix(true, true); // fresh blade transform for the sample
 
-      const phase: MeleeSample["phase"] =
-        t < SWING_WINDUP_END_T ? "windup" : t < SWING_STRIKE_END_T ? "strike" : "recovery";
+      // No "recovery" phase any more — the strike sweeps the full arc, so hits
+      // register across the whole 180° (the gentle return is the post-swing settle).
+      const phase: MeleeSample["phase"] = t < SWING_WINDUP_END_T ? "windup" : "strike";
 
       // Emit the per-frame sample so Game resolves arc hits + bullet parry against
       // the LIVE blade segment (pivot → tip in world space).

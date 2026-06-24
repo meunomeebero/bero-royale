@@ -10,6 +10,7 @@ import { Decor } from "./Decor";
 import { Butterflies } from "./Butterflies";
 import { Gore } from "./Gore";
 import { Kamehameha } from "./Kamehameha";
+import { SaberTrail } from "./SaberTrail";
 import { PowerUps, POWERUP_KINDS } from "./PowerUps";
 import { Crates } from "./Crates";
 import { Multiplayer } from "./net/Multiplayer";
@@ -80,6 +81,12 @@ const REFLECT_CAPSULE = 0.45; // bullet-to-blade distance to count as a parry
 const REFLECT_INBOUND = 0.35; // bullet must be travelling toward the player (dot)
 const REFLECT_VTOL = 0.7; // vertical tolerance: bullet must be near the blade's height
 const REFLECT_MAX_PER_SWING = 2; // cap reflects so one swing can't delete a stream
+// Super-beam parry (the concentrated "mega tiro") — beams are big + fast, so a
+// looser capsule + vertical tolerance than bullets; the beam's own reflected flag
+// caps each beam at one reflect.
+const REFLECT_BEAM_CAPSULE = 1.3;
+const REFLECT_BEAM_VTOL = 1.6;
+const REFLECT_BEAM_MAX_PER_SWING = 2; // a swing can deflect at most this many super beams
 const PARRY_CANCEL_RADIUS = 1.2; // shooter cancels its own bullet within this of the parrier
 const STAGGER_FREE_WINDOW_MS = 500; // guaranteed un-staggerable window AFTER each honored stagger
 
@@ -181,6 +188,7 @@ export class Game {
     }
   })();
   private kame!: Kamehameha;
+  private saberTrail!: SaberTrail;
   /** Floating server-authoritative power-up pickups (multiplayer only). */
   private powerups: PowerUps;
   /** Destructible supply crates (multiplayer only). */
@@ -192,6 +200,7 @@ export class Game {
   private meleeSwingId = -1;
   private meleeHitIds = new Set<string>();
   private meleeReflects = 0;
+  private meleeBeamReflects = 0; // per-swing cap on super-beam parries (separate from bullets)
   /** Previous frame's blade segment (world) for swept collision (anti-tunnel). */
   private meleePrevStart = new THREE.Vector3();
   private meleePrevEnd = new THREE.Vector3();
@@ -345,6 +354,8 @@ export class Game {
     this.scene.add(this.grassPoof.group);
     this.scene.add(this.gore.group);
     this.scene.add(this.kame.group);
+    this.saberTrail = new SaberTrail();
+    this.scene.add(this.saberTrail.mesh);
     this.scene.add(this.powerups.group);
     this.scene.add(this.crates.group);
 
@@ -603,7 +614,9 @@ export class Game {
       const oz = rp ? rp.root.position.z : e.origin.z;
       const origin = new THREE.Vector3(ox, e.origin.y, oz);
       const dir = new THREE.Vector3(e.dir.x, e.dir.y, e.dir.z);
-      this.kame.fire(origin, dir, false, "player");
+      // Tag the visual beam with its caster id so a saber parry can reflect it
+      // back (and never re-target the caster as if it were the parrier's own).
+      this.kame.fire(origin, dir, false, "player", true, e.id);
       this.audio.playShot(origin, false);
     });
     // We got hit by someone's kamehameha. Damage + death are now SERVER-authoritative
@@ -833,9 +846,12 @@ export class Game {
       this.meleeSwingId = s.swingId;
       this.meleeHitIds.clear();
       this.meleeReflects = 0;
+      this.meleeBeamReflects = 0;
       // First frame of the swing → no previous pose to sweep from; seed it.
       this.meleePrevStart.copy(s.bladeStart);
       this.meleePrevEnd.copy(s.bladeEnd);
+      // Fresh trail per swing — otherwise the new arc welds to the old one's ribs.
+      this.saberTrail.clear();
     }
     if (s.dt > MELEE_DT_CLAMP) {
       this.meleePrevStart.copy(s.bladeStart); // keep prev fresh; skip hits this frame
@@ -843,10 +859,11 @@ export class Game {
       return; // tab-resume: animate only, no hits/parry
     }
 
-    // ── Parry: reflect inbound bullets crossing the SWEPT blade (parry window) ──
-    // Sub-step prev→current blade poses (like the strike) so a fast swing can't
-    // tunnel the thin parry capsule past a bullet it visibly swept through.
-    if (s.parry && this.meleeReflects < REFLECT_MAX_PER_SWING) {
+    // ── Parry (parry sub-window): reflect inbound bullets AND super beams. ──
+    if (s.parry) {
+      // Bullets — capped by the bullet quota. Sub-step prev→current blade poses
+      // (like the strike) so a fast swing can't tunnel the thin parry capsule.
+      if (this.meleeReflects < REFLECT_MAX_PER_SWING) {
       const ps = this.meleePrevStart;
       const pe = this.meleePrevEnd;
       const pTip = Math.hypot(s.bladeEnd.x - pe.x, s.bladeEnd.z - pe.z);
@@ -896,6 +913,33 @@ export class Game {
           this.smoke.spawnPuff(at, s.aimDir, 4, "#bfefff");
         }
       }
+      } // end bullet quota
+
+      // ── Parry the concentrated super ("mega tiro"): reflect any incoming beam
+      // crossing the blade back at its caster. Gated on its OWN per-swing cap (NOT
+      // the bullet quota above — else a couple reflected bullets would let a later
+      // mega beam pass through). The reflected (damaging) beam lands via the normal
+      // beam→onHit path.
+      if (this.meleeBeamReflects < REFLECT_BEAM_MAX_PER_SWING) {
+        const beamHits = this.kame.reflectInArc(
+          s.bladeStart,
+          s.bladeEnd,
+          s.origin,
+          REFLECT_BEAM_CAPSULE,
+          REFLECT_INBOUND,
+          REFLECT_BEAM_VTOL,
+          "player",
+          "player",
+          REFLECT_BEAM_MAX_PER_SWING - this.meleeBeamReflects,
+        );
+        this.meleeBeamReflects += beamHits.length;
+        for (const r of beamHits) {
+          const at = new THREE.Vector3(r.x, r.y, r.z);
+          this.smoke.spawnFlash(at, s.aimDir);
+          this.smoke.spawnPuff(at, s.aimDir, 8, "#bfefff");
+          this.audio.playPowerUp(at, false); // satisfying deflect cue
+        }
+      }
     }
 
     // ── Strike: damage every target the blade SWEEPS through, once per swing ──
@@ -904,6 +948,8 @@ export class Game {
       this.meleePrevEnd.copy(s.bladeEnd);
       return;
     }
+    // Feed the blue light-trail with the live blade segment across the sweep.
+    this.saberTrail.push(s.bladeStart, s.bladeEnd);
     // Anti-tunnel: the blade can advance tens of degrees between frames, so test
     // the target against several interpolated poses between the previous and the
     // current blade segment (sub-steps ≤ SWEEP_RADIUS apart at the tip). A hit on
@@ -1157,6 +1203,11 @@ export class Game {
       this.bullets,
     );
     bot.setSmoke(this.smoke);
+    // Local bots can fire the telegraphed super (a DAMAGING beam, non-lethal:
+    // BOSS_SHOT_DAMAGE shield-first) — dodgeable and saber-parryable.
+    bot.setOnKame((origin, dir) =>
+      this.kame.fire(origin, dir, true, "bot", false, bot.id),
+    );
     this.bots.push(bot);
     this.scene.add(bot.root);
     this.bullets.registerTarget(bot);
@@ -2020,6 +2071,13 @@ export class Game {
         this.player.update(dt, this.camera);
         // Local survival bots hunt the player (online bots are server-driven).
         for (const bot of this.bots) bot.update(dt, this.player);
+        // Drive each local bot's super-charge telegraph (the inward orb stream)
+        // so the player can SEE the wind-up and dodge or saber-parry it.
+        for (const bot of this.bots) {
+          const bc = bot.getKameCharge();
+          if (bc) this.kame.setCharge(bot.id, bc.anchor, bc.t, dt);
+          else this.kame.clearCharge(bot.id);
+        }
         this.dust.update(dt);
         this.bullets.update(dt);
         this.smoke.update(dt);
@@ -2035,6 +2093,7 @@ export class Game {
         if (charge) this.kame.setCharge("self", charge.anchor, charge.t, dt);
         else this.kame.clearCharge("self");
         this.kame.update(dt);
+        this.saberTrail.update(dt); // age + fade the blade light-trail
         // Bob/spin the floating power-up pickups (multiplayer only; the group is
         // empty in local/ambient so this is a cheap no-op there).
         this.powerups.update(dt);
@@ -2238,6 +2297,7 @@ export class Game {
     this.butterflies?.dispose();
     this.gore.dispose();
     this.kame?.dispose();
+    this.saberTrail?.dispose();
     this.powerups.dispose();
     this.crates.dispose();
     this.player?.dispose();
