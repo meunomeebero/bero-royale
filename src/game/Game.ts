@@ -1012,6 +1012,13 @@ export class Game {
       if (!push) continue;
       this.meleeHitIds.add(rp.id);
       this.meleeImpactFx(p, push);
+      // INSTANT client juice on the target WE hit: white flash + backward hop +
+      // impact dust (the server resolves the actual stun/damage; the "hit"/
+      // "meleehit" echoes are NOT sent back to us, so without this the attacker
+      // sees no reaction on a server bot / remote player).
+      rp.applyMeleeStagger(push.x, push.z);
+      const gy = this.platform.surfaceY(p.x, p.z);
+      this.dust.spawnBurst(new THREE.Vector3(p.x, gy + 0.05, p.z), 8);
       for (let i = 0; i < MELEE_DAMAGE; i++) this.mp?.sendHit(rp.id);
       this.mp?.sendMeleeHit(
         rp.id,

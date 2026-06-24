@@ -22,6 +22,13 @@ import {
 
 const HALF_HEIGHT = 0.25;
 
+// ── Saber stagger juice (when WE hit this remote with the saber) ──────────────
+const STAGGER_FLASH_DUR = 1.0; // seconds the body pulses white ("atordoado")
+const STAGGER_RECOIL = 0.55; // initial backward visual offset (eases back to 0)
+const STAGGER_RECOIL_DECAY = 6.0; // how fast the backward offset eases out
+const STAGGER_HOP = 4.0; // upward "pulinho" speed of the recoil arc
+const STAGGER_GRAVITY = 18.0; // gravity on the hop arc (matches the player feel)
+
 /** Off-edge fall tumble duration (mirrors Player FALL_DURATION feel). */
 const FALL_DURATION = 0.7;
 /** How long a positional error correction blends out (~100ms, no snapping). */
@@ -108,6 +115,13 @@ export class RemotePlayer implements BulletTarget {
   private hitShakeTimer = 0;
   private hitShakeAmount = 0.06;
 
+  // ── Saber stagger: sustained white pulse + a backward hop (visual only — a
+  // transient offset on top of the interpolated position; decays to 0). ───────
+  private stunFlashT = 0;
+  private recoil = new THREE.Vector3(); // decaying world-space offset (.y = hop arc)
+  private recoilVy = 0; // hop vertical velocity
+  private hopActive = false;
+
   // ── One-shot flags consumed by Game each frame for particle spawns ────────
   private _justDashed = false;
   private _justJumped = false;
@@ -187,6 +201,24 @@ export class RemotePlayer implements BulletTarget {
     this.hitShakeTimer = 0.25;
     this.hitShakeAmount = 0.06;
     this.targetScale.set(1.35, 0.7, 1.35);
+  }
+
+  /**
+   * Saber stagger reaction (when the LOCAL player's saber hits this remote — the
+   * server resolves the actual stun/damage; this is the instant CLIENT juice the
+   * attacker sees): a sustained WHITE pulse for the stun window + a backward
+   * "pulinho" (hop arc + decaying recoil offset). The hop landing flips _justLanded
+   * so Game spawns the landing dust ("fumaça na queda"). `dirX/dirZ` is the unit
+   * push direction (away from the attacker).
+   */
+  applyMeleeStagger(dirX: number, dirZ: number) {
+    if (!this.alive) return;
+    this.stunFlashT = STAGGER_FLASH_DUR;
+    this.hitFlashTimer = 0.18; // immediate white pop too
+    this.recoil.set(dirX * STAGGER_RECOIL, 0, dirZ * STAGGER_RECOIL);
+    this.recoilVy = STAGGER_HOP;
+    this.hopActive = true;
+    this.targetScale.set(1.4, 0.6, 1.4); // squash on impact
   }
 
   /** Feed the latest networked state into the snapshot buffer. */
@@ -369,6 +401,26 @@ export class RemotePlayer implements BulletTarget {
       this.posError.set(0, 0, 0);
     }
 
+    // ── 2b. Saber stagger recoil: a transient backward HOP offset on top of the
+    // interpolated position (decays to 0, so the remote returns to its server
+    // pos — never fights the authoritative transform). The hop landing flips
+    // _justLanded so Game spawns the landing dust.
+    if (this.hopActive || this.recoil.lengthSq() > 1e-6) {
+      if (this.hopActive) {
+        this.recoil.y += this.recoilVy * dt;
+        this.recoilVy -= STAGGER_GRAVITY * dt;
+        if (this.recoil.y <= 0) {
+          this.recoil.y = 0;
+          this.recoilVy = 0;
+          this.hopActive = false;
+          this._justLanded = true; // landing dust via the existing path
+        }
+      }
+      this.recoil.x *= Math.exp(-STAGGER_RECOIL_DECAY * dt);
+      this.recoil.z *= Math.exp(-STAGGER_RECOIL_DECAY * dt);
+      this.root.position.add(this.recoil);
+    }
+
     // ── 3. Shortest-arc yaw lerp ─────────────────────────────────────────────
     let dyaw = this.targetYaw - this.renderYaw;
     dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw)); // wrap to [-PI, PI]
@@ -376,7 +428,11 @@ export class RemotePlayer implements BulletTarget {
 
     // ── 4. Hit flash timer + health tint + opacity + shadow ──────────────────
     if (this.hitFlashTimer > 0) this.hitFlashTimer -= dt;
-    const hitFlash = this.hitFlashTimer > 0;
+    if (this.stunFlashT > 0) this.stunFlashT -= dt;
+    // White on a fresh hit, then a ~10Hz pulse for the rest of the saber-stun
+    // window ("piscando branco enquanto estiver atordoado").
+    const stunPulse = this.stunFlashT > 0 && Math.floor(this.stunFlashT * 10) % 2 === 0;
+    const hitFlash = this.hitFlashTimer > 0 || stunPulse;
     this.avatar.applyTint(
       Math.min(1, Math.max(0, 1 - this.targetHealth / 10)),
       hitFlash,
