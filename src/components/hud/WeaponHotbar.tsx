@@ -6,7 +6,7 @@ import { GamePanel, HUD, INK, IconWell } from "./primitives";
 
 /**
  * Minecraft-style weapon hotbar (bottom-center) — 3 slots replacing the old
- * fire-mode toggle: 1 = constant shot, 2 = concentrated super, 3 = melee staff.
+ * fire-mode toggle: 1 = constant shot, 2 = concentrated super, 3 = melee saber.
  * The active slot lifts + lights its accent ring. Desktop shows the 1/2/3 key
  * hint; both desktop (click) and mobile (tap) select a slot. A charge bar fills
  * under slot 2 while the super winds up. Boss override (slot = -1) lights none.
@@ -17,7 +17,7 @@ import { GamePanel, HUD, INK, IconWell } from "./primitives";
 const SLOTS: { icon: LucideIcon; accent: string; label: string }[] = [
   { icon: Crosshair, accent: HUD.rose, label: "Tiro constante" },
   { icon: Zap, accent: HUD.terracotta, label: "Tiro concentrado" },
-  { icon: Sword, accent: HUD.honey, label: "Bastão" },
+  { icon: Sword, accent: HUD.honey, label: "Sabre de luz" },
 ];
 
 const WeaponHotbarImpl = ({

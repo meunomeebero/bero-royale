@@ -98,6 +98,7 @@ const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
 const MELEE_STUN_T = 0.25; // brief full-action freeze (no steering/fire/super)
 const MELEE_FIRE_LOCK_T = 1.0; // constant-fire lockout (no shots) after the stun
 const MELEE_SUPER_REARM = 1.0; // an interrupted super can't re-wind for this long
+const MELEE_STAGGER_FREE_MS = 500; // guaranteed un-staggerable window after each stagger
 
 // ── Engager cap (anti-dogpile, owner-locked) ─────────────────────────────────
 // In a lopsided fight (1 human vs N bots) every bot would otherwise lock onto the
@@ -232,6 +233,7 @@ interface ServerBot {
   // ── Saber stagger (player melee) ──
   stunT: number; // >0 = full-action freeze (no steer/fire/super), decays each tick
   fireLockT: number; // >0 = constant-fire lockout (no shots), outlives the stun
+  staggerOkAt: number; // epoch ms; the next stagger is only honored at/after this (anti-spam)
 }
 
 interface Target {
@@ -331,12 +333,19 @@ export class BotSim {
     if (room !== GAME_ROOM) return false;
     const b = this.bots.get(targetId);
     if (!b || !b.alive) return false;
-    b.stunT = Math.max(b.stunT, MELEE_STUN_T);
-    b.fireLockT = Math.max(b.fireLockT, MELEE_FIRE_LOCK_T);
+    // Rate-limit: only honor the next stagger once the previous effect has fully
+    // expired + a free window. Without this a client spamming "meleehit" for a bot
+    // could refresh these timers every packet and freeze it forever.
+    const now = Date.now();
+    if (now < b.staggerOkAt) return false;
+    b.stunT = MELEE_STUN_T;
+    b.fireLockT = MELEE_FIRE_LOCK_T;
     if (b.kameCharging) {
       this.abortSuper(b);
       b.superCd = Math.max(b.superCd, MELEE_SUPER_REARM);
     }
+    b.staggerOkAt =
+      now + Math.max(MELEE_STUN_T, MELEE_FIRE_LOCK_T) * 1000 + MELEE_STAGGER_FREE_MS;
     return true;
   }
 
@@ -440,6 +449,7 @@ export class BotSim {
       speedT: 0,
       stunT: 0,
       fireLockT: 0,
+      staggerOkAt: 0,
     });
   }
 
@@ -477,6 +487,7 @@ export class BotSim {
     b.speedT = 0;
     b.stunT = 0;
     b.fireLockT = 0;
+    b.staggerOkAt = 0;
   }
 
   /** A spawn point far from every other combatant (players + other bots). */
@@ -852,12 +863,12 @@ export class BotSim {
 
         // Close a big gap to the item with a dash (reuse the safe-dash helper).
         b.dashCd -= dt;
-        if (b.dashCd <= 0 && b.grounded && dist > DASH_GAP_DIST && rand() < DASH_DODGE_CHANCE) {
+        if (b.dashCd <= 0 && b.grounded && b.stunT <= 0 && dist > DASH_GAP_DIST && rand() < DASH_DODGE_CHANCE) {
           this.dashSafely(room, b, ux, uz);
         }
         // Idle hop so a travelling bot doesn't look frozen.
         b.jumpCd -= dt;
-        if (b.jumpCd <= 0 && b.grounded && rand() < JUMP_IDLE_CHANCE) {
+        if (b.jumpCd <= 0 && b.grounded && b.stunT <= 0 && rand() < JUMP_IDLE_CHANCE) {
           this.startJump(room, b);
         }
       } else if (tgt) {
@@ -920,9 +931,9 @@ export class BotSim {
           this.fire(room, b, tgt);
         }
 
-        // ── DASH decisions ──
+        // ── DASH decisions ── (suppressed while saber-stunned)
         b.dashCd -= dt;
-        if (b.dashCd <= 0 && b.grounded) {
+        if (b.dashCd <= 0 && b.grounded && b.stunT <= 0) {
           if (b.health <= DASH_RETREAT_HP && rand() < DASH_DODGE_CHANCE) {
             // Low HP: lunge AWAY from the target to break the engagement.
             this.dashSafely(room, b, -ux, -uz);
@@ -935,9 +946,9 @@ export class BotSim {
           }
         }
 
-        // ── JUMP decisions ──
+        // ── JUMP decisions ── (suppressed while saber-stunned)
         b.jumpCd -= dt;
-        if (b.jumpCd <= 0 && b.grounded) {
+        if (b.jumpCd <= 0 && b.grounded && b.stunT <= 0) {
           const urgent = b.threat > 0 || b.health <= DASH_RETREAT_HP;
           if (urgent && rand() < JUMP_DODGE_CHANCE) {
             this.startJump(room, b); // bob to throw off the shooter's aim
@@ -992,7 +1003,7 @@ export class BotSim {
 
         // The odd idle hop keeps wandering bots from looking frozen.
         b.jumpCd -= dt;
-        if (b.jumpCd <= 0 && b.grounded && rand() < JUMP_IDLE_CHANCE) {
+        if (b.jumpCd <= 0 && b.grounded && b.stunT <= 0 && rand() < JUMP_IDLE_CHANCE) {
           this.startJump(room, b);
         }
       }
