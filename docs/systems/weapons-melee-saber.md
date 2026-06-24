@@ -23,6 +23,7 @@ antigo bastão de madeira.
 | Projéteis + reflexão | `src/game/Bullets.ts` → `reflectInArc()`, `cancelOwnedNear()` | reverte balas, varre trajeto da bala, gate vertical/inbound, `shooterId`/`reflections` |
 | Super (mega tiro) + reflexão | `src/game/Kamehameha.ts` → `reflectInArc()` | reflete feixes **damaging** que cruzam a lâmina (reverte + re-owna → voltam pelo `onHit`); pula visuais (autoritativo no servidor); bot super é **dodgeable por pulo** |
 | Stagger + super do bot local | `src/game/Bot.ts` → `applyMeleeStagger()`, `knockback()` | hop (kb impulse + vy) + flash; stun + fire-lock + interromper super; bots locais agora disparam o super telegrafado (gate `onKame`) |
+| Stagger VISUAL de remotos (MP) | `src/game/RemotePlayer.ts` → `applyMeleeStagger()` | quando VOCÊ golpeia um bot-do-servidor/remoto: flash branco sustentado + "pulinho" (hop + recoil que decai, sem poluir a interp) + fumaça de impacto/queda. (Servidor resolve o stun real via `staggerBot`; o atacante não recebe eco do `hit`/`meleehit`, por isso o juice é local.) |
 | Stagger do bot do servidor | `server/src/ws/bots.ts` → `staggerBot()` + `server/src/ws/index.ts` | stun/fire-lock/super-interrupt server-authoritative |
 | Mensagens de rede | `src/game/net/Multiplayer.ts` | `MeleeEvent`, `MeleeHitEvent` (stun opcional), `ParryEvent` + `sendParry` |
 | HUD | `src/components/hud/WeaponHotbar.tsx` | rótulo do slot ("Sabre de luz") |

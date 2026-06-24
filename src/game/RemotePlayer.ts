@@ -278,10 +278,14 @@ export class RemotePlayer implements BulletTarget {
     if (this.snaps.length > 8) this.snaps.shift();
 
     // Seed posError AFTER the push so computeTargetPos() returns the correct
-    // interpolated target that update() will also compute next frame.
+    // interpolated target that update() will also compute next frame. SUBTRACT the
+    // stagger recoil first: root.position carries that transient hop offset, so
+    // without this the seed would re-absorb it and update() would add it twice —
+    // amplifying the hop + rubber-banding.
     if (this.hasState) {
       this.posError
         .copy(this.root.position)
+        .sub(this.recoil)
         .sub(this.computeTargetPos());
     }
 
