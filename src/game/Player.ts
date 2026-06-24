@@ -181,6 +181,9 @@ export class Player implements BulletTarget {
   private onMelee?: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
   // Fired every frame during the swing — Game resolves arc hits + bullet parry.
   private onMeleeSample?: (s: MeleeSample) => void;
+  // Fired once when the swing ends, with the blade-tip world pos — Game spawns
+  // the white smoke-cube puff there.
+  private onMeleeEnd?: (x: number, y: number, z: number) => void;
   // Saber stagger taken by the local player (from a remote saber hit).
   private stunTimer = 0;
   private fireLockTimer = 0;
@@ -440,6 +443,11 @@ export class Player implements BulletTarget {
   /** Register the per-frame swing sampler (Game resolves arc hits + bullet parry). */
   setOnMeleeSample(cb: (s: MeleeSample) => void) {
     this.onMeleeSample = cb;
+  }
+
+  /** Register the swing-end hook (Game spawns the end-of-swing smoke-cube puff). */
+  setOnMeleeEnd(cb: (x: number, y: number, z: number) => void) {
+    this.onMeleeEnd = cb;
   }
 
   /** True while a saber stagger is freezing this player's actions. */
@@ -1128,18 +1136,12 @@ export class Player implements BulletTarget {
       }
 
       // No per-frame smoke along the arc — the blue SaberTrail is the in-motion
-      // effect. Instead, a single BIG smoke burst at the END of the swing: the
-      // "ar deslocado" piling up where the blade finishes its trajectory.
-      if (this.smoke && this.swingTimer <= 0) {
+      // effect. Instead, ONE white smoke-cube puff at the END of the swing (Game
+      // spawns the mega-shot-style cubes via kame.smokeBurst — Player has no kame).
+      if (this.swingTimer <= 0 && this.onMeleeEnd) {
         const tipPos = new THREE.Vector3();
         this.staffTip.getWorldPosition(tipPos);
-        this.smoke.spawnPuff(
-          tipPos,
-          this.getAimDirection(this.tmpDir).clone(),
-          7,
-          "#dbecff",
-          2.6, // big blocks
-        );
+        this.onMeleeEnd(tipPos.x, tipPos.y, tipPos.z);
       }
     } else if (this.staffPivot.rotation.y !== SABER_REST_YAW) {
       // Settle smoothly back to the perpendicular rest pose and reset the mount.

@@ -507,6 +507,10 @@ export class Game {
       ),
     );
     this.player.setOnMeleeSample((s) => this.handleMeleeSample(s));
+    // End-of-swing white smoke-cube puff (mega-shot style, a bit smaller).
+    this.player.setOnMeleeEnd((x, y, z) =>
+      this.kame.smokeBurst(new THREE.Vector3(x, y, z), 0.6, 9),
+    );
     this.kame.onHit = (target, dir, lethal, ownerId) =>
       this.onKameHit(target, dir, lethal, ownerId);
     this.bullets.registerTarget(this.player);
@@ -632,22 +636,14 @@ export class Game {
       this.kame.impactAt(hitPos);
       this.audio.playShot(hitPos, false);
     });
-    // Remote saber swing → a BIG smoke burst at the swing (matches the local
-    // end-of-swing look; remotes aren't blade-animated, so it fires at the event
-    // rather than mid-arc). No more small mid-swing puff.
+    // Remote saber swing → the white smoke-cube puff (matches the local end-of-
+    // swing look; remotes aren't blade-animated, so it fires at the event).
     this.mp.setMeleeHandler((e) => {
       const rp = this.remotePlayers.get(e.id);
       const pos = rp
         ? rp.getPosition()
         : new THREE.Vector3(e.origin.x, e.origin.y, e.origin.z);
-      const dir = new THREE.Vector3(e.dir.x, 0, e.dir.z);
-      this.smoke.spawnPuff(
-        new THREE.Vector3(pos.x, pos.y + 0.4, pos.z),
-        dir,
-        7,
-        "#dbecff",
-        2.6,
-      );
+      this.kame.smokeBurst(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), 0.6, 9);
     });
     // We got clubbed by a remote staff → small knockback (damage arrives via the
     // server "hit" path). Best-effort: the server may re-assert our position.
@@ -1049,15 +1045,10 @@ export class Game {
     this.meleePrevEnd.copy(s.bladeEnd);
   }
 
-  /** Big smoke-block burst at a saber-hit target. */
-  private meleeImpactFx(pos: THREE.Vector3, dir: THREE.Vector3) {
-    this.smoke.spawnPuff(
-      new THREE.Vector3(pos.x, pos.y + 0.4, pos.z),
-      dir,
-      9,
-      "#dbecff",
-      2.6, // big blocks on impact
-    );
+  /** Impact "fumaça": the game's white voxel smoke cubes (mega-shot style),
+   *  a bit bigger on a hit than the end-of-swing puff. */
+  private meleeImpactFx(pos: THREE.Vector3, _dir: THREE.Vector3) {
+    this.kame.smokeBurst(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), 0.85, 13);
   }
 
   private onKameHit(

@@ -68,7 +68,6 @@ export class SmokePuffs {
     direction: THREE.Vector3,
     count = 5,
     color = "#cccccc",
-    sizeMul = 1,
   ) {
     const dx = direction.x, dy = direction.y, dz = direction.z;
     const dl = Math.hypot(dx, dy, dz) || 1;
@@ -92,8 +91,8 @@ export class SmokePuffs {
       );
       p.maxLife = 0.45 + Math.random() * 0.3;
       p.life = p.maxLife;
-      p.startScale = (0.8 + Math.random() * 0.4) * sizeMul;
-      p.endScale = (2.0 + Math.random() * 1.0) * sizeMul;
+      p.startScale = 0.8 + Math.random() * 0.4;
+      p.endScale = 2.0 + Math.random() * 1.0;
       p.mesh.scale.setScalar(p.startScale);
       p.active = true;
       p.mesh.visible = true;

@@ -404,6 +404,36 @@ export class Kamehameha {
     this.spawnBurst(position.clone());
   }
 
+  /**
+   * A small white voxel-cube puff — the SAME cubes as the mega-shot burst (fly
+   * out, spin, grow + fade), just scaled down. Used by the saber for its end-of-
+   * swing + impact "fumaça" so it reads as the game's signature white smoke cubes
+   * (not big blocky SmokePuffs). `scaleMul` < 1 makes the cubes a bit smaller.
+   */
+  smokeBurst(position: THREE.Vector3, scaleMul = 0.7, count = 11) {
+    for (let i = 0; i < count; i++) {
+      const c = new THREE.Mesh(CUBE, glowMat(i % 3 === 0 ? BLUE_GLOW : BLUE_BRIGHT, 0.85));
+      c.scale.setScalar((0.1 + Math.random() * 0.16) * scaleMul);
+      c.position.set(
+        position.x + (Math.random() - 0.5) * 0.2,
+        position.y + (Math.random() - 0.5) * 0.2,
+        position.z + (Math.random() - 0.5) * 0.2,
+      );
+      this.group.add(c);
+      this.trail.push({
+        mesh: c,
+        life: 0.5,
+        maxLife: 0.5,
+        spin: new THREE.Vector3(Math.random() * 7, Math.random() * 7, Math.random() * 7),
+        vel: new THREE.Vector3(
+          (Math.random() - 0.5) * 4 * scaleMul,
+          Math.random() * 2.4 * scaleMul + 0.4,
+          (Math.random() - 0.5) * 4 * scaleMul,
+        ),
+      });
+    }
+  }
+
   private dissolveBeam(b: Beam) {
     this.spawnBurst(b.pos);
   }
