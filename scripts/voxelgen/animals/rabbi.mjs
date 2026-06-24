@@ -38,11 +38,12 @@ export function build() {
   g.box(7, 17, 13, 16, 17, 20, C.beard);  // rounder lower beard
   g.box(10, 14, 11, 14, 17, 20, C.beard); // chin point (dips onto the coat)
 
-  // PAYOT — thick sidelock that drops from the temple and curls forward.
-  // Authored on the left; symmetrizeX() builds the right one.
-  g.box(3, 5, 21, 25, 16, 19, C.payot);   // temple anchor (attaches to head side)
-  g.box(2, 5, 15, 22, 18, 21, C.payot);   // main hang (comes forward)
-  g.box(3, 5, 12, 16, 19, 21, C.payot);   // bottom curl (hooks forward)
+  // PAYOT — thick sidelock down the SIDE of the head (in front of the ear),
+  // protruding outward so it reads from the side/3-4 view, with a forward curl at
+  // the bottom. Authored on the left; symmetrizeX() builds the right one.
+  g.box(2, 5, 22, 24, 11, 17, C.payot);   // temple anchor on the head's side
+  g.box(1, 4, 13, 23, 12, 17, C.payot);   // sidelock hanging down the side (juts out)
+  g.box(2, 5, 12, 15, 15, 19, C.payot);   // bottom curl (hooks toward the front)
 
   // Face (skin shows y 20..26, above the beard). Eyes sit IN FRONT of the cream
   // frame so the dark pupils stay visible (glasses = thin bridge + temple, not a
