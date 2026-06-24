@@ -4,7 +4,11 @@
 > refletida na documentação e bem indexada (ver `docs/INDEX.md` quando existir + a regra em
 > `CLAUDE.md`/`README.md`). Qualquer agente novo começa por aqui e pelo índice de docs.
 
-## FASE A — feature do sabre (gate antes de ir ao ar) — EM ANDAMENTO
+## FASE A — feature do sabre (gate antes de ir ao ar) — ✅ CONCLUÍDA (2026-06-24)
+> Review GPT-5.5 Max limpo na rodada 7 ("No actionable correctness issues found"). Push em
+> `origin/main` (commits d792ce3..2287608) + deploy em prod (bundle `index-Bu1sRSLz.js`, restart OK,
+> servidor 200). No ar em https://beroroyale.shardweb.app.
+
 - [x] Implementar sabre (slot 3): swing baseball, 2× alcance, parry de projéteis, stun/interrupção.
 - [x] Mega Brain: design council (DeepSeek V4 Pro + GLM 5.2 + GPT-5.5) + 3 rodadas de review adversarial.
 - [x] Commit em `main` (d792ce3). Build cliente+servidor verde, tsc+eslint limpos.
@@ -40,10 +44,13 @@
 - Dúvidas → consultar GLM 5.2 no console (`scripts/openrouter.mjs`) ou usar Workflow.
 
 ## 🔴 URGENTE — modo online: "tiros invisíveis", lag e morte súbita
-Sintoma: no online o personagem morre de repente sem o jogador ver o motivo; tiros não aparecem.
-Hipótese: o front-end não está interpolando/animando os eventos do back-end (shots/hits/death),
-ou a cadência de estado do servidor + reconciliação está dessincronizada.
-- [ ] Investigar interpolação/reconciliação: `src/game/Game.ts`, `src/game/RemotePlayer.ts`,
-      `src/game/net/Multiplayer.ts`, `src/game/net/Room.ts` + cadência de "s"/hit/died no servidor.
-- [ ] Garantir que todo evento do servidor (shot/hit/kame/death) tenha tracer/anim visível no cliente.
-- [ ] Medir/telemetria de perda+latência antes de mexer no transporte (ver `docs/PERFORMANCE.md`).
+**✅ DIAGNOSTICADO 2026-06-24** (read-only, verificado) → [`systems/online-invisible-shots-diagnosis.md`](systems/online-invisible-shots-diagnosis.md).
+- **Causa raiz #1 (primária):** bots do servidor aplicam **dano hitscan instantâneo** em `fire()`
+  (`server/src/ws/bots.ts` ~L1347–1387) enquanto o **tracer visual viaja** (≈0.3–0.4 s). Você toma
+  dano/morre ANTES da bala chegar → "tiro invisível". Online é majoritariamente bot → acontece sempre.
+- **Causa raiz #2 (rara):** token-bucket (80/s) pode dropar tracers sob fogo irreal (`index.ts` L144).
+- [ ] **CORREÇÃO recomendada (pendente de aprovação — muda feel de combate + é deploy de prod):**
+      sincronizar o dano do bot com a chegada do tracer (enfileirar hit com `applyAt=now+dist/22*1000`,
+      resolver no `tick`). Implementar + review (GPT-5.5/GLM) + validar feel ANTES de ir ao ar.
+- [ ] Opção barata complementar: subir levemente a velocidade do tracer.
+- [ ] Telemetria de perda+latência antes de mexer em transporte/throttle (#2).

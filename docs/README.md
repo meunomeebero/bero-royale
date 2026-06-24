@@ -11,6 +11,7 @@
 |---|---|---|
 | [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo (slot 3) | sabre, saber, melee, swing, parry, reflect, stun, stagger, knockback |
 | [`systems/netcode-trust-model.md`](systems/netcode-trust-model.md) | Autoridade de rede | netcode, online, servidor, autoritativo, broadcast, hit, parry, tiros invisíveis, interpolação |
+| [`systems/online-invisible-shots-diagnosis.md`](systems/online-invisible-shots-diagnosis.md) | 🔴 Bug online (diagnosticado) | tiros invisíveis, morte súbita, hitscan, tracer, dano vs visual, bot, throttle |
 
 > _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento,
 > dash, super/kamehameha, power-ups, bots, voz, HUD, leaderboard) em `docs/systems/`._
