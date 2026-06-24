@@ -12,7 +12,7 @@ const C = {
   skin: "#e6a96d",      // face
   nose: "#d8884a",      // nose / warm shadow
   beard: "#5e3a22",     // beard + brows
-  payot: "#6f4a2e",     // sidelock curls (a touch lighter, to read as separate)
+  payot: "#3a2414",     // sidelock curls — darker than the beard, on the head sides
   glass: "#e8dcc0",     // glasses frame
   cream: "#f6f0df",     // shirt (collar + placket)
   blush: "#e2908a",     // cheeks
@@ -38,12 +38,12 @@ export function build() {
   g.box(7, 17, 13, 16, 17, 20, C.beard);  // rounder lower beard
   g.box(10, 14, 11, 14, 17, 20, C.beard); // chin point (dips onto the coat)
 
-  // PAYOT — thick sidelock down the SIDE of the head (in front of the ear),
-  // protruding outward so it reads from the side/3-4 view, with a forward curl at
-  // the bottom. Authored on the left; symmetrizeX() builds the right one.
-  g.box(2, 5, 22, 24, 11, 17, C.payot);   // temple anchor on the head's side
-  g.box(1, 4, 13, 23, 12, 17, C.payot);   // sidelock hanging down the side (juts out)
-  g.box(2, 5, 12, 15, 15, 19, C.payot);   // bottom curl (hooks toward the front)
+  // PAYOT — thick dark sidelock on the SIDE of the head (in front of the ear),
+  // set BACK from the beard (lower z) and protruding outward, so it reads as a
+  // separate lock instead of merging with the beard. Left only; mirror does right.
+  g.box(2, 5, 22, 24, 9, 15, C.payot);    // temple anchor (joins the head side)
+  g.box(1, 4, 12, 23, 9, 15, C.payot);    // sidelock hanging down the side (juts out)
+  g.box(2, 4, 12, 15, 13, 16, C.payot);   // soft curl at the bottom (stays off the beard)
 
   // Face (skin shows y 20..26, above the beard). Eyes sit IN FRONT of the cream
   // frame so the dark pupils stay visible (glasses = thin bridge + temple, not a
