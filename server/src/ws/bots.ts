@@ -1394,29 +1394,40 @@ export class BotSim {
    * application is deferred. See netcode-hit-sync-plan.md (Phase 1).
    */
   private fire(room: string, b: ServerBot, tgt: Target) {
-    // Lead the aim slightly toward where a MOVING target is heading. Bots are
-    // treated as stationary (vx/vz=0) so this only bites on real players.
+    // Lead the aim slightly toward where a MOVING target is heading — this is the
+    // COSMETIC tracer direction for OBSERVERS. Bots are treated as stationary
+    // (vx/vz=0) so this only bites on real players.
     const aimX = tgt.x + tgt.vx * LEAD_FACTOR;
     const aimZ = tgt.z + tgt.vz * LEAD_FACTOR;
     const dx = aimX - b.x;
     const dz = aimZ - b.z;
-    const dist = Math.hypot(dx, dz) || 1;
-    const dir = { x: dx / dist, y: 0, z: dz / dist };
+    const leadDist = Math.hypot(dx, dz) || 1;
+    const dir = { x: dx / leadDist, y: 0, z: dz / leadDist };
     const seq = this.shotSeq++;
-    // Visual tracer (clients render a travelling bullet + spatial SFX). `seq`
-    // correlates this tracer with its scheduled damage on the victim's client.
+    // Accuracy decided NOW (deterministic); damage applied ON ARRIVAL.
+    const hits = rand() <= ACCURACY;
+    const hitsPlayer = hits && this.hub.isPlayer(room, tgt.id);
+    // Visual tracer. A shot that WILL hit a PLAYER carries `targetId` so that
+    // victim's client anchors the tracer to this absolute origin and aims it AT
+    // itself — the bullet visibly crosses the player (Phase 2). Misses + shots at
+    // bots keep the lead-aimed cosmetic tracer. `seq` correlates tracer↔damage.
     this.fanout(room, "shot", {
       id: b.id,
       origin: { x: b.x, y: MUZZLE_Y, z: b.z },
       dir,
       color: BULLET_COLOR,
       seq,
+      ...(hitsPlayer ? { targetId: tgt.id } : {}),
     }, b.id);
 
-    // Hitscan with accuracy — decided NOW, applied ON ARRIVAL.
-    if (rand() > ACCURACY) return;
+    if (!hits) return;
     const targetId = tgt.id;
-    const applyAt = Date.now() + Math.max(MIN_TRAVEL_MS, (dist / BULLET_SPEED) * 1000);
+    // Schedule using the distance to the ACTUAL target (what the victim's
+    // aim-at-self tracer traverses), floored for point-blank readability.
+    const tdx = tgt.x - b.x;
+    const tdz = tgt.z - b.z;
+    const targetDist = Math.hypot(tdx, tdz) || 1;
+    const applyAt = Date.now() + Math.max(MIN_TRAVEL_MS, (targetDist / BULLET_SPEED) * 1000);
     this.hub.enqueueHit(room, {
       applyAt,
       resolve: () => this.resolveShot(room, b, targetId, seq),

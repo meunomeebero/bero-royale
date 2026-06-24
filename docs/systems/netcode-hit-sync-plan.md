@@ -62,7 +62,7 @@ Três pilares (todos necessários; nenhum sozinho satisfaz o invariante):
 - ✅ **Fase 1 — fila de hits pendentes + drain (bot fire normal). Dano-na-chegada.** *(feito: `PendingHit`/`enqueueHit`/`drainPendingHits` no `rooms.ts`, drain no botLoop, `fire()`→`resolveShot` enfileirado, `seq` no `shot`/`hit`/`died`. Verificado: dano cai com o tracer (≤1 tick). Super/PvP ainda síncronos = Fases 4/5.)*
   `rooms.ts`: `pendingHits` por sala + `enqueueHit`/`drainPendingHits(now)`. `index.ts` botLoop: drenar após `botSim.tick`.
   `bots.ts fire()`: manter fanout `shot`+roll; trocar dano síncrono por `enqueueHit(applyAt = now + max(MIN_TRAVEL_MS, dist/22*1000))`, cap em `BULLET_LIFE`. `protocol.ts`: `shotSeq` no payload `shot`.
-- **Fase 2 — apresentação direcionada (fecha o decoupling espacial).**
+- ✅ **Fase 2 — apresentação direcionada (fecha o decoupling espacial).** *(feito: server `fire()` manda `targetId` no shot LETAL + agenda pela dist ao alvo real; cliente `setShotHandler` ancora o tracer letal na `origin` do server e mira NO player local. Server-side verificado por harness (31/31 hits vieram de shot tagueado, timing OK); o VISUAL (bala cruzando o avatar) precisa de confirmação in-game.)*
   Server manda `origin` autoritativo + `targetId` + `shotSeq` + endpoint/deadline no `shot` letal.
   `Game.ts`: tracer letal sai da `origin` recebida (não da interp) e é desenhado p/ **intersectar o alvo no impacto** (dropar lead p/ a bala correlacionada). `MIN_TRAVEL_MS` (~90 ms) p/ readability em close-range.
 - **Fase 3 — gate de impacto no cliente (obrigatório).**

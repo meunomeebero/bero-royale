@@ -50,6 +50,12 @@ export interface ShotEvent {
   origin: { x: number; y: number; z: number };
   dir: { x: number; y: number; z: number };
   color: string;
+  /** Per-shot id correlating this tracer with its scheduled damage (server). */
+  seq?: number;
+  /** Present only on a shot that WILL hit a player: that player's id. The victim
+   *  client anchors the tracer to `origin` and aims it AT itself so the bullet
+   *  visibly crosses it. See docs/systems/netcode-hit-sync-plan.md (Phase 2). */
+  targetId?: string;
 }
 
 /** Instant "dash" event — drives the remote dash stretch + facing turn. */

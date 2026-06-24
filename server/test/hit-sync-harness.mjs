@@ -31,8 +31,9 @@ const POS = { x: 0, z: 0 };
 
 const evBySeq = new Map();     // seq -> {t, kind:'shot'|'super', dist}
 const recentByBot = new Map(); // botId -> {t, kind, dist}  (fallback when no seq)
+const lethalSeqs = new Set();  // seqs whose "shot" carried targetId === me (Phase 2)
 const deltas = [];
-let myId = ME, deadUntil = 0, shotCount = 0, kameCount = 0;
+let myId = ME, deadUntil = 0, shotCount = 0, kameCount = 0, lethalToMeShots = 0;
 
 const ws = new WebSocket(URL);
 const snap = () => JSON.stringify({
@@ -52,6 +53,7 @@ ws.on("message", (raw) => {
     const dist = Math.hypot((p.origin?.x ?? 0) - POS.x, (p.origin?.z ?? 0) - POS.z);
     const rec = { t: Date.now(), kind: "shot", dist };
     if (p.seq != null) evBySeq.set(p.seq, rec);
+    if (p.targetId === myId && p.seq != null) { lethalSeqs.add(p.seq); lethalToMeShots++; }
     recentByBot.set(m.from, rec);
   } else if (ev === "kame" && m.from && m.from !== myId) {
     kameCount++;
@@ -70,7 +72,7 @@ function record(botId, seq) {
   const rec = (seq != null && evBySeq.get(seq)) || recentByBot.get(botId);
   if (!rec) return;
   const expected = rec.kind === "super" ? rec.t + SUPER_REVEAL_MS : rec.t + (rec.dist / BULLET_SPEED) * 1000;
-  deltas.push({ delta: Math.round(Date.now() - expected), kind: rec.kind, dist: +rec.dist.toFixed(1), seq: seq ?? null });
+  deltas.push({ delta: Math.round(Date.now() - expected), kind: rec.kind, dist: +rec.dist.toFixed(1), seq: seq ?? null, targeted: seq != null && lethalSeqs.has(seq) });
 }
 const med = (a) => (a.length ? a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)] : null);
 const stat = (kind) => {
@@ -80,8 +82,17 @@ const stat = (kind) => {
 setTimeout(() => {
   const shot = stat("shot"), sup = stat("super");
   const verdict = (s) => s.median == null ? "no samples" : s.median < -80 ? `BUG ${-s.median}ms early` : s.median <= 60 ? "OK (with projectile)" : `partial ${s.median}ms`;
+  const normalHits = deltas.filter((d) => d.kind === "shot").length;
+  const targetedHits = deltas.filter((d) => d.kind === "shot" && d.targeted).length;
   console.log(JSON.stringify({
     observed: { shots: shotCount, kames: kameCount, hits: deltas.length },
+    phase2_targetId: {
+      lethalShotsCarryingTargetId: lethalToMeShots,
+      normalHits, hitsFromTargetedShots: targetedHits,
+      verdict: normalHits === 0 ? "no normal hits"
+        : targetedHits === normalHits ? "OK: every normal hit came from a targetId-tagged shot"
+        : `PARTIAL: ${targetedHits}/${normalHits} hits were targetId-tagged`,
+    },
     normalShot_seqCorrelated: { ...shot, verdict: verdict(shot) },
     super_seqCorrelated: { ...sup, verdict: verdict(sup) },
     samples: deltas.slice(0, 14),

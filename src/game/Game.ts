@@ -564,15 +564,29 @@ export class Game {
   private registerNetHandlers() {
     if (!this.mp) return;
     this.mp.setShotHandler((e) => {
-      // Anchor the visual tracer to the receiver-visible remote gun: the shot is
-      // sent at the shooter's absolute muzzle, but we render the remote avatar
-      // ~INTERP_DELAY_MS in the past, so use that avatar's CURRENT rendered XZ
-      // (keeping the fired height) so the tracer leaves the visible gun.
-      const rp = this.remotePlayers.get(e.id);
-      const ox = rp ? rp.root.position.x : e.origin.x;
-      const oz = rp ? rp.root.position.z : e.origin.z;
-      const origin = new THREE.Vector3(ox, e.origin.y, oz);
-      const dir = new THREE.Vector3(e.dir.x, e.dir.y, e.dir.z);
+      let origin: THREE.Vector3;
+      let dir: THREE.Vector3;
+      if (e.targetId != null && e.targetId === this.mp?.id) {
+        // LETHAL shot at ME (Phase 2): anchor the tracer to the shooter's
+        // ABSOLUTE muzzle (not the interp-anchored remote avatar — that decouples
+        // the tracer from the server's scheduled timing) and aim it AT my real
+        // position so the bullet visibly CROSSES me, instead of flying to a lead
+        // point beside me. See docs/systems/netcode-hit-sync-plan.md.
+        origin = new THREE.Vector3(e.origin.x, e.origin.y, e.origin.z);
+        const me = this.player.root.position;
+        dir = new THREE.Vector3(me.x - e.origin.x, 0, me.z - e.origin.z);
+        if (dir.lengthSq() < 1e-6) dir.set(e.dir.x, 0, e.dir.z); // point-blank fallback
+      } else {
+        // Observer / non-lethal tracer: anchor to the receiver-visible remote gun.
+        // The shot is sent at the shooter's absolute muzzle, but we render the
+        // remote avatar ~INTERP_DELAY_MS in the past, so use that avatar's CURRENT
+        // rendered XZ (keeping the fired height) so the tracer leaves the visible gun.
+        const rp = this.remotePlayers.get(e.id);
+        const ox = rp ? rp.root.position.x : e.origin.x;
+        const oz = rp ? rp.root.position.z : e.origin.z;
+        origin = new THREE.Vector3(ox, e.origin.y, oz);
+        dir = new THREE.Vector3(e.dir.x, e.dir.y, e.dir.z);
+      }
       // Record the shooter id so a saber parry can credit the reflected hit back.
       this.bullets.spawnVisual(origin, dir, e.color, e.id);
       this.audio.playShot(origin, false);
