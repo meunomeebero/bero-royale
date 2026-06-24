@@ -6,6 +6,8 @@ animar eventos do back-end.
 
 > Status: **diagnosticado (read-only) 2026-06-24, verificado no código.** Correção pendente (ver
 > [`../PENDENCIAS.md`](../PENDENCIAS.md)). Contexto de autoridade: [`netcode-trust-model.md`](netcode-trust-model.md).
+> **Arquitetura da correção (decidida por MegaBrain + conselho GLM/Codex):**
+> [`netcode-hit-sync-plan.md`](netcode-hit-sync-plan.md).
 
 ## Sintoma
 No online o jogador morre de repente sem ver de onde veio o tiro; balas parecem "invisíveis".

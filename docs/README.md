@@ -12,6 +12,7 @@
 | [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo (slot 3) | sabre, saber, melee, swing, parry, reflect, stun, stagger, knockback |
 | [`systems/netcode-trust-model.md`](systems/netcode-trust-model.md) | Autoridade de rede | netcode, online, servidor, autoritativo, broadcast, hit, parry, tiros invisíveis, interpolação |
 | [`systems/online-invisible-shots-diagnosis.md`](systems/online-invisible-shots-diagnosis.md) | 🔴 Bug online (diagnosticado) | tiros invisíveis, morte súbita, hitscan, tracer, dano vs visual, bot, throttle |
+| [`systems/netcode-hit-sync-plan.md`](systems/netcode-hit-sync-plan.md) | 🔴→🛠️ Arquitetura da correção (tiro↔dano) | tiros invisíveis, hit sync, damage-on-arrival, scheduler, applyAt, impact gate, shotSeq, beam-front, favor-the-victim |
 | [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick |
 | [`systems/voxel-character-gen.md`](systems/voxel-character-gen.md) | Gerar personagens voxel via IA | personagem, character, voxel, gerar, IA, owl, coruja, OBJ, paleta, proporção, coerência, novo animal |
 
