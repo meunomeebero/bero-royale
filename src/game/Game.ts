@@ -632,7 +632,9 @@ export class Game {
       this.kame.impactAt(hitPos);
       this.audio.playShot(hitPos, false);
     });
-    // Remote staff swing → drag a smoke arc on this client (visual only).
+    // Remote saber swing → a BIG smoke burst at the swing (matches the local
+    // end-of-swing look; remotes aren't blade-animated, so it fires at the event
+    // rather than mid-arc). No more small mid-swing puff.
     this.mp.setMeleeHandler((e) => {
       const rp = this.remotePlayers.get(e.id);
       const pos = rp
@@ -642,8 +644,9 @@ export class Game {
       this.smoke.spawnPuff(
         new THREE.Vector3(pos.x, pos.y + 0.4, pos.z),
         dir,
-        6,
-        "#c9b79a",
+        7,
+        "#dbecff",
+        2.6,
       );
     });
     // We got clubbed by a remote staff → small knockback (damage arrives via the
@@ -1032,6 +1035,8 @@ export class Game {
     // + relays sendHit, the server tracks crate HP + broadcasts the burst).
     for (const crate of this.crates.targets()) {
       if (this.meleeHitIds.has(crate.id)) continue;
+      // Vertical gate: don't smash a crate still falling from the sky above you.
+      if (Math.abs(crate.position.y - s.origin.y) > 1.3) continue;
       const push = resolve(crate.position.x, crate.position.z);
       if (!push) continue;
       this.meleeHitIds.add(crate.id);
