@@ -34,7 +34,7 @@ Crossy-Road), **não** elipsoides suaves (geram superfície "escadinha" e ~10× 
 | `scripts/voxelgen/exporter.mjs` | grid → OBJ+MTL+PNG no formato do pack; **greedy meshing** (funde faces coplanares). |
 | `scripts/voxelgen/png.mjs` | encoder PNG RGB (256×1) só com `zlib` nativo (zero deps). |
 | `scripts/voxelgen/measure.mjs` | parse do OBJ + validação de proporção vs `ENVELOPE`. |
-| `scripts/voxelgen/render.mjs` | preview isométrico offline (painter's algorithm) → PNG. |
+| `scripts/voxelgen/render.mjs` | preview isométrico offline (painter's) → PNG; aceita cor de fundo (`renderIso(grid,out,scale,bg)` — use fundo claro p/ personagens escuros). |
 | `scripts/voxelgen/gen.mjs` | CLI: build → export → valida. |
 | `scripts/voxelgen/animals/<nome>.mjs` | definição paramétrica de um personagem. |
 | `src/game/ModelLibrary.ts` | `ANIMAL_NAMES` (allowlist do roster) + loader/normalização. |
@@ -45,4 +45,9 @@ Crossy-Road), **não** elipsoides suaves (geram superfície "escadinha" e ~10× 
 - O validador checa **proporção**, não estética — a qualidade do desenho é revisão humana/iteração.
 - Winding das faces é corrigido por produto vetorial (material é single-sided); confirmar visual
   in-game na 1ª vez que um modelo novo entra no roster.
-- `owl` (coruja) é o 1º exemplo gerado; **ainda não está em `ANIMAL_NAMES`** (fora do roster live).
+- Exemplos gerados: `owl` (coruja, animal) e `rabbi` (rabino, **humano** — corpo+cabeça
+  num cubo só, **sem pernas/braços/pés**; cartola/barba/óculos como blocos grandes). Humanos
+  seguem a mesma regra dos bichos: um cubo fundido, sem membros separados. Entram no jogo
+  adicionando o nome a `ANIMAL_NAMES` (o roster commitado ainda não os inclui).
+- Personagens altos (ex.: com cartola) tendem a estourar o envelope (`W/H < 0.6`): encorpar
+  (alargar corpo+cabeça, encurtar o topo) mantém a hitbox justa, já que o jogo normaliza a altura.

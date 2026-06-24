@@ -5,7 +5,7 @@ import { encodePNG } from "./png.mjs";
 // eyeballed without a browser or the game. Painter's algorithm, 3 lit faces per
 // cube (top brightest, front mid, right darkest). Not shipped — a design aid.
 
-const BG = [24, 26, 30];
+const DARK_BG = [24, 26, 30];
 
 function hexToRgb(hex) {
   const h = hex.replace("#", "");
@@ -39,7 +39,7 @@ function fillPoly(canvas, W, H, pts, rgb) {
   }
 }
 
-export function renderIso(grid, outPath, scale = 12) {
+export function renderIso(grid, outPath, scale = 12, BG = DARK_BG) {
   // collect solid voxels + projected bounds
   const vox = [];
   let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
@@ -63,7 +63,9 @@ export function renderIso(grid, outPath, scale = 12) {
   for (let i = 0; i < W * H; i++) { canvas[i * 3] = BG[0]; canvas[i * 3 + 1] = BG[1]; canvas[i * 3 + 2] = BG[2]; }
 
   const sx = (u) => pad + (u - minU) * scale;
-  const sy = (v) => H - pad - (v - minV) * scale; // flip: world-up -> screen-up
+  // v = (x+z)/2 - y already encodes model-up as smaller v; screen-y grows down,
+  // so map directly (no extra flip) to keep the model right-side up.
+  const sy = (v) => pad + (v - minV) * scale;
 
   // painter's: far (small x+y+z) first
   vox.sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));
