@@ -4,7 +4,7 @@ import { WebSocketServer } from "ws";
 import type { ClientMsg, NetSnapshot, ServerMsg, Sock } from "./protocol";
 import { parseClientMsg } from "./protocol";
 import { RoomHub } from "./rooms";
-import { BOT_TICK_MS, BOT_TICK_SECONDS } from "./bots";
+import { BOT_TICK_MS, BOT_TICK_SECONDS, SUPER_DAMAGE } from "./bots";
 
 /** Hard cap on concurrent sockets per room. */
 const MAX_ROOM = 64;
@@ -184,14 +184,28 @@ export function attachWebSocket(server: Server): RoomHub {
             }
           }
 
-          // A player's concentrated mega ("kamehit") aimed at a SERVER BOT must be
-          // resolved server-side (no client owns the bot). The beam visual already
-          // rode the "kame" event; here we just drop the bot + emit its death. The
-          // killer's client credits it via the normal remote-death path.
+          // A player's concentrated mega ("kamehit") is resolved server-side so it
+          // shares ONE shield-first model with the bot super (no client owns the
+          // damage). The beam visual already rode the "kame" event; the verbatim
+          // "kamehit" relay below still reaches the victim for its impact-blast FX.
+          //   - target is a SERVER BOT → drop the bot + emit its death.
+          //   - target is a PLAYER    → apply SUPER_DAMAGE shield-first; on a kill
+          //     emit "died" (NOT "kill": the killer's client credits the kill via
+          //     the normal alive→dead + recentHits path, same as a normal shot).
           if (m.event === "kamehit" && m.payload && typeof m.payload === "object") {
             const target = (m.payload as { target?: unknown }).target;
             if (typeof target === "string" && hub.botSim.hasBot(ws.room, target)) {
               const res = hub.botSim.killBot(ws.room, target);
+              if (res?.died) {
+                hub.fanout(ws.room, {
+                  t: "broadcast",
+                  event: "died",
+                  payload: { id: target, x: res.x, z: res.z, by: ws.id },
+                  from: ws.id,
+                });
+              }
+            } else if (typeof target === "string" && hub.isPlayer(ws.room, target)) {
+              const res = hub.damagePlayerN(ws.room, target, ws.id, SUPER_DAMAGE);
               if (res?.died) {
                 hub.fanout(ws.room, {
                   t: "broadcast",

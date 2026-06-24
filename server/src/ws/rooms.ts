@@ -215,6 +215,7 @@ export class RoomHub {
         p.alive = true;
         p.deadAt = 0;
         p.acked = false;
+        this.syncOwnerHP(p); // HUD snaps back to full on the authoritative respawn
       }
     }
   }
@@ -233,6 +234,13 @@ export class RoomHub {
   /**
    * Apply one point of damage to a PLAYER (works even when the socket is null
    * during the grace window). Public so the bot sim can hit players too.
+   *
+   * Every mutation echoes the new authoritative health+shield back to the
+   * victim's OWN socket (the "honest HUD" sync): the owner never receives its
+   * own relayed "s" frame, so without this its HP bar is a pure local guess that
+   * drifts from server truth — the root cause of "died at full HP/shield". With
+   * the echo, a victim whose client under-predicts (e.g. a 5-dmg super cued as a
+   * single "hit") reconciles to the real value within one RTT.
    */
   damagePlayer(room: string, targetId: string, byId: string): HitResult | null {
     const p = this.players.get(room)?.get(targetId);
@@ -242,9 +250,11 @@ export class RoomHub {
     // Shield charges (BR armor) soak the hit before health.
     if (p.shield > 0) {
       p.shield -= 1;
+      this.syncOwnerHP(p);
       return { died: false, x: p.lastS?.x ?? 0, z: p.lastS?.z ?? 0, byId, victimName };
     }
     p.health = Math.max(0, p.health - 1);
+    this.syncOwnerHP(p);
     if (p.health <= 0 && p.alive) {
       p.alive = false;
       p.deadAt = Date.now();
@@ -252,6 +262,41 @@ export class RoomHub {
       return { died: true, x: p.lastS?.x ?? 0, z: p.lastS?.z ?? 0, byId, victimName };
     }
     return { died: false, x: p.lastS?.x ?? 0, z: p.lastS?.z ?? 0, byId, victimName };
+  }
+
+  /**
+   * Apply up to `n` points of damage to a player in one resolution (shield-first
+   * via repeated damagePlayer), stopping the instant it kills. Used by any
+   * multi-point hit — the concentrated super (player AND bot) — so both share the
+   * exact same shield-first model and the same per-point HUD echo. Returns the
+   * final HitResult (whichever point landed last), or null if the target vanished.
+   */
+  damagePlayerN(room: string, targetId: string, byId: string, n: number): HitResult | null {
+    let res: HitResult | null = null;
+    for (let i = 0; i < n; i++) {
+      const r = this.damagePlayer(room, targetId, byId);
+      if (!r) break; // target vanished / already dead
+      res = r;
+      if (r.died) break;
+    }
+    return res;
+  }
+
+  /**
+   * Echo a player's authoritative health+shield to its OWN socket so its HUD
+   * tracks server truth (see damagePlayer). A one-way unicast on the same
+   * `broadcast` envelope the client already routes by event name; no-op while the
+   * socket is gone (grace window) — the values re-sync on reconnect via "s".
+   */
+  private syncOwnerHP(p: Player): void {
+    if (!p.sock || p.sock.readyState !== WebSocket.OPEN) return;
+    const msg: ServerMsg = {
+      t: "broadcast",
+      event: "hp",
+      payload: { health: p.health, shield: p.shield },
+      from: "",
+    };
+    p.sock.send(JSON.stringify(msg));
   }
 
   /** True if `id` is a live player record in `room` (vs a bot or unknown). */
@@ -264,6 +309,7 @@ export class RoomHub {
     const p = this.players.get(room)?.get(id);
     if (!p || !p.alive) return;
     p.shield = Math.min(p.shield + 1, MAX_SHIELD);
+    this.syncOwnerHP(p);
   }
 
   /** Positions of alive players (with a last snapshot) — bot targeting input.

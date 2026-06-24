@@ -41,9 +41,9 @@ const ACCEL = 22; // how fast vx/vz chase the desired velocity (units/s²-ish) �
 const ENGAGE_DIST = 5.2; // hold around this range from the target (tighter orbit → more pressure)
 const ENGAGE_BAND = 1.2; // dead-band around ENGAGE_DIST where the bot circle-strafes
 const SHOOT_RANGE = 10; // = 2 × hearing radius (matches bullet reach)
-const SHOOT_CD_MIN = 0.4;
-const SHOOT_CD_RND = 0.4; // a bit more cadence variety (snappier than the old 0.45/0.45)
-const ACCURACY = 0.42; // fraction of shots that connect → aggressive but not a sniper
+const SHOOT_CD_MIN = 0.55; // gentler: a touch slower trigger than the old 0.4
+const SHOOT_CD_RND = 0.5; // + cadence variety
+const ACCURACY = 0.3; // gentler: fewer shots connect (was 0.42) → readable pressure, not a wall
 const LEAD_FACTOR = 0.12; // how far ahead of a moving target the bot aims (seconds of lead)
 const RETARGET_CD = 0.6; // re-pick nearest enemy this often
 const RESPAWN_MS = 5000;
@@ -82,9 +82,13 @@ const SUPER_CONE_HALF_WIDTH = 1.4; // point-to-ray half-width (≈14° cone) for
 const SUPER_CHARGE = 1.2; // wind-up duration (product-locked telegraph)
 const SUPER_CHARGE_SPEED = 1.0; // capped move speed while charging (drifts, not frozen)
 const SUPER_REARM = 2.5; // short re-arm after an aborted (wasted) charge
-const SUPER_CD_MIN = 9; // cooldown floor after firing
-const SUPER_CD_MAX = 14; // cooldown ceiling after firing (random in [MIN,MAX])
-const SUPER_DAMAGE = 5; // half a bar → two hits to kill (mirrors client SUPER_DAMAGE); soaks shield first via damagePlayer
+const SUPER_CD_MIN = 14; // cooldown floor after firing (gentler: supers ~half as frequent)
+const SUPER_CD_MAX = 22; // cooldown ceiling after firing (random in [MIN,MAX])
+/** Concentrated-super damage — soaked shield-first then HP, 3 of a 10-bar →
+ *  ~4 unshielded hits to kill. Shared by the bot super (here) AND the player
+ *  super (index.ts resolves a "kamehit" on a player with this same amount), so
+ *  both paths use one shield-first model. Mirror of the client headline. */
+export const SUPER_DAMAGE = 3;
 const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
 
 // ── Engager cap (anti-dogpile, owner-locked) ─────────────────────────────────
@@ -94,7 +98,7 @@ const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
 // player are "engagers" (allowed to fire / close / telegraph a super); the rest
 // hang back at a loose orbit (no fire, no super), so the player faces a readable
 // front line instead of a swarm. Ranking is by distance² → fully deterministic.
-const MAX_ENGAGERS_PER_PLAYER = 4; // nearest bots that may fire/close on a player
+const MAX_ENGAGERS_PER_PLAYER = 3; // nearest bots that may fire/close on a player (gentler: was 4)
 // At most ONE bot may charge a super per player (the per-player super slot below);
 // this is product-locked, so it's enforced by a single-holder map, not a tunable.
 const STANDOFF_DIST = 9; // non-engagers loosely orbit at ~this range (back of the line)

@@ -187,6 +187,7 @@ export class Multiplayer {
   private onKill?: (e: KillEvent) => void;
   private onKame?: (e: KameEvent) => void;
   private onKameHit?: (e: KameHitEvent) => void;
+  private onHp?: (e: { health: number; shield: number }) => void;
   private onMelee?: (e: MeleeEvent) => void;
   private onMeleeHit?: (e: MeleeHitEvent) => void;
   private onPowerupSpawn?: (e: PowerupSpawnEvent) => void;
@@ -255,6 +256,11 @@ export class Multiplayer {
   /** Register a handler for incoming kamehameha hits (launch self if targeted). */
   setKameHitHandler(cb: (e: KameHitEvent) => void) {
     this.onKameHit = cb;
+  }
+
+  /** Register a handler for the authoritative HP+shield echo for our own player. */
+  setHpHandler(cb: (e: { health: number; shield: number }) => void) {
+    this.onHp = cb;
   }
 
   /** Register a handler for incoming melee swings (smoke arc visual). */
@@ -355,6 +361,13 @@ export class Multiplayer {
           // even though damage is now server-authoritative via sendHit.
           const p = payload as { target: string; from: string; fromName: string };
           if (p && this.onHit) this.onHit(p.target, p.from, p.fromName);
+        },
+        hp: (payload) => {
+          // Authoritative HP+shield echo for OUR OWN player (the honest-HUD sync —
+          // the server unicasts this only to the owner whenever its health/shield
+          // changes, so the local bar tracks server truth instead of drifting).
+          const e = payload as { health: number; shield: number };
+          if (e) this.onHp?.(e);
         },
         shot: (payload) => {
           const e = payload as ShotEvent;

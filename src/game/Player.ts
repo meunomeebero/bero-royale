@@ -31,8 +31,6 @@ const HIT_FLASH_DURATION = 0.25;
 const MAX_SHIELD = 10;
 /** Temporary boosts (speed/rapid) stack up to this many pickups' worth of time. */
 const STACK_MAX = 3;
-/** Super shot damage — soaked shield-first, then HP (5 = half a bar → two hits to kill). */
-const SUPER_DAMAGE = 5;
 
 const DASH_MAX_CHARGES = 3; // base dashes before recharging
 const DASH_MAX_CAP = 6; // hard cap including TEMPORARY bonus bars from dash pickups
@@ -53,7 +51,7 @@ const SLOT_MODES: FireMode[] = ["constant", "concentrated", "staff"];
 // ── Melee staff (hotbar slot 3) — swing timing; damage/range live in Game ──
 const MELEE_COOLDOWN = 0.45; // seconds between swings while held
 const MELEE_SWING_DUR = 0.28; // swing animation length (the 180° sweep)
-const KAME_CHARGE = 5.0; // seconds to hold before the concentrated shot is ready
+const KAME_CHARGE = 3.0; // seconds to hold before the concentrated shot is ready (recharge cadence)
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
 const BOSS_CADENCE = 0.18; // seconds between boss mega beams (≈ constant fire feel)
@@ -439,16 +437,18 @@ export class Player implements BulletTarget {
   }
 
   /**
-   * Hit by a super shot: take SUPER_DAMAGE (shield-first, then HP) with a blast +
-   * boom. Half a bar per hit, so two supers kill (no insta-kill / arena knockback).
+   * Reconcile to the server's authoritative HP+shield (the "honest HUD" sync).
+   * The server echoes these whenever they change so the local bar tracks truth
+   * instead of drifting from under-/over-predicted local cues — the fix for
+   * "died at full HP/shield". Ignored while dead (a late frame can't revive the
+   * bar); if the authoritative health is 0 we fall through to the same death the
+   * "died" event drives (idempotent via serverKilled).
    */
-  kamehamehaHit() {
+  setHealthShield(health: number, shield: number) {
     if (this.state !== "alive") return;
-    // Super shot = SUPER_DAMAGE points, soaked shield-first then HP. You only die
-    // if shield + HP can't cover it (e.g. 5 shield + full HP survives with 5 HP).
-    this.applyDamage(SUPER_DAMAGE);
-    if (!this.isAlive()) this.audio.playExplosion(this.root.position, true);
-    else this.audio.playHit(this.root.position, true);
+    this.health = Math.max(0, Math.min(this.getMaxHealth(), health));
+    this.shieldPoints = Math.max(0, Math.min(MAX_SHIELD, shield));
+    if (this.health <= 0) this.serverKilled();
   }
 
   /**

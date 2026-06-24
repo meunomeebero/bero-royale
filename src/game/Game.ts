@@ -56,6 +56,10 @@ const VOICE_MODE_KEY = "voxelcube:voice:mode";
 const AMBIENT_BOT_COUNT = 6;
 // Boss mega beam does half a normal target's max HP per hit (two hits to kill).
 const BOSS_SHOT_DAMAGE = 5;
+// Concentrated super damage (3 of a 10-bar → ~4 unshielded hits). Mirrors the
+// server SUPER_DAMAGE; online player-vs-player supers are resolved server-side,
+// this drives the LOCAL paths (offline bots + local-player victim).
+const SUPER_DAMAGE = 3;
 
 // ── Melee staff (hotbar slot 3) — arc hit resolution ──
 const MELEE_DAMAGE = 3; // HP per swing
@@ -332,6 +336,14 @@ export class Game {
           this.remotePlayers.get(targetId)?.flashHit();
         }
       });
+      // Authoritative HP+shield echo (honest HUD): the server is the single source
+      // of truth for our health/shield and pushes the real values here on every
+      // change, so the bar reconciles instead of drifting from local prediction.
+      // This is what stops "I had full HP + shield and instantly died" — the bar
+      // now reflects the damage the server actually applied (e.g. a 3-pt super).
+      this.mp.setHpHandler((e) => {
+        this.player.setHealthShield(e.health, e.shield);
+      });
       this.registerNetHandlers();
       this.mp.connect();
       this.playerAliveSince = Date.now();
@@ -529,19 +541,18 @@ export class Game {
       this.kame.fire(origin, dir, false, "player");
       this.audio.playShot(origin, false);
     });
-    // We got hit by someone's kamehameha → launch off the arena + die.
+    // We got hit by someone's kamehameha. Damage + death are now SERVER-authoritative
+    // (the server resolves the "kamehit" shield-first via SUPER_DAMAGE and pushes the
+    // real HP via "hp" / "died"), so this handler is FX-only: land a VISIBLE blast on
+    // us right away. The remote beam travels from the caster's muzzle and arrives
+    // AFTER the event, so without this you'd feel the hit before seeing its cause.
     this.mp.setKameHitHandler((e) => {
       if (e.target !== this.mp?.id) return;
       const caster = this.mp?.getRemoteStates().get(e.id)?.name;
       this.lastAttacker = { name: caster || "Alguém", t: Date.now() };
-      // Land a VISIBLE blast on us at the instant of death. The remote beam is a
-      // separate event that travels from the caster's muzzle and arrives AFTER
-      // this server-driven kill, so without this you'd die before seeing anything
-      // hit you. The impact-at-victim gives the death an immediate visible cause.
       const hitPos = this.player.root.position.clone();
       this.kame.impactAt(hitPos);
       this.audio.playShot(hitPos, false);
-      this.player.kamehamehaHit();
     });
     // Remote staff swing → drag a smoke arc on this client (visual only).
     this.mp.setMeleeHandler((e) => {
@@ -775,29 +786,32 @@ export class Game {
       for (let i = 0; i < 12; i++) this.mp?.sendHit(target.id);
       return;
     }
-    // Enemy (online bot) mega beam landed on the LOCAL player → heavy damage
-    // (half max HP per hit, so two mega beams kill). Bot beams are non-lethal.
+    // A local-bot beam landed on the LOCAL player → a concentrated super deals
+    // SUPER_DAMAGE (3), a boss mega beam deals BOSS_SHOT_DAMAGE (5). Both soak
+    // shield-first via takeHit/applyDamage.
     if (target === this.player) {
       if (name) this.lastAttacker = { name, t: Date.now() };
-      for (let i = 0; i < BOSS_SHOT_DAMAGE && this.player.isAlive(); i++) {
+      const dmg = lethal ? SUPER_DAMAGE : BOSS_SHOT_DAMAGE;
+      for (let i = 0; i < dmg && this.player.isAlive(); i++) {
         this.player.takeHit(dir);
       }
       return;
     }
     // Attribute the kill so bot-vs-bot mega kills show in the feed.
     if (target instanceof Bot && name) target.recordHitBy(name);
-    // Both the concentrated super and the boss mega beam deal BOSS_SHOT_DAMAGE
-    // (half max HP) per hit — two hits to kill, NO insta-kill.
+    // Concentrated super → SUPER_DAMAGE (3); boss mega beam → BOSS_SHOT_DAMAGE (5).
     if (target instanceof Bot) {
-      for (let i = 0; i < BOSS_SHOT_DAMAGE && target.isAlive(); i++) {
+      const dmg = lethal ? SUPER_DAMAGE : BOSS_SHOT_DAMAGE;
+      for (let i = 0; i < dmg && target.isAlive(); i++) {
         target.takeHit(dir);
       }
       if (!target.isAlive()) this.kameKillFx(target.position.x, target.position.z);
     } else if (target instanceof RemotePlayer) {
       this.recentHits.set(target.id, Date.now());
       if (lethal) {
-        // Concentrated super: one dramatic kamehit event — victim takes
-        // SUPER_DAMAGE (5) with the impact blast, instead of N normal hits.
+        // Concentrated super: one kamehit event. The SERVER resolves it shield-first
+        // for SUPER_DAMAGE (3) and pushes the victim's real HP back — no client-side
+        // damage here, so the two supers (player + bot) share one authoritative model.
         this.mp?.sendKameHit(target.id, { x: dir.x, y: dir.y, z: dir.z });
       } else {
         for (let i = 0; i < BOSS_SHOT_DAMAGE; i++) this.mp?.sendHit(target.id);
