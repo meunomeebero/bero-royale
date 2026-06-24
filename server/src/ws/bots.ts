@@ -89,6 +89,15 @@ const SUPER_CD_MAX = 22; // cooldown ceiling after firing (random in [MIN,MAX])
  *  super (index.ts resolves a "kamehit" on a player with this same amount), so
  *  both paths use one shield-first model. Mirror of the client headline. */
 export const SUPER_DAMAGE = 3;
+/**
+ * Fixed reveal delay for a super's damage. The kame beam is near-instant VISUALLY
+ * (a beam, not a BULLET_SPEED point projectile), so its damage lands a short fixed
+ * time after the beam/blast FX appears — NOT dist/BULLET_SPEED. Scheduled via the
+ * impact-tick queue so the victim sees the beam before taking it. The dodge gate
+ * still resolves at FIRE time (the locked dash/jump dodge promise). Phase 4 of
+ * docs/systems/netcode-hit-sync-plan.md.
+ */
+const SUPER_REVEAL_MS = 120;
 const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
 
 // ── Saber stagger (a player's melee hit on a server bot) — canonical, server-side ──
@@ -1243,23 +1252,24 @@ export class BotSim {
     const dlen = Math.hypot(ddx, ddz) || 1;
     const dir = { x: ddx / dlen, y: 0, z: ddz / dlen };
 
+    const seq = this.shotSeq++;
     // (1) VISUAL: matches the player KameEvent shape {id, origin, dir}. The client
-    // renders the beam from the remote's rendered muzzle, damaging=false.
+    // renders the beam from the remote's rendered muzzle, damaging=false. `seq`
+    // correlates the beam with its scheduled damage (impact gate, Phase 3).
     this.fanout(room, "kame", {
       id: b.id,
       origin: { x: b.x, y: MUZZLE_Y, z: b.z },
       dir,
+      seq,
     }, b.id);
 
-    // (2) DAMAGE (server-side): only if the target is still a live player within
-    // SUPER_RANGE AND within the beam half-width of the aim ray (point-to-ray
-    // distance test ≈ a forgiving 14° cone). A dodger takes ZERO.
+    // (2) DODGE GATE (resolved NOW, at fire time — preserves the locked dash/jump
+    // dodge promise): only if the target is still a live, GROUNDED player within
+    // SUPER_RANGE AND within the beam half-width of the aim ray (≈14° cone).
     if (!this.hub.isPlayer(room, tid)) return;
-    // Jump dodge: an airborne target is above the low horizontal beam, so a player
-    // who JUMPED (or dashed) in reaction to the ~1.2s telegraph takes ZERO. The
-    // server has no terrain model, so the snapshot's grounded flag is the
-    // terrain-independent dodge signal (works on hills too). Matches the locked
-    // "dá pra esquivar com dash/pulo" design promise.
+    // An airborne target is above the low horizontal beam, so a player who JUMPED
+    // (or dashed) in reaction to the ~1.2s telegraph takes ZERO. The server has no
+    // terrain model, so the snapshot's grounded flag is the dodge signal.
     if (!tpos.grounded) return;
     const px = tpos.x - b.x;
     const pz = tpos.z - b.z;
@@ -1268,8 +1278,21 @@ export class BotSim {
     const perp = Math.abs(px * dir.z - pz * dir.x); // perpendicular distance to the ray
     if (perp > SUPER_CONE_HALF_WIDTH) return; // outside the beam → missed
 
-    // Drain through any shields then HP: each damagePlayer call soaks 1 shield or
-    // 1 HP, so loop up to SUPER_DAMAGE times and stop the instant it kills.
+    // (3) DAMAGE: scheduled to land with the beam's blast FX (SUPER_REVEAL_MS),
+    // not synchronously — so the victim sees the beam before taking it.
+    this.hub.enqueueHit(room, {
+      applyAt: Date.now() + SUPER_REVEAL_MS,
+      resolve: () => this.resolveSuper(room, b, tid, seq),
+    });
+  }
+
+  /**
+   * Apply a scheduled super hit (shield-first up to SUPER_DAMAGE) at beam-reveal
+   * time. Mirrors the old synchronous tail of fireSuper(); damagePlayer null-guards
+   * a target that died/dodged-out meanwhile.
+   */
+  private resolveSuper(room: string, b: ServerBot, tid: string, seq: number) {
+    // Drain through any shields then HP: each damagePlayer soaks 1 shield or 1 HP.
     let res: HitResult | null = null;
     for (let i = 0; i < SUPER_DAMAGE; i++) {
       const r = this.hub.damagePlayer(room, tid, b.id);
@@ -1280,10 +1303,10 @@ export class BotSim {
     if (!res) return;
 
     // Victim cue so the player predicts the damage locally (mirrors fire()).
-    this.fanout(room, "hit", { target: tid, from: b.id, fromName: b.name }, b.id);
+    this.fanout(room, "hit", { target: tid, from: b.id, fromName: b.name, seq }, b.id);
 
     if (res.died) {
-      this.fanout(room, "died", { id: tid, x: res.x, z: res.z, by: b.id }, b.id);
+      this.fanout(room, "died", { id: tid, x: res.x, z: res.z, by: b.id, seq }, b.id);
       this.fanout(room, "kill", {
         id: `srvk_${this.killSeq++}`,
         killer: b.name,

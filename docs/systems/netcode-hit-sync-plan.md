@@ -8,7 +8,8 @@ super, kame, beam-front, favor-the-victim, responsividade, netcode.
 > **Codex GPT‑5.5** (ver `mega-brain.md`). Diagnóstico em
 > [`online-invisible-shots-diagnosis.md`](online-invisible-shots-diagnosis.md); autoridade em
 > [`netcode-trust-model.md`](netcode-trust-model.md). Status: **Fases 0–1 implementadas + verificadas**
-> (oracle `server/test/hit-sync-harness.mjs`: BEFORE mediana **−284 ms** → AFTER **+13–36 ms**); **Fases 2–5 pendentes.**
+> (oracle `server/test/hit-sync-harness.mjs`: BEFORE mediana **−284 ms** → AFTER tiro **+27 ms**, super **+35 ms**);
+> **Fase 4 (super do bot) feita; Fases 2, 3, 5 pendentes.**
 
 ## Invariante (requisito inegociável do dono)
 **Nunca morrer de um tiro que você não viu chegar.** É aceitável: servidor mais pesado, animação de
@@ -67,7 +68,7 @@ Três pilares (todos necessários; nenhum sozinho satisfaz o invariante):
 - **Fase 3 — gate de impacto no cliente (obrigatório).**
   `Bullets.ts`: teste de proximidade do tracer seq-taggeado vs player local (hoje pulado em `:403`) → `onLethalArrive({shooterId,shotSeq})`.
   `Game.ts` hit/died/hp do player local: **não** matar na hora; bufferizar por chave; soltar em `onLethalArrive` **ou** no timeout limitado — **e no timeout sintetizar impacto visível primeiro, soltar morte ≥1 frame depois.** Áudio/flash continuam instantâneos (cosméticos). Entradas pendentes **independentes** por atirador simultâneo.
-- **Fase 4 — super/kame (beam-front, não bala de velocidade 22).**
+- ✅ **Fase 4 — super/kame do BOT (beam-front, não bala de velocidade 22).** *(feito: `fireSuper()`→`resolveSuper()` enfileirado com `applyAt = now + SUPER_REVEAL_MS=120ms`, gate de esquiva mantido no fire-time, `seq` no `kame`. Verificado: super delta mediana 35ms (≥0). O `kamehit` do JOGADOR fica na Fase 5 (precisa o cliente carimbar `seq`).)*
   `bots.ts fireSuper()`: manter o gate de dodge no **fire time**; trocar dano síncrono por `enqueueHit(kind:'super', applyAt = now + SUPER_REVEAL_MS)` atado ao **blast-FX** (o feixe é quase instantâneo visualmente, não viaja a 22). `index.ts kamehit`: idem p/ super do jogador. `Game.ts`/`Kamehameha.ts`: morte/HP do super dirigida pelo `impactAt` do beam, com o mesmo fallback.
 - **Fase 5 — PvP throttle/loss + docs (tranca o invariante).**
   `index.ts`: `shot` letal não-dropável enquanto seu `hit` passa (reestruturar o bucket pré-parse).
