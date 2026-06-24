@@ -25,6 +25,12 @@ implacáveis. Render em Three.js, multiplayer online com servidor próprio, voz 
 > Método multi-agente ("mega brain"): [`docs/mega-brain.md`](docs/mega-brain.md) ·
 > Índice de docs: [`docs/README.md`](docs/README.md)
 
+> **📌 Regra inegociável de contribuição:** toda mudança de código vem com a documentação
+> atualizada e **indexada** em [`docs/README.md`](docs/README.md). Cada domínio/lógica tem um `.md`
+> pequeno, de propósito único e com keywords em [`docs/systems/`](docs/systems/), para que qualquer
+> pessoa (ou agente) ache "lógica X → doc" por keyword antes de mexer no código. Detalhes em
+> [`CLAUDE.md`](CLAUDE.md). Mudança sem doc = incompleta.
+
 ---
 
 ## Stack

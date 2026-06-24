@@ -1,5 +1,21 @@
 # Índice de documentação — Bero Royale
 
+> **Regra inegociável (ver também `/CLAUDE.md` + `/README.md`):** toda modificação de código deve
+> vir acompanhada de documentação **atualizada e indexada aqui**. Cada domínio/regra-de-negócio/
+> lógica vive num `.md` **pequeno e de propósito único** em `docs/systems/`, com **keywords** no
+> topo. Antes de mexer na lógica X, ache o doc por keyword nesta tabela → você tem o contexto e o
+> mapa de arquivos sem ler o código todo. Doc faltando ou desatualizado = mudança incompleta.
+
+## Sistemas / domínios (`docs/systems/` — docs pequenos, 1 propósito, com keywords)
+| Doc | Domínio | Keywords |
+|---|---|---|
+| [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo (slot 3) | sabre, saber, melee, swing, parry, reflect, stun, stagger, knockback |
+| [`systems/netcode-trust-model.md`](systems/netcode-trust-model.md) | Autoridade de rede | netcode, online, servidor, autoritativo, broadcast, hit, parry, tiros invisíveis, interpolação |
+
+> _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento,
+> dash, super/kamehameha, power-ups, bots, voz, HUD, leaderboard) em `docs/systems/`._
+
+## Docs gerais
 | Doc | O que é |
 |---|---|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | **Fonte de verdade** as-built: engine Three.js, netcode relay, servidor Node, build/deploy, threading. |
@@ -8,11 +24,14 @@
 | [`shardcloud.md`](shardcloud.md) | Deploy/ops na Shard Cloud (app Node) — runbook, config, DB. |
 | [`mp-sync-plan.md`](mp-sync-plan.md) | 🗂️ Histórico — plano de sync multiplayer (implementado; ver ARCHITECTURE.md). |
 | [`mp-wave2-plan.md`](mp-wave2-plan.md) | 🗂️ Histórico — plano da wave 2 (implementado). |
+| [`PENDENCIAS.md`](PENDENCIAS.md) | **Backlog vivo / sprint** — pendências, gate de review, dívida técnica, bug urgente do online. |
 | [`sprints.md`](sprints.md) | 🗂️ Histórico superado — log de sprints sob o nome antigo "VoxelCube" (menciona Supabase, hoje é Node WS). |
 
-## Como navegar
-- **Entender o sistema** → `ARCHITECTURE.md`.
-- **Otimizar / latência** → `PERFORMANCE.md`.
-- **Deploy** → `shardcloud.md`.
-- **Reusar o método de agentes** (conselho/council, fan-out, review adversarial) em outro projeto/agente → `mega-brain.md`.
-- **Convenções de código** → [`../CodeGuideline.md`](../CodeGuideline.md).
+## Como navegar (e onde um agente novo começa)
+1. **Vou mexer na lógica X** → ache X por **keyword** na tabela "Sistemas / domínios" → o doc tem o
+   mapa de arquivos + os números canônicos. Se não existir doc do domínio, **crie um** (`docs/systems/`).
+2. **Entender o sistema todo** → `ARCHITECTURE.md`. **Latência/perf** → `PERFORMANCE.md`.
+   **Deploy** → `shardcloud.md`. **Backlog/pendências** → `PENDENCIAS.md`.
+3. **Método multi-agente** (council, fan-out, review adversarial) → `mega-brain.md`.
+4. **Convenções de código** → [`../CodeGuideline.md`](../CodeGuideline.md).
+5. **Ao terminar uma mudança:** atualize/crie o doc do domínio + esta tabela (regra inegociável acima).
