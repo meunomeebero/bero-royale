@@ -7,7 +7,8 @@ super, kame, beam-front, favor-the-victim, responsividade, netcode.
 > **Origem:** saída de um MegaBrain (workflow de 17 agentes) + conselho externo **GLM 5.2** e
 > **Codex GPT‑5.5** (ver `mega-brain.md`). Diagnóstico em
 > [`online-invisible-shots-diagnosis.md`](online-invisible-shots-diagnosis.md); autoridade em
-> [`netcode-trust-model.md`](netcode-trust-model.md). Status: **arquitetura decidida, implementação pendente.**
+> [`netcode-trust-model.md`](netcode-trust-model.md). Status: **Fases 0–1 implementadas + verificadas**
+> (oracle `server/test/hit-sync-harness.mjs`: BEFORE mediana **−284 ms** → AFTER **+13–36 ms**); **Fases 2–5 pendentes.**
 
 ## Invariante (requisito inegociável do dono)
 **Nunca morrer de um tiro que você não viu chegar.** É aceitável: servidor mais pesado, animação de
@@ -51,13 +52,13 @@ Três pilares (todos necessários; nenhum sozinho satisfaz o invariante):
 | Cliente interp | `src/game/RemotePlayer.ts`, `src/game/consts.ts:76` (`INTERP_DELAY` 40–90 ms) | origem absoluta evita interp |
 
 ## Plano faseado
-- **Fase 0 — consts compartilhadas + harness de verificação (sem mudança de comportamento).**
+- ✅ **Fase 0 — consts compartilhadas + harness de verificação (sem mudança de comportamento).** *(feito: `BULLET_SPEED`/`MIN_TRAVEL_MS` no server c/ comentário bidirecional; harness em `server/test/hit-sync-harness.mjs`. Módulo compartilhado real fica como follow-up.)*
   Hoistar `BULLET_SPEED`/`BULLET_LIFE`/`BULLET_MAX_RANGE` p/ um módulo importável por server+cliente (1 número só).
   Cliente WS sintético que força um bot a atirar e mede `delta = t_hit − tracerArrival` (deve ser `≥ 0`).
   **Aviso do Codex:** o WS sintético **só prova o espaçamento de envio do server** — não prova que o
   cliente *renderizou* o tracer antes da morte. Instrumentar **também** o callback de impacto real do
   cliente (headed browser / hook de teste). Rodar contra o código atual: deve **FALHAR** (delta ~ −350 ms) = reproduz o bug.
-- **Fase 1 — fila de hits pendentes + drain (bot fire normal). Dano-na-chegada.**
+- ✅ **Fase 1 — fila de hits pendentes + drain (bot fire normal). Dano-na-chegada.** *(feito: `PendingHit`/`enqueueHit`/`drainPendingHits` no `rooms.ts`, drain no botLoop, `fire()`→`resolveShot` enfileirado, `seq` no `shot`/`hit`/`died`. Verificado: dano cai com o tracer (≤1 tick). Super/PvP ainda síncronos = Fases 4/5.)*
   `rooms.ts`: `pendingHits` por sala + `enqueueHit`/`drainPendingHits(now)`. `index.ts` botLoop: drenar após `botSim.tick`.
   `bots.ts fire()`: manter fanout `shot`+roll; trocar dano síncrono por `enqueueHit(applyAt = now + max(MIN_TRAVEL_MS, dist/22*1000))`, cap em `BULLET_LIFE`. `protocol.ts`: `shotSeq` no payload `shot`.
 - **Fase 2 — apresentação direcionada (fecha o decoupling espacial).**

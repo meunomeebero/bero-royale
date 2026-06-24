@@ -77,6 +77,19 @@ export interface Player {
   acked: boolean;
 }
 
+/**
+ * A damage event scheduled to resolve when its visible projectile is DUE to
+ * arrive (`applyAt`), so the damage + its "hit"/"died" cues land WITH the tracer
+ * the victim sees — not 0.3-0.4s before it ("die to an invisible shot"). Drained
+ * each room tick. See `docs/systems/netcode-hit-sync-plan.md` (Phase 1).
+ */
+export interface PendingHit {
+  /** Server clock (ms) at/after which the hit resolves. */
+  applyAt: number;
+  /** Apply the damage + fan out its cues. Idempotent vs a dead/gone target. */
+  resolve: () => void;
+}
+
 export class RoomHub {
   /**
    * One authoritative uint32 world seed per live room, generated when the room
@@ -85,6 +98,14 @@ export class RoomHub {
    * arena).
    */
   private seeds = new Map<string, number>();
+
+  /**
+   * Per-room queue of damage events scheduled to land WHEN their visible tracer
+   * arrives (impact-tick scheduler). Drained by `drainPendingHits` on the bot
+   * loop. Replaces synchronous bot damage so a player never dies before seeing
+   * the shot. See `docs/systems/netcode-hit-sync-plan.md`.
+   */
+  private pendingHits = new Map<string, PendingHit[]>();
 
   /**
    * Per-room player registry that outlives individual sockets.
@@ -282,6 +303,41 @@ export class RoomHub {
     return res;
   }
 
+  // ---------------------------------------------------------------------------
+  // Impact-tick scheduler (damage-on-arrival) — see netcode-hit-sync-plan.md
+  // ---------------------------------------------------------------------------
+
+  /** Schedule a hit to resolve at `hit.applyAt` (drained on the room tick). */
+  enqueueHit(room: string, hit: PendingHit): void {
+    let q = this.pendingHits.get(room);
+    if (!q) {
+      q = [];
+      this.pendingHits.set(room, q);
+    }
+    q.push(hit);
+    // Defensive cap: a runaway producer can never grow the queue unbounded.
+    if (q.length > 512) q.splice(0, q.length - 512);
+  }
+
+  /**
+   * Resolve every pending hit whose `applyAt` has passed; keep the rest
+   * (compacted in place — no per-tick allocation). Called once per room tick
+   * from the bot loop. Resolution order = insertion order among the due entries;
+   * `damagePlayer`/`damageBot` null-guard a target that already died, so a late
+   * bullet landing on a corpse simply no-ops.
+   */
+  drainPendingHits(room: string, now: number): void {
+    const q = this.pendingHits.get(room);
+    if (!q || q.length === 0) return;
+    let w = 0;
+    for (let r = 0; r < q.length; r++) {
+      const e = q[r];
+      if (e.applyAt <= now) e.resolve();
+      else q[w++] = e;
+    }
+    q.length = w;
+  }
+
   /**
    * Echo a player's authoritative health+shield to its OWN socket so its HUD
    * tracks server truth (see damagePlayer). A one-way unicast on the same
@@ -351,6 +407,7 @@ export class RoomHub {
     if (inner.size === 0) {
       this.players.delete(room);
       this.seeds.delete(room);
+      this.pendingHits.delete(room);
       this.botSim.clearRoom(room);
       this.powerupSim.clearRoom(room);
     }

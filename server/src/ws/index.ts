@@ -348,9 +348,13 @@ export function attachWebSocket(server: Server): RoomHub {
   function startBotLoop(): void {
     if (botLoop) return;
     botLoop = setInterval(() => {
+      const now = Date.now();
       for (const room of hub.allRooms()) {
         hub.botSim.tick(room, BOT_TICK_SECONDS);
         hub.powerupSim.tick(room, BOT_TICK_SECONDS);
+        // Resolve scheduled hits whose visible tracer has now arrived, so damage
+        // lands WITH the bullet the victim sees (netcode-hit-sync-plan.md, Phase 1).
+        hub.drainPendingHits(room, now);
       }
     }, BOT_TICK_MS);
   }

@@ -171,6 +171,19 @@ const MIN_COMBATANTS = 10;
 const MAX_BOTS = 5;
 
 const BULLET_COLOR = "#ff5e6c";
+/**
+ * Visible-bullet travel speed. **MUST stay in sync with `BULLET_SPEED` in
+ * `src/game/Bullets.ts`** — the server schedules damage to land `dist/BULLET_SPEED`
+ * after the shot so it coincides with the tracer the client renders at that same
+ * speed. Duplicated (not shared via a module) on purpose: the server (tsup) and
+ * client (vite) builds don't share a source today. See netcode-hit-sync-plan.md.
+ */
+const BULLET_SPEED = 22;
+/**
+ * Floor on a scheduled hit's travel time so point-blank shots (dist→0) still show
+ * a brief visible tracer before the damage lands — no close-range instant-death.
+ */
+const MIN_TRAVEL_MS = 90;
 
 // Mirrors the client ANIMAL_NAMES (ModelLibrary) + BOT_NAMES so bots read as
 // real players with valid avatars.
@@ -265,6 +278,13 @@ export class BotSim {
   private bots = new Map<string, ServerBot>(); // GAME_ROOM only
   private seq = 0;
   private killSeq = 0;
+  /**
+   * Monotonic per-shot id, stamped on every "shot" tracer and carried through to
+   * its scheduled "hit"/"died" so a client can correlate the visible bullet with
+   * the damage it causes (impact gate, Phase 3). Globally unique within the sim,
+   * so {from,seq} or just seq identifies a shot. See netcode-hit-sync-plan.md.
+   */
+  private shotSeq = 0;
   /**
    * Per-target velocity estimate for aim-leading. The hub exposes only player
    * positions, so we differentiate them across bot ticks: id → {x,z,vx,vz}.
@@ -1343,7 +1363,13 @@ export class BotSim {
     return best;
   }
 
-  /** Fire a normal shot at `tgt`: broadcast the tracer + hitscan the damage. */
+  /**
+   * Fire a normal shot at `tgt`: broadcast the tracer NOW, but SCHEDULE the
+   * damage to land when the visible bullet arrives (`dist/BULLET_SPEED` later)
+   * instead of applying it synchronously — so the victim SEES the shot before
+   * taking it. The accuracy roll is decided now (deterministic); only the
+   * application is deferred. See netcode-hit-sync-plan.md (Phase 1).
+   */
   private fire(room: string, b: ServerBot, tgt: Target) {
     // Lead the aim slightly toward where a MOVING target is heading. Bots are
     // treated as stationary (vx/vz=0) so this only bites on real players.
@@ -1353,28 +1379,46 @@ export class BotSim {
     const dz = aimZ - b.z;
     const dist = Math.hypot(dx, dz) || 1;
     const dir = { x: dx / dist, y: 0, z: dz / dist };
-    // Visual tracer (clients render a travelling bullet + spatial SFX).
+    const seq = this.shotSeq++;
+    // Visual tracer (clients render a travelling bullet + spatial SFX). `seq`
+    // correlates this tracer with its scheduled damage on the victim's client.
     this.fanout(room, "shot", {
       id: b.id,
       origin: { x: b.x, y: MUZZLE_Y, z: b.z },
       dir,
       color: BULLET_COLOR,
+      seq,
     }, b.id);
 
-    // Hitscan with accuracy.
+    // Hitscan with accuracy — decided NOW, applied ON ARRIVAL.
     if (rand() > ACCURACY) return;
+    const targetId = tgt.id;
+    const applyAt = Date.now() + Math.max(MIN_TRAVEL_MS, (dist / BULLET_SPEED) * 1000);
+    this.hub.enqueueHit(room, {
+      applyAt,
+      resolve: () => this.resolveShot(room, b, targetId, seq),
+    });
+  }
+
+  /**
+   * Apply a scheduled normal-shot hit (damage + cues) at the bullet's arrival
+   * time. Mirrors the old synchronous tail of `fire()`. `damagePlayer`/
+   * `damageBot` null-guard a target that died in the ~0.3s flight, so a late
+   * bullet landing on a corpse simply no-ops (correct: the bullet was real).
+   */
+  private resolveShot(room: string, b: ServerBot, targetId: string, seq: number) {
     const res =
-      this.hub.damagePlayer(room, tgt.id, b.id) ?? this.damageBot(room, tgt.id, b.id);
+      this.hub.damagePlayer(room, targetId, b.id) ?? this.damageBot(room, targetId, b.id);
     if (!res) return;
 
     // Player victim: send a "hit" cue so the victim predicts the damage locally
     // (its own health is client-side; the server independently enforces it).
-    if (this.hub.isPlayer(room, tgt.id)) {
-      this.fanout(room, "hit", { target: tgt.id, from: b.id, fromName: b.name }, b.id);
+    if (this.hub.isPlayer(room, targetId)) {
+      this.fanout(room, "hit", { target: targetId, from: b.id, fromName: b.name, seq }, b.id);
     }
 
     if (res.died) {
-      this.fanout(room, "died", { id: tgt.id, x: res.x, z: res.z, by: b.id }, b.id);
+      this.fanout(room, "died", { id: targetId, x: res.x, z: res.z, by: b.id, seq }, b.id);
       // Bots are the killer here → the SERVER owns this feed line (player-killers
       // are surfaced client-side). Everyone sees it.
       this.fanout(room, "kill", {

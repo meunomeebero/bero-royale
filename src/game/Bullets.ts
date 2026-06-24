@@ -28,6 +28,12 @@ interface Bullet {
 }
 
 const BULLET_GEOM = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+/**
+ * Tracer travel speed. **MUST stay in sync with `BULLET_SPEED` in
+ * `server/src/ws/bots.ts`** — the server schedules bot damage to land
+ * `dist/BULLET_SPEED` after the shot so it coincides with this visible tracer.
+ * See docs/systems/netcode-hit-sync-plan.md.
+ */
 const BULLET_SPEED = 22;
 const BULLET_LIFE = 1.6;
 const HIT_RADIUS = 0.35; // squared distance check uses radius
