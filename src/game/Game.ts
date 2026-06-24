@@ -870,6 +870,7 @@ export class Game {
           REFLECT_CAPSULE,
           REFLECT_INBOUND,
           REFLECT_VTOL,
+          s.dt,
           "player",
           "player",
           REFLECT_MAX_PER_SWING - this.meleeReflects,

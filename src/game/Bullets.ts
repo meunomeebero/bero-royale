@@ -219,6 +219,7 @@ export class Bullets {
     capsule: number,
     inboundDot: number,
     vTol: number,
+    bulletDt: number,
     newOwner: BulletOwner,
     newOwnerId: string,
     maxCount: number,
@@ -269,12 +270,27 @@ export class Bullets {
         continue;
       }
 
-      // Point-to-segment distance (XZ): project the bullet onto the blade segment.
-      let t = ((bx - sx) * segX + (bz - sz) * segZ) / segLen2;
-      t = Math.max(0, Math.min(1, t));
-      const cx = sx + t * segX;
-      const cz = sz + t * segZ;
-      if (Math.hypot(bx - cx, bz - cz) > capsule) continue;
+      // Swept capsule test: sample the bullet's FRAME PATH (current → current +
+      // vel*dt) and accept if any point is within `capsule` of the blade segment.
+      // A bullet at 22 u/s moves ~0.73 u/frame at 30fps — more than the capsule —
+      // so testing only the current point would let it cross the blade unsampled.
+      const nbx = bx + b.velocity.x * bulletDt;
+      const nbz = bz + b.velocity.z * bulletDt;
+      const pathLen = Math.hypot(nbx - bx, nbz - bz);
+      const bSteps = Math.max(1, Math.min(6, Math.ceil(pathLen / capsule)));
+      let crossed = false;
+      for (let k = 0; k <= bSteps; k++) {
+        const f = k / bSteps;
+        const px = bx + (nbx - bx) * f;
+        const pz = bz + (nbz - bz) * f;
+        let t = ((px - sx) * segX + (pz - sz) * segZ) / segLen2;
+        t = Math.max(0, Math.min(1, t));
+        if (Math.hypot(px - (sx + t * segX), pz - (sz + t * segZ)) <= capsule) {
+          crossed = true;
+          break;
+        }
+      }
+      if (!crossed) continue;
 
       // ── Reflect ──
       const prevOwnerId = b.ownerId;

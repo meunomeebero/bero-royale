@@ -64,7 +64,8 @@ export interface MeleeSample {
   dt: number;
   /** Player body center (swing origin). */
   origin: THREE.Vector3;
-  /** Normalized XZ aim/facing direction at swing start. */
+  /** Normalized XZ facing direction — frozen for the whole swing (committed at
+   *  swing start), matching the start-direction sent to remote clients. */
   aimDir: THREE.Vector3;
   /** Live blade segment in world space (pivot end → tip end). */
   bladeStart: THREE.Vector3;
@@ -762,6 +763,14 @@ export class Player implements BulletTarget {
   }
 
   private updateAim(camera: THREE.Camera) {
+    // A saber swing COMMITS to the facing it started with: freeze aim for the
+    // swing's duration (like a baseball swing). This keeps the swept blade, its
+    // hit/parry test, and the start-direction broadcast to remotes all in ONE
+    // direction — you can't spin the cursor to sweep the blade across the arena.
+    if (this.swingTimer > 0) {
+      this.aimGroup.rotation.y = -this.aimYaw;
+      return;
+    }
     const mobileYaw = this.input.getMobileAimYaw();
     if (mobileYaw !== null) {
       this.aimYaw = mobileYaw;

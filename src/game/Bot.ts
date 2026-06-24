@@ -38,6 +38,7 @@ const BOT_KAME_COOLDOWN_MIN = 8.0; // seconds between mega beams
 const BOT_KAME_COOLDOWN_RANGE = 6.0; // + up to this, randomized
 const BOT_KAME_RANGE = 9.0; // only wind up a mega when within beam reach (~2×hearing)
 const BOT_KAME_INTERRUPT_PENALTY = 1.0; // saber-interrupted charge can't re-wind for this long
+const MELEE_STAGGER_FREE = 0.5; // guaranteed un-staggerable window after each stagger
 
 type State = "alive" | "falling" | "dead";
 
@@ -92,9 +93,11 @@ export class Bot implements BulletTarget {
 
   // Saber stagger: full action freeze (stunTimer) + a longer constant-fire
   // lockout (constantFireLockTimer). Both decay in update(); knockback velocity
-  // still integrates while stunned (the push must land).
+  // still integrates while stunned (the push must land). staggerFreeT is the
+  // anti-refresh gate: the next stagger is only honored after it reaches 0.
   private stunTimer = 0;
   private constantFireLockTimer = 0;
+  private staggerFreeT = 0;
 
   private aimYaw = 0;
   private shootTimer = 0;
@@ -276,7 +279,11 @@ export class Bot implements BulletTarget {
    * Saber stagger: a brief full-action freeze + a longer constant-fire lockout,
    * and (optionally) an interruption of any in-progress mega-beam charge — which
    * is reset to zero AND penalized so the bot can't immediately re-charge.
-   * Timers refresh with max() (never stack) so repeated hits can't stun-lock.
+   *
+   * Rate-limited: the next stagger is only honored once the prior effect has fully
+   * expired + a free window (staggerFreeT). Without this, a player swinging every
+   * ~0.55s would refresh the 1.0s fire-lock forever and keep the bot from ever
+   * shooting; the free window guarantees it gets periodic windows to fight back.
    */
   applyMeleeStagger(
     stunSeconds: number,
@@ -284,11 +291,9 @@ export class Bot implements BulletTarget {
     interruptCharge: boolean,
   ): void {
     if (this.state !== "alive") return;
-    this.stunTimer = Math.max(this.stunTimer, stunSeconds);
-    this.constantFireLockTimer = Math.max(
-      this.constantFireLockTimer,
-      constantFireLockSeconds,
-    );
+    if (this.staggerFreeT > 0) return; // still inside the previous stagger's gate
+    this.stunTimer = stunSeconds;
+    this.constantFireLockTimer = constantFireLockSeconds;
     // Block an instant shot the moment the lock expires.
     this.shootTimer = Math.max(this.shootTimer, constantFireLockSeconds);
     if (interruptCharge && this.kameCharging) {
@@ -296,6 +301,8 @@ export class Bot implements BulletTarget {
       this.kameChargeT = 0;
       this.megaTimer = Math.max(this.megaTimer, BOT_KAME_INTERRUPT_PENALTY);
     }
+    this.staggerFreeT =
+      Math.max(stunSeconds, constantFireLockSeconds) + MELEE_STAGGER_FREE;
   }
 
   /** Insta-kill from a Kamehameha beam (ignores incremental health). */
@@ -349,6 +356,7 @@ export class Bot implements BulletTarget {
     this.kameChargeT = 0;
     this.stunTimer = 0;
     this.constantFireLockTimer = 0;
+    this.staggerFreeT = 0;
     this.lastHitBy = null;
     this.position.copy(this.root.position);
   }
@@ -406,6 +414,7 @@ export class Bot implements BulletTarget {
     if (this.constantFireLockTimer > 0) {
       this.constantFireLockTimer = Math.max(0, this.constantFireLockTimer - dt);
     }
+    if (this.staggerFreeT > 0) this.staggerFreeT = Math.max(0, this.staggerFreeT - dt);
 
     // --- AI ---
     const move = this.tmpMove.set(0, 0, 0);
