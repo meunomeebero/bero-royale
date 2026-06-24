@@ -177,8 +177,6 @@ export class Player implements BulletTarget {
   private swingTimer = 0; // >0 while the swing animation plays
   private swingElapsed = 0; // seconds since the swing started
   private swingId = 0; // bumped per swing; Game keys its per-swing hit-set on this
-  private swingSmokeAccum = 0; // throttles the slash trail
-  private swingDustAccum = 0; // throttles the ground dust along the arc
   // Fired once at swing start (broadcast the swing for remotes).
   private onMelee?: (origin: THREE.Vector3, dir: THREE.Vector3) => void;
   // Fired every frame during the swing — Game resolves arc hits + bullet parry.
@@ -1129,25 +1127,19 @@ export class Player implements BulletTarget {
         });
       }
 
-      // Slash trail (cyan energy puffs along the blade tip) during the strike.
-      if (this.smoke && phase === "strike") {
-        this.swingSmokeAccum -= dt;
-        if (this.swingSmokeAccum <= 0) {
-          this.swingSmokeAccum = 0.02;
-          const tipPos = new THREE.Vector3();
-          this.staffTip.getWorldPosition(tipPos);
-          this.smoke.spawnPuff(tipPos, this.getAimDirection(this.tmpDir).clone(), 1, "#7fe8ff");
-        }
-        // Ground dust kicked up along the arc.
-        this.swingDustAccum -= dt;
-        if (this.swingDustAccum <= 0) {
-          this.swingDustAccum = 0.05;
-          const sy = this.platform.surfaceY(this.root.position.x, this.root.position.z);
-          this.dust.spawnBurst(
-            new THREE.Vector3(this.root.position.x, sy + 0.02, this.root.position.z),
-            4,
-          );
-        }
+      // No per-frame smoke along the arc — the blue SaberTrail is the in-motion
+      // effect. Instead, a single BIG smoke burst at the END of the swing: the
+      // "ar deslocado" piling up where the blade finishes its trajectory.
+      if (this.smoke && this.swingTimer <= 0) {
+        const tipPos = new THREE.Vector3();
+        this.staffTip.getWorldPosition(tipPos);
+        this.smoke.spawnPuff(
+          tipPos,
+          this.getAimDirection(this.tmpDir).clone(),
+          7,
+          "#dbecff",
+          2.6, // big blocks
+        );
       }
     } else if (this.staffPivot.rotation.y !== SABER_REST_YAW) {
       // Settle smoothly back to the perpendicular rest pose and reset the mount.
@@ -1234,8 +1226,6 @@ export class Player implements BulletTarget {
     this.swingId = (this.swingId + 1) & 0xffff;
     this.swingTimer = MELEE_SWING_DUR;
     this.swingElapsed = 0;
-    this.swingSmokeAccum = 0;
-    this.swingDustAccum = 0;
     // Broadcast the swing (remotes drag the slash arc). Damage + parry are now
     // resolved per-frame in Game via the onMeleeSample callback, NOT here.
     this.onMelee?.(this.position.clone(), dir);

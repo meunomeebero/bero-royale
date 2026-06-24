@@ -153,6 +153,11 @@ export class Crates {
     return this.crates.has(id);
   }
 
+  /** Live crates as BulletTargets (for the saber arc hit test). */
+  targets(): BulletTarget[] {
+    return [...this.crates.values()];
+  }
+
   /** Spawn a crate; returns the BulletTarget so Game can register it with bullets. */
   spawn(
     id: string,

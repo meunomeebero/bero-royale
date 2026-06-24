@@ -1028,15 +1028,31 @@ export class Game {
         true,
       );
     }
+    // The saber also smashes loot crates (server-authoritative: takeHit() flashes
+    // + relays sendHit, the server tracks crate HP + broadcasts the burst).
+    for (const crate of this.crates.targets()) {
+      if (this.meleeHitIds.has(crate.id)) continue;
+      const push = resolve(crate.position.x, crate.position.z);
+      if (!push) continue;
+      this.meleeHitIds.add(crate.id);
+      this.meleeImpactFx(crate.position, push);
+      for (let i = 0; i < MELEE_DAMAGE; i++) crate.takeHit(push);
+    }
 
     // Remember this pose so the next frame can sweep the gap between them.
     this.meleePrevStart.copy(s.bladeStart);
     this.meleePrevEnd.copy(s.bladeEnd);
   }
 
-  /** Cyan energy-impact burst at a saber-hit target. */
+  /** Big smoke-block burst at a saber-hit target. */
   private meleeImpactFx(pos: THREE.Vector3, dir: THREE.Vector3) {
-    this.smoke.spawnPuff(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), dir, 8, "#7fe8ff");
+    this.smoke.spawnPuff(
+      new THREE.Vector3(pos.x, pos.y + 0.4, pos.z),
+      dir,
+      9,
+      "#dbecff",
+      2.6, // big blocks on impact
+    );
   }
 
   private onKameHit(
