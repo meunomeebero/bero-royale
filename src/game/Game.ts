@@ -223,8 +223,14 @@ export class Game {
     this.featuredAnimal = opts.featuredAnimal;
     this.chosenAnimal = opts.animal;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: false });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: false,
+      powerPreference: "high-performance",
+    });
+    // Cap DPR at 2: a 3x-DPR phone otherwise renders ~2.25x the fragments for no
+    // visible gain on a flat voxel scene (the previews already cap at 2). Big
+    // mobile FPS win, no desktop change (most desktops are DPR 1-2).
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.setClearColor(new THREE.Color("#ffd6ec"), 1);
     container.appendChild(this.renderer.domElement);
@@ -1713,7 +1719,7 @@ export class Game {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     this.renderer.setPixelRatio(
-      this.pixelFilter ? 1 : window.devicePixelRatio,
+      this.pixelFilter ? 1 : Math.min(window.devicePixelRatio, 2),
     );
     this.renderer.setSize(w, h);
     if (this.postfx) {
@@ -1970,7 +1976,11 @@ export class Game {
         const dead = !aliveNow;
         const botC = this.bots.length;
         const dashC = Math.floor(this.player.getDashCharges());
-        const chargeC = Math.round(this.player.getChargeProgress() * 100);
+        // Quantize the super-charge fill to 5% buckets (0-20): a smooth 0-100%
+        // tripped a full-HUD re-render ~33x/s during a 3s charge (leaderboard +
+        // roster rebuild each time). 5% steps are visually smooth on the segmented
+        // fill and cut that to ~7/s.
+        const chargeC = Math.round(this.player.getChargeProgress() * 20);
         const respawnSec = Math.ceil(this.player.getRespawnRemaining());
         const slotC = this.player.getWeaponSlot();
         if (
