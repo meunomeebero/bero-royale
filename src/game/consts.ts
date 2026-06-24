@@ -60,7 +60,40 @@ export const HEARING_RADIUS = 5;
  * the wire rate. Diminishing returns above 30Hz.
  */
 export const NET_TICK_HZ = 30;
-/** Render-time interpolation delay (ms) for remote players. */
+/**
+ * Render-time interpolation delay (ms) for remote players — now an ADAPTIVE
+ * cushion per remote, not a fixed value (was a flat 80ms, the biggest reducible
+ * source of perceived opponent lag). Each remote derives its own cushion from
+ * measured snapshot-arrival jitter:
+ *   cushion = clamp(INTERP_BASE_MS + INTERP_JITTER_K * jitterEMA, INTERP_MIN_MS, INTERP_MAX_MS)
+ * On a clean link (jitter ~1ms) this lands ~44ms (≈ one 33ms tick + margin →
+ * still safely INTERPOLATING between the two newest snapshots, not extrapolating),
+ * i.e. ~36ms less perceived lag than the old fixed 80ms. On a jittery mobile link
+ * it widens toward INTERP_MAX_MS to absorb reorder instead of stuttering.
+ * INTERP_DELAY_MS is kept as the conservative INITIAL cushion before any jitter
+ * is measured.
+ */
 export const INTERP_DELAY_MS = 80;
-/** Max dead-reckoning extrapolation window (ms). */
-export const EXTRAP_MAX_MS = 180;
+/** Base cushion: ~one 33ms tick at 30Hz + ~8ms margin. */
+export const INTERP_BASE_MS = 41;
+/** Jitter slope: cushion grows this-many ms per ms of measured arrival jitter. */
+export const INTERP_JITTER_K = 3;
+/** Floor: never below ~one tick, so we keep ≥2 snapshots buffered (no window collapse → no stutter). */
+export const INTERP_MIN_MS = 40;
+/** Ceiling: worst-case cushion ≈ the old fixed behaviour (absorbs bad links). */
+export const INTERP_MAX_MS = 90;
+/**
+ * Max dead-reckoning extrapolation window (ms). Tightened 180→60: extrapolation
+ * is now a STARVATION FALLBACK only (the adaptive cushion keeps us interpolating
+ * in the common case), and the velocity is decayed toward zero across this window
+ * (EXTRAP_TAU_S) so a remote that stopped/reversed COASTS to a halt instead of
+ * sling-shotting forward and snapping back — the dominant rubber-band artifact.
+ */
+export const EXTRAP_MAX_MS = 60;
+/**
+ * Time constant (s) for the extrapolation velocity decay. Total extrapolated
+ * displacement is hard-bounded to |v|·EXTRAP_TAU_S (~one body-width at run speed),
+ * so an unconfirmed guess can never overshoot far no matter how late the next
+ * packet is.
+ */
+export const EXTRAP_TAU_S = 0.06;

@@ -12,7 +12,12 @@ import {
   AIRBORNE_SQUASH_LERP,
   LEAN_AMOUNT,
   INTERP_DELAY_MS,
+  INTERP_BASE_MS,
+  INTERP_JITTER_K,
+  INTERP_MIN_MS,
+  INTERP_MAX_MS,
   EXTRAP_MAX_MS,
+  EXTRAP_TAU_S,
 } from "./consts";
 
 const HALF_HEIGHT = 0.25;
@@ -67,6 +72,16 @@ export class RemotePlayer implements BulletTarget {
   private vx = 0;
   private vz = 0;
   private vy = 0;
+
+  // ── Adaptive interpolation cushion (per-remote, jitter-driven) ────────────
+  // Replaces the fixed INTERP_DELAY_MS: the render-behind delay shrinks toward
+  // INTERP_MIN_MS on a clean link and widens toward INTERP_MAX_MS under jitter.
+  // Starts at the old fixed value so a brand-new remote is conservative until it
+  // has measured a few inter-arrival gaps.
+  private interpDelay = INTERP_DELAY_MS;
+  private arrivalEMA = 0; // EMA of snapshot inter-arrival (ms)
+  private jitterEMA = 0; // EMA of |inter-arrival − mean| (ms)
+  private lastRecvT = 0; // perf.now() of the previous accepted snapshot
   private grounded = true;
   private state: RemoteState = "alive";
   private targetYaw = 0;
@@ -204,6 +219,25 @@ export class RemotePlayer implements BulletTarget {
     }
 
     const now = performance.now();
+
+    // ── Adaptive cushion: learn this remote's arrival jitter and size the
+    // render-behind delay to it. Updated BEFORE the posError seed below so the
+    // computeTargetPos() it calls uses the fresh cushion. Absurd gaps (tab
+    // throttle, respawn, reconnect) are ignored so they can't blow up the EMA.
+    if (this.lastRecvT > 0) {
+      const interval = now - this.lastRecvT;
+      if (interval > 0 && interval < 500) {
+        this.arrivalEMA =
+          this.arrivalEMA === 0 ? interval : this.arrivalEMA + (interval - this.arrivalEMA) * 0.1;
+        const jit = Math.abs(interval - this.arrivalEMA);
+        this.jitterEMA += (jit - this.jitterEMA) * 0.1;
+        this.interpDelay = Math.max(
+          INTERP_MIN_MS,
+          Math.min(INTERP_MAX_MS, INTERP_BASE_MS + INTERP_JITTER_K * this.jitterEMA),
+        );
+      }
+    }
+    this.lastRecvT = now;
 
     // Push snapshot FIRST so computeTargetPos() sees the new point when we
     // seed posError (fixes the double-correction / "travado" jank: the offset
@@ -523,16 +557,17 @@ export class RemotePlayer implements BulletTarget {
   }
 
   /**
-   * Reconstruct the render-time position: render INTERP_DELAY_MS in the past so
-   * we can interpolate between two buffered snapshots; when render time runs
-   * past the newest snapshot, dead-reckon forward with the last velocity,
-   * clamped to EXTRAP_MAX_MS so a stopped/turned remote can't overshoot.
+   * Reconstruct the render-time position: render `this.interpDelay` (the ADAPTIVE
+   * jitter-driven cushion, ~40-90ms) in the past so we can interpolate between two
+   * buffered snapshots; when render time runs past the newest snapshot (starvation),
+   * dead-reckon forward with a DECAYED velocity (EXTRAP_TAU_S), clamped to
+   * EXTRAP_MAX_MS, so a stopped/turned remote coasts to a halt instead of overshooting.
    *
-   * Buffer cap is 8 snapshots. Because Game.ts now feeds setState() ONLY on a
-   * genuinely new packet (recvSeq guard) instead of every ~60Hz reconcile frame,
-   * each entry is a distinct ~33ms (NET_TICK_HZ=30) tick — so the buffer spans
-   * ~265ms of real history, comfortably exceeding INTERP_DELAY_MS and keeping the
-   * interpolate/extrapolate path stable (no per-frame window collapse / flipping).
+   * Buffer cap is 8 snapshots. Because Game.ts feeds setState() ONLY on a genuinely
+   * new packet (recvSeq guard) instead of every ~60Hz reconcile frame, each entry is
+   * a distinct ~33ms (NET_TICK_HZ=30) tick — so the buffer spans ~265ms of real
+   * history, comfortably exceeding the cushion and keeping the interpolate/extrapolate
+   * path stable (no per-frame window collapse / flipping).
    */
   private computeTargetPos(): THREE.Vector3 {
     const out = new THREE.Vector3();
@@ -542,7 +577,7 @@ export class RemotePlayer implements BulletTarget {
     const newest = this.snaps[n - 1];
     if (n === 1) return out.set(newest.x, newest.y, newest.z);
 
-    const renderT = performance.now() - INTERP_DELAY_MS;
+    const renderT = performance.now() - this.interpDelay;
 
     // Interpolate when render time falls inside the buffered window.
     if (renderT <= newest.t) {
@@ -564,13 +599,18 @@ export class RemotePlayer implements BulletTarget {
       return out.set(oldest.x, oldest.y, oldest.z);
     }
 
-    // Extrapolate forward from the newest snapshot using last known velocity.
-    const aheadMs = Math.min(renderT - newest.t, EXTRAP_MAX_MS);
-    const aheadS = aheadMs / 1000;
+    // Extrapolate forward from the newest snapshot — but DECAY the velocity so an
+    // unconfirmed guess COASTS to a stop instead of running straight and snapping
+    // back when the next packet lands (the dominant rubber-band artifact). The
+    // displacement is the integral of v·e^(−s/τ): bounded by |v|·τ (~one body-width
+    // at run speed) no matter how late the packet is. Only reached on starvation —
+    // the adaptive cushion keeps us interpolating in the common case.
+    const aheadS = Math.min(renderT - newest.t, EXTRAP_MAX_MS) / 1000;
+    const k = EXTRAP_TAU_S * (1 - Math.exp(-aheadS / EXTRAP_TAU_S));
     return out.set(
-      newest.x + this.vx * aheadS,
-      newest.y + this.vy * aheadS,
-      newest.z + this.vz * aheadS,
+      newest.x + this.vx * k,
+      newest.y + this.vy * k,
+      newest.z + this.vz * k,
     );
   }
 
