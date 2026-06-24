@@ -916,28 +916,46 @@ export class Game {
       } // end bullet quota
 
       // ── Parry the concentrated super ("mega tiro"): reflect any incoming beam
-      // crossing the blade back at its caster. Gated on its OWN per-swing cap (NOT
-      // the bullet quota above — else a couple reflected bullets would let a later
-      // mega beam pass through). The reflected (damaging) beam lands via the normal
-      // beam→onHit path.
+      // crossing the blade back at its caster. SUB-STEP prev→current blade poses
+      // (like the bullet branch) so a fast strike can't sweep through a beam
+      // without testing it. Gated on its OWN per-swing cap (NOT the bullet quota
+      // above — else reflected bullets would let a later beam pass through). The
+      // reflected (damaging) beam lands via the normal beam→onHit path.
       if (this.meleeBeamReflects < REFLECT_BEAM_MAX_PER_SWING) {
-        const beamHits = this.kame.reflectInArc(
-          s.bladeStart,
-          s.bladeEnd,
-          s.origin,
-          REFLECT_BEAM_CAPSULE,
-          REFLECT_INBOUND,
-          REFLECT_BEAM_VTOL,
-          "player",
-          "player",
-          REFLECT_BEAM_MAX_PER_SWING - this.meleeBeamReflects,
-        );
-        this.meleeBeamReflects += beamHits.length;
-        for (const r of beamHits) {
-          const at = new THREE.Vector3(r.x, r.y, r.z);
-          this.smoke.spawnFlash(at, s.aimDir);
-          this.smoke.spawnPuff(at, s.aimDir, 8, "#bfefff");
-          this.audio.playPowerUp(at, false); // satisfying deflect cue
+        const bps = this.meleePrevStart;
+        const bpe = this.meleePrevEnd;
+        const bTip = Math.hypot(s.bladeEnd.x - bpe.x, s.bladeEnd.z - bpe.z);
+        const bSteps = Math.max(1, Math.min(8, Math.ceil(bTip / REFLECT_BEAM_CAPSULE)));
+        for (let k = 1; k <= bSteps && this.meleeBeamReflects < REFLECT_BEAM_MAX_PER_SWING; k++) {
+          const f = k / bSteps;
+          this.meleeSegA.set(
+            bps.x + (s.bladeStart.x - bps.x) * f,
+            bps.y + (s.bladeStart.y - bps.y) * f,
+            bps.z + (s.bladeStart.z - bps.z) * f,
+          );
+          this.meleeSegB.set(
+            bpe.x + (s.bladeEnd.x - bpe.x) * f,
+            bpe.y + (s.bladeEnd.y - bpe.y) * f,
+            bpe.z + (s.bladeEnd.z - bpe.z) * f,
+          );
+          const beamHits = this.kame.reflectInArc(
+            this.meleeSegA,
+            this.meleeSegB,
+            s.origin,
+            REFLECT_BEAM_CAPSULE,
+            REFLECT_INBOUND,
+            REFLECT_BEAM_VTOL,
+            "player",
+            "player",
+            REFLECT_BEAM_MAX_PER_SWING - this.meleeBeamReflects,
+          );
+          this.meleeBeamReflects += beamHits.length;
+          for (const r of beamHits) {
+            const at = new THREE.Vector3(r.x, r.y, r.z);
+            this.smoke.spawnFlash(at, s.aimDir);
+            this.smoke.spawnPuff(at, s.aimDir, 8, "#bfefff");
+            this.audio.playPowerUp(at, false); // satisfying deflect cue
+          }
         }
       }
     }

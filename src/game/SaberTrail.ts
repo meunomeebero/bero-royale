@@ -26,12 +26,18 @@ interface Rib {
 
 export class SaberTrail {
   readonly mesh: THREE.Mesh;
+  // Preallocated ring buffer (no per-frame allocation in the swing hot path).
   private ribs: Rib[] = [];
+  private head = 0; // index of the oldest live rib
+  private count = 0; // number of live ribs
   private geom: THREE.BufferGeometry;
   private posAttr: THREE.BufferAttribute;
   private colAttr: THREE.BufferAttribute;
 
   constructor() {
+    for (let i = 0; i < MAX_RIBS; i++) {
+      this.ribs.push({ base: new THREE.Vector3(), tip: new THREE.Vector3(), age: 0 });
+    }
     this.geom = new THREE.BufferGeometry();
     // Preallocate for MAX_RIBS cross-sections (2 verts each).
     const verts = MAX_RIBS * 2;
@@ -63,29 +69,41 @@ export class SaberTrail {
     this.mesh.renderOrder = 5;
   }
 
-  /** Feed the current blade segment (world space). Call once per swing frame. */
+  /** Feed the current blade segment (world space). Call once per swing frame.
+   *  Writes into the preallocated ring (overwriting the oldest rib when full). */
   push(base: THREE.Vector3, tip: THREE.Vector3) {
-    this.ribs.push({ base: base.clone(), tip: tip.clone(), age: 0 });
-    if (this.ribs.length > MAX_RIBS) this.ribs.shift();
+    const slot = (this.head + this.count) % MAX_RIBS;
+    const r = this.ribs[slot];
+    r.base.copy(base);
+    r.tip.copy(tip);
+    r.age = 0;
+    if (this.count < MAX_RIBS) this.count++;
+    else this.head = (this.head + 1) % MAX_RIBS; // ring was full → drop the oldest
   }
 
   /** Drop all ribs (call on swing START so a new arc never welds to the old one). */
   clear() {
-    this.ribs.length = 0;
+    this.count = 0;
+    this.head = 0;
     this.geom.setDrawRange(0, 0);
   }
 
   /** Age the ribs every frame (whether or not swinging) and rebuild the strip. */
   update(dt: number) {
-    if (this.ribs.length === 0) {
+    if (this.count === 0) {
       if (this.geom.drawRange.count !== 0) this.geom.setDrawRange(0, 0);
       return;
     }
-    for (let i = this.ribs.length - 1; i >= 0; i--) {
-      this.ribs[i].age += dt;
-      if (this.ribs[i].age >= RIB_LIFE) this.ribs.splice(i, 1);
+    // Age all live ribs; the oldest (head) carries the highest age.
+    for (let j = 0; j < this.count; j++) {
+      this.ribs[(this.head + j) % MAX_RIBS].age += dt;
     }
-    const n = this.ribs.length;
+    // Retire expired ribs from the front (oldest first).
+    while (this.count > 0 && this.ribs[this.head].age >= RIB_LIFE) {
+      this.head = (this.head + 1) % MAX_RIBS;
+      this.count--;
+    }
+    const n = this.count;
     if (n < 2) {
       this.geom.setDrawRange(0, 0);
       return;
@@ -93,7 +111,7 @@ export class SaberTrail {
     const pos = this.posAttr.array as Float32Array;
     const col = this.colAttr.array as Float32Array;
     for (let i = 0; i < n; i++) {
-      const r = this.ribs[i];
+      const r = this.ribs[(this.head + i) % MAX_RIBS]; // oldest → newest
       const fade = Math.max(0, 1 - r.age / RIB_LIFE); // 1 fresh → 0 gone
       const o = i * 6;
       pos[o] = r.base.x; pos[o + 1] = r.base.y; pos[o + 2] = r.base.z;
