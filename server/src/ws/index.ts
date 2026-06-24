@@ -217,6 +217,18 @@ export function attachWebSocket(server: Server): RoomHub {
             }
           }
 
+          // A player's saber hit ("meleehit") on a SERVER BOT applies the stagger
+          // authoritatively (server-owned durations). The verbatim relay below still
+          // reaches every client for the knockback/FX cue; this just adds the bot's
+          // stun/fire-lock/super-interrupt (which a relayed cue alone can't, since a
+          // server bot has no client to honor it). Bot HP still drops via {t:"hit"}.
+          if (m.event === "meleehit" && m.payload && typeof m.payload === "object") {
+            const target = (m.payload as { target?: unknown }).target;
+            if (typeof target === "string" && hub.botSim.hasBot(ws.room, target)) {
+              hub.botSim.staggerBot(ws.room, target);
+            }
+          }
+
           const out: ServerMsg = {
             t: "broadcast",
             event: m.event,

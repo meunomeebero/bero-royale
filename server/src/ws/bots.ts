@@ -91,6 +91,14 @@ const SUPER_CD_MAX = 22; // cooldown ceiling after firing (random in [MIN,MAX])
 export const SUPER_DAMAGE = 3;
 const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
 
+// ── Saber stagger (a player's melee hit on a server bot) — canonical, server-side ──
+// Mirrors the client saber stagger (src/game/Game.ts). Applied authoritatively by
+// staggerBot() when a "meleehit" targets a server bot; durations are server-owned
+// (the client cue is NOT trusted for values), so a forged meleehit can't over-stun.
+const MELEE_STUN_T = 0.25; // brief full-action freeze (no steering/fire/super)
+const MELEE_FIRE_LOCK_T = 1.0; // constant-fire lockout (no shots) after the stun
+const MELEE_SUPER_REARM = 1.0; // an interrupted super can't re-wind for this long
+
 // ── Engager cap (anti-dogpile, owner-locked) ─────────────────────────────────
 // In a lopsided fight (1 human vs N bots) every bot would otherwise lock onto the
 // lone player, close in, and fire — an unfair ~6 hits/sec wall plus overlapping
@@ -221,6 +229,9 @@ interface ServerBot {
   shield: number; // BR-style charges, soaked BEFORE health in damageBot (shield/super pickups)
   rapidT: number; // >0 = rapid-fire buff active (halved shoot cooldown), decays each tick
   speedT: number; // >0 = speed buff active (×SPEED_MULT move speed), decays each tick
+  // ── Saber stagger (player melee) ──
+  stunT: number; // >0 = full-action freeze (no steer/fire/super), decays each tick
+  fireLockT: number; // >0 = constant-fire lockout (no shots), outlives the stun
 }
 
 interface Target {
@@ -307,6 +318,26 @@ export class BotSim {
       return { died: true, x: b.x, z: b.z, byId, victimName: b.name };
     }
     return { died: false, x: b.x, z: b.z, byId, victimName: b.name };
+  }
+
+  /**
+   * Apply a saber stagger to a server bot AUTHORITATIVELY (a player's "meleehit"
+   * targeted it). Durations are server-owned canonical constants — the client cue
+   * is trusted only as a "this happened" signal, never for its values — so a forged
+   * meleehit can't over-stun. Brief action freeze + a constant-fire lockout, and an
+   * interrupt of any in-progress super wind-up (with a re-arm penalty). Idempotent-ish
+   * via max-merge; returns true if a live bot was staggered. */
+  staggerBot(room: string, targetId: string): boolean {
+    if (room !== GAME_ROOM) return false;
+    const b = this.bots.get(targetId);
+    if (!b || !b.alive) return false;
+    b.stunT = Math.max(b.stunT, MELEE_STUN_T);
+    b.fireLockT = Math.max(b.fireLockT, MELEE_FIRE_LOCK_T);
+    if (b.kameCharging) {
+      this.abortSuper(b);
+      b.superCd = Math.max(b.superCd, MELEE_SUPER_REARM);
+    }
+    return true;
   }
 
   /** Drain a bot to death from a player's concentrated mega ("kamehit"). */
@@ -407,6 +438,8 @@ export class BotSim {
       shield: 0,
       rapidT: 0,
       speedT: 0,
+      stunT: 0,
+      fireLockT: 0,
     });
   }
 
@@ -442,6 +475,8 @@ export class BotSim {
     b.shield = 0;
     b.rapidT = 0;
     b.speedT = 0;
+    b.stunT = 0;
+    b.fireLockT = 0;
   }
 
   /** A spawn point far from every other combatant (players + other bots). */
@@ -660,6 +695,9 @@ export class BotSim {
       // Decay the transient pickup buffs (rapid fire / move speed).
       if (b.rapidT > 0) b.rapidT = Math.max(0, b.rapidT - dt);
       if (b.speedT > 0) b.speedT = Math.max(0, b.speedT - dt);
+      // Decay the saber stagger timers (freeze + fire-lock from a player's melee).
+      if (b.stunT > 0) b.stunT = Math.max(0, b.stunT - dt);
+      if (b.fireLockT > 0) b.fireLockT = Math.max(0, b.fireLockT - dt);
 
       // ── CHARGE_SUPER: while winding up the telegraphed super, the bot COMMITS
       // (this short-circuits all normal combat below so a player gets a clean
@@ -868,7 +906,14 @@ export class BotSim {
         // Only ENGAGERS fire: the nearest few bots per player keep the heat fair
         // (capping the dogpile at ~MAX_ENGAGERS_PER_PLAYER guns instead of N).
         b.shootCd -= dt;
-        if (isEngager && b.shootCd <= 0 && dist <= SHOOT_RANGE && b.grounded) {
+        if (
+          isEngager &&
+          b.shootCd <= 0 &&
+          dist <= SHOOT_RANGE &&
+          b.grounded &&
+          b.stunT <= 0 &&
+          b.fireLockT <= 0 // saber lockout suppresses constant fire
+        ) {
           // Rapid pickup ~halves the cadence while its buff is active.
           const rapidMult = b.rapidT > 0 ? 0.5 : 1;
           b.shootCd = (SHOOT_CD_MIN + rand() * SHOOT_CD_RND) * rapidMult;
@@ -912,6 +957,7 @@ export class BotSim {
           maySuper &&
           b.superCd <= 0 &&
           b.grounded &&
+          b.stunT <= 0 && // a saber stagger blocks starting a super wind-up
           b.health > SUPER_MIN_HP &&
           dist <= SUPER_RANGE &&
           this.hub.isPlayer(room, tgt.id)
@@ -975,8 +1021,10 @@ export class BotSim {
       // its buff is active (still kept below the player base speed of 6.5).
       const moveSpeed = b.speedT > 0 ? MOVE_SPEED * SPEED_MULT : MOVE_SPEED;
       const mlen = Math.hypot(mvx, mvz);
-      const desVx = mlen > 0.001 ? (mvx / mlen) * moveSpeed : 0;
-      const desVz = mlen > 0.001 ? (mvz / mlen) * moveSpeed : 0;
+      // A saber stagger freezes self-propelled movement (vx/vz decay toward 0);
+      // only an active dash impulse still carries the bot during the brief stun.
+      const desVx = b.stunT <= 0 && mlen > 0.001 ? (mvx / mlen) * moveSpeed : 0;
+      const desVz = b.stunT <= 0 && mlen > 0.001 ? (mvz / mlen) * moveSpeed : 0;
       const accelStep = Math.min(1, ACCEL * dt);
       b.vx += (desVx - b.vx) * accelStep;
       b.vz += (desVz - b.vz) * accelStep;

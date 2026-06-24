@@ -81,7 +81,7 @@ const REFLECT_INBOUND = 0.35; // bullet must be travelling toward the player (do
 const REFLECT_VTOL = 0.7; // vertical tolerance: bullet must be near the blade's height
 const REFLECT_MAX_PER_SWING = 2; // cap reflects so one swing can't delete a stream
 const PARRY_CANCEL_RADIUS = 1.2; // shooter cancels its own bullet within this of the parrier
-const STAGGER_COOLDOWN_MS = 500; // min spacing between honored staggers from one attacker
+const STAGGER_FREE_WINDOW_MS = 500; // guaranteed un-staggerable window AFTER each honored stagger
 
 /** Shortest XZ distance from point (px,pz) to the segment (ax,az)→(bx,bz). */
 function distPointSegXZ(
@@ -198,10 +198,11 @@ export class Game {
   /** Scratch for the interpolated blade sub-segment during a swept parry. */
   private meleeSegA = new THREE.Vector3();
   private meleeSegB = new THREE.Vector3();
-  /** Last time we honored ANY saber stagger (ms). A single GLOBAL gate (not keyed
-   *  on the spoofable payload attacker id) so a modified client can't rotate fake
-   *  sender ids to bypass a per-attacker limit and freeze us (stun-lock grief). */
-  private lastStaggerAt = 0;
+  /** Earliest time (ms) we'll honor the NEXT saber stagger. Set to the END of the
+   *  effect we just applied PLUS a guaranteed free window — so no spam of cues (even
+   *  with rotated/forged attacker ids) can refresh the longer fire-lock into a
+   *  permanent weapon lockout: there's always an un-staggerable gap to act in. */
+  private nextStaggerOkAt = 0;
   private mpBroadcastAccum = 0;
   /** True while the tab is backgrounded (rAF throttled to ~1Hz). Gates the
    *  network pose broadcast so we stop relaying frozen/stale poses that every
@@ -642,20 +643,19 @@ export class Game {
       );
       // Saber stagger cue (client-trusted, like the knockback). Optional fields
       // are absent from older clients → no stun applied (backward compatible).
-      // Two guards, since meleehit is a blindly-relayed broadcast whose attacker
-      // id is payload-controlled (spoofable): (1) CLAMP each duration so a single
-      // packet can't set a 1e9-ms freeze; (2) a GLOBAL min-spacing gate so no
-      // amount of spammed/forged packets can refresh the stun into a permanent
-      // lock — at worst you're stunned MELEE_MAX_STUN out of every COOLDOWN window.
+      // Two guards, since meleehit is a blindly-relayed broadcast whose attacker id
+      // is payload-controlled (spoofable): (1) CLAMP each duration so one packet
+      // can't set a 1e9-ms freeze; (2) gate the NEXT honored stagger to AFTER the
+      // applied effect fully expires + a free window. Because the gate spans the
+      // whole granted lock (not a fixed sub-window), no spam/forgery can keep
+      // refreshing it — you always get an un-staggerable gap to act.
       if (e.stunMs != null) {
         const now = Date.now();
-        if (now - this.lastStaggerAt >= STAGGER_COOLDOWN_MS) {
-          this.lastStaggerAt = now;
-          this.player.applyMeleeStagger(
-            Math.min(Math.max(0, e.stunMs), MELEE_MAX_STUN_MS) / 1000,
-            Math.min(Math.max(0, e.fireLockMs ?? 0), MELEE_MAX_FIRE_LOCK_MS) / 1000,
-            e.interruptCharge ?? false,
-          );
+        if (now >= this.nextStaggerOkAt) {
+          const stunS = Math.min(Math.max(0, e.stunMs), MELEE_MAX_STUN_MS) / 1000;
+          const fireLockS = Math.min(Math.max(0, e.fireLockMs ?? 0), MELEE_MAX_FIRE_LOCK_MS) / 1000;
+          this.player.applyMeleeStagger(stunS, fireLockS, e.interruptCharge ?? false);
+          this.nextStaggerOkAt = now + Math.max(stunS, fireLockS) * 1000 + STAGGER_FREE_WINDOW_MS;
         }
       }
     });
