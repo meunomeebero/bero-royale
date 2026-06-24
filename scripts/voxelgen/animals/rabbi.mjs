@@ -41,9 +41,9 @@ export function build() {
   // PAYOT — thick dark sidelock on the SIDE of the head (in front of the ear),
   // set BACK from the beard (lower z) and protruding outward, so it reads as a
   // separate lock instead of merging with the beard. Left only; mirror does right.
-  g.box(2, 5, 22, 24, 9, 15, C.payot);    // temple anchor (joins the head side)
-  g.box(1, 4, 12, 23, 9, 15, C.payot);    // sidelock hanging down the side (juts out)
-  g.box(2, 4, 12, 15, 13, 16, C.payot);   // soft curl at the bottom (stays off the beard)
+  g.box(3, 5, 22, 24, 10, 14, C.payot);   // temple anchor (joins the head side)
+  g.box(2, 4, 13, 22, 10, 14, C.payot);   // sidelock — thinner, a touch shorter
+  g.box(2, 4, 13, 15, 13, 16, C.payot);   // small curl at the bottom (stays off the beard)
 
   // Face (skin shows y 20..26, above the beard). Eyes sit IN FRONT of the cream
   // frame so the dark pupils stay visible (glasses = thin bridge + temple, not a
