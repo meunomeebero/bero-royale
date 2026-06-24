@@ -47,7 +47,7 @@ Crossy-Road), **não** elipsoides suaves (geram superfície "escadinha" e ~10× 
   in-game na 1ª vez que um modelo novo entra no roster.
 - Exemplos gerados: `owl` (coruja, animal) e `rabbi` (rabino, **humano** — corpo+cabeça
   num cubo só, **sem pernas/braços/pés**; cartola/barba/óculos como blocos grandes). Humanos
-  seguem a mesma regra dos bichos: um cubo fundido, sem membros separados. Entram no jogo
-  adicionando o nome a `ANIMAL_NAMES` (o roster commitado ainda não os inclui).
+  seguem a mesma regra dos bichos: um cubo fundido, sem membros separados. **Ambos já estão
+  no roster** (`ANIMAL_NAMES`); para um personagem novo, basta adicionar o nome lá.
 - Personagens altos (ex.: com cartola) tendem a estourar o envelope (`W/H < 0.6`): encorpar
   (alargar corpo+cabeça, encurtar o topo) mantém a hitbox justa, já que o jogo normaliza a altura.

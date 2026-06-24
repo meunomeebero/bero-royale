@@ -23,7 +23,7 @@ const BASE = `${import.meta.env.BASE_URL}models`;
 // blow up oversized when normalized and are unfair as multiplayer avatars.
 export const ANIMAL_NAMES = [
   "bear", "bunny", "cat", "chicken", "crocodile", "dog", "fox", "frog",
-  "mouse", "panda", "piglet",
+  "mouse", "owl", "panda", "piglet", "rabbi",
 ] as const;
 
 export const COLLECTIBLE_NAMES = [
