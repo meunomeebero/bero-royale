@@ -174,10 +174,8 @@ export const BOT_TICK_SECONDS = BOT_TICK_MS / 1000;
 
 /** The only room bots populate. */
 const GAME_ROOM = "voxelcube-ffa";
-/** Keep (live players + bots) at this many combatants. */
-const MIN_COMBATANTS = 10;
-/** Hard cap on server backfill bots (owner wants only 5 bots in a match). */
-const MAX_BOTS = 5;
+/** Hard cap on bots per room. */
+const MAX_BOTS = 6;
 
 const BULLET_COLOR = "#ff5e6c";
 /**
@@ -340,6 +338,7 @@ export class BotSim {
    * Rebuilt each tick from the current player set (stale ids fall off).
    */
   private targetVel = new Map<string, { x: number; z: number; vx: number; vz: number }>();
+  private targetBotCount = 0;
 
   constructor(private hub: RoomHub) {}
 
@@ -482,7 +481,7 @@ export class BotSim {
 
   /** Drop all bots (room emptied). */
   clearRoom(room: string) {
-    if (room === GAME_ROOM) this.bots.clear();
+    if (room === GAME_ROOM) { this.bots.clear(); this.targetBotCount = 0; }
   }
 
   // ---------------------------------------------------------------------------
@@ -674,11 +673,13 @@ export class BotSim {
   tick(room: string, dt: number) {
     if (room !== GAME_ROOM) return;
 
-    // Maintain the population: (live players + bots) ≈ MIN_COMBATANTS — but only
-    // while at least one REAL player is connected (no bots in an empty room).
+    // Maintain the population: hold a random [3,6] target for the room lifetime,
+    // rolled once on first activation (when live > 0) and reset on clearRoom.
     const live = this.hub.liveSizeOf(room);
-    const desired =
-      live > 0 ? Math.min(MAX_BOTS, Math.max(0, MIN_COMBATANTS - live)) : 0;
+    if (live > 0 && this.targetBotCount === 0) {
+      this.targetBotCount = 3 + Math.floor(rand() * 4); // held [3,6] for the room lifetime
+    }
+    const desired = live > 0 ? Math.min(MAX_BOTS, this.targetBotCount) : 0;
     let changed = false;
     while (this.bots.size < desired) {
       this.spawnBot(room);
