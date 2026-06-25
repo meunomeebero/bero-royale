@@ -40,6 +40,9 @@ Pistol = mobilidade + RoF sustentado (sem ser dominante).
 deletado). Docs: [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md),
 [`systems/weapons-energy-blast.md`](systems/weapons-energy-blast.md).
 
+**🚀 Deploy:** em prod 2026-06-25 (commit `b345b7b`, bundle `index-FBaro2zH.js`). Review GPT-5.5
+(OpenRouter) — **SHIP**, sem blockers. tsc/eslint/build/28 testes verdes. https://beroroyale.shardweb.app
+
 ---
 
 ## Sessão 2026-06-25 — rename + rebalance: Pistol / Energy Blast / Lightsaber
