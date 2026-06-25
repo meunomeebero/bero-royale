@@ -86,7 +86,6 @@ leadMul    = 0.5 + skill                        // weak=0.5 (under-leads), sharp
 
 New constants (near the existing tune blocks):
 ```
-PLAYER_PULL = 5            // effective-distance bias toward a lone UNTARGETED player (< ENGAGE_LEASH=12)
 MAX_TURN_RATE = 8          // rad/s yaw slew cap on facing changes (no one-tick snap)
 REACT_MIN = 0.15, REACT_SPAN = 0.15        // reactT = REACT_MIN + (1-skill)*REACT_SPAN → 0.15..0.30s
 DEFENSIVE_FLINCH = 0.12    // defensive dash/jump un-gate at min(reactT, DEFENSIVE_FLINCH)
@@ -137,13 +136,16 @@ per-tick).
   enemy treats players and bots identically.
 - Retaliation (814–820): drop the `isPlayerId(atk.id)` gate (816) so a bot also snaps to a **bot** that
   shot it.
-- **🔶 Player-attention floor (the pure-equal softening):** each tick, if a player has **zero** bots
-  whose current `targetId` is that player, give the **single nearest non-committed bot** a
-  `PLAYER_PULL` (~5u) reduction on its effective distance to that player in the nearest-enemy compare,
-  so a roughly-equidistant bot breaks toward the human. Bounded (`< ENGAGE_LEASH`), applied to **one**
-  bot, only when the player is neglected → bot-vs-bot brawling dominates the common case but a lone
-  passive player draws aggression within a commit cycle. Tune so simulated "player untargeted" drops
-  from ~29 % to **< 8 %**.
+- **🔶 Player-attention floor (the pure-equal softening) — REVISED by council during impl:** a
+  single **post-pass** runs once per tick *after* the per-bot loop: any player with **zero** bots
+  targeting it gets the **nearest strictly-free (`commitT<=0`) bot directly assigned** (commit
+  re-seeded). A **steal-guard** skips a free bot that is the sole targeter of another player. This
+  *guarantees* a neglected lone player draws one bot (matching the product promise "send the closest
+  free bot toward them"), not a probabilistic nudge — the original `PLAYER_PULL≈5u` distance bias
+  empirically left ~19–24 % ignored on the ±42 arena (a 5u bias rarely flips a 40–60u nearest choice)
+  and is **removed**. Per-bot selection stays pure nearest-enemy (no bias, no per-bot allocation).
+  Result: lone-player-untargeted ~29 % → **0.6 %**. Organic downtime still occurs when all bots are
+  committed elsewhere.
 - **Commitment (`commitT`)** — *blocker-hardened*: `commitT` is **bound to the current `targetId`** and
   re-seeded on every id **change** from **any** path (selection, retaliation, pending-commit), **never**
   on a same-id re-confirm (else it never decays and the hysteresis path is unreachable). While
