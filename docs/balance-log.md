@@ -47,3 +47,7 @@ concentrado a um custo de movimento.
 
 **Arquivos:** `src/game/Player.ts` (`WEAPON_SPEED_MULT`, `superLoaded` no cálculo de `effSpeed`),
 doc de sistema [`systems/weapons-weight-speed.md`](systems/weapons-weight-speed.md).
+
+**🚀 Deploy:** em prod 2026-06-25 (junto com a fidelidade do sabre no online — commit `b33fefb`,
+bundle `index-CKaIO6m3.js`). Review GPT-5.5 (codex) limpo (1 P2 corrigido: arma inferida por evento
+pra peers legados) + revisão adversarial multi-agente. https://beroroyale.shardweb.app
