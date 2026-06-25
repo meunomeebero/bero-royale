@@ -1111,7 +1111,7 @@ export class BotSim {
         const dx = b.wanderX - b.x;
         const dz = b.wanderZ - b.z;
         const d = Math.hypot(dx, dz);
-        if (d > 0.6) { mvx = dx / d; mvz = dz / d; b.yaw = Math.atan2(dz, dx); }
+        if (d > 0.6) { mvx = dx / d; mvz = dz / d; this.faceToward(b, dx, dz, dt); }
 
         // Targetless evasive steer: during the startle window, if we know who shot us,
         // override the wander direction to move AWAY from the last attacker (steering
@@ -1122,7 +1122,7 @@ export class BotSim {
             const adx = b.x - atk.x; // away from attacker
             const adz = b.z - atk.z;
             const alen = Math.hypot(adx, adz);
-            if (alen > 0.001) { mvx = adx / alen; mvz = adz / alen; b.yaw = Math.atan2(adz, adx); }
+            if (alen > 0.001) { mvx = adx / alen; mvz = adz / alen; this.faceToward(b, adx, adz, dt); }
           }
         }
 
