@@ -18,6 +18,14 @@ import {
   DASH_STRETCH_DURATION,
   SQUASH_LERP,
 } from "./consts";
+import {
+  MELEE_SWING_DUR,
+  SABER_REST_YAW,
+  SWING_WINDUP_END_T,
+  BASE_SABER_MOUNT,
+  sampleSaberYaw,
+  saberMountX,
+} from "./saberKinematics";
 
 const PLAYER_SIZE = 0.5;
 const ACCEL = 28;
@@ -48,6 +56,23 @@ export type FireMode = "constant" | "concentrated" | "boss" | "staff";
  *  override (the "bero" easter egg), NOT a slot. */
 const SLOT_MODES: FireMode[] = ["constant", "concentrated", "staff"];
 
+// ── Weapon "weight" → movement-speed multiplier while that weapon is active ──
+// Balance lever: the constant gun is the weakest weapon, so its light weight
+// rewards aggression with +30% run speed; the concentrated gun is neutral; the
+// saber is heavy (−10%). Multiplies with the "speed" power-up (so light + speed
+// = 1.6 × 1.3). Affects sustained run speed only — dash impulse is unchanged.
+// "boss" is the easter-egg override and stays neutral.
+const WEAPON_SPEED_MULT: Record<FireMode, number> = {
+  constant: 1.3,
+  concentrated: 1.0,
+  staff: 0.9,
+  boss: 1.0,
+};
+
+// Carrying a charging/loaded concentrated super weighs the player down even more
+// than the saber — the charge-and-kite nerf, tuned heavier in playtest (−20%).
+const SUPER_LOADED_SPEED_MULT = 0.8;
+
 /**
  * Per-frame snapshot of an in-progress saber swing. Emitted by Player every
  * frame the swing is active; Game uses it to resolve arc hits (strike phase,
@@ -74,18 +99,12 @@ export interface MeleeSample {
 }
 
 // ── Melee saber (hotbar slot 3) — swing timing; damage/range live in Game ──
+// The swing KINEMATICS (sampleSaberYaw, saberMountX, MELEE_SWING_DUR, SABER_REST_YAW,
+// SWING_WINDUP_END_T, BASE_SABER_MOUNT, …) live in ./saberKinematics so the local
+// player and the networked RemotePlayer sweep the IDENTICAL arc (netcode fidelity —
+// see docs/systems/netcode-fidelity-golden-rule.md). Only the LOCAL-only input
+// timing / parry-window / stagger numbers stay here.
 const MELEE_COOLDOWN = 0.55; // seconds between swings while held (was 0.45; offsets 2× range + parry)
-const MELEE_SWING_DUR = 0.4; // full swing: wind-up + 180° strike + recovery
-// Baseball-bat swing on the pivot's local Y. Rest = blade perpendicular (out to
-// the side, ~90° to forward). Wind-up pulls 45° counter-clockwise, then the
-// strike sweeps 180° clockwise; the remainder eases back to rest.
-const SABER_REST_YAW = -Math.PI / 2; // perpendicular rest pose
-const SABER_WINDUP_YAW = SABER_REST_YAW - Math.PI / 4; // 45° CCW wind-up peak
-const SABER_STRIKE_YAW = SABER_WINDUP_YAW + Math.PI; // full 180° CW strike, ends at the follow-through
-const SWING_WINDUP_END_T = 0.18; // short wind-up; the strike owns the rest of the swing
-// (No in-swing "recovery": the strike runs all the way to t=1 and HOLDS at the
-//  follow-through; the gentle settle in update() eases the blade back to rest after
-//  the swing — otherwise the blade snapped back mid-swing and the 180° looked cut.)
 // Parry window (fraction of the swing) — when the blade can reflect projectiles.
 const SWING_PARRY_START_T = 0.2;
 const SWING_PARRY_END_T = 0.75;
@@ -93,36 +112,6 @@ const SWING_PARRY_END_T = 0.75;
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
 const SABER_HOP = 3.4; // small upward "pulinho" on a saber hit (< JUMP_VELOCITY 6)
-// Floating-saber mount: rest distance in front of the body, and the clearance
-// radius the swept blade must keep from the body center (body half-width 0.25 +
-// margin for the voxel avatar overhang). During the backward wind-up the mount
-// is pushed out to CLEAR_R/|sin(yaw)| so the blade never touches the cube.
-const BASE_SABER_MOUNT = 0.5;
-const SABER_CLEAR_R = 0.55;
-const SABER_MAX_MOUNT = 1.1;
-
-function easeOutCubic(x: number): number {
-  return 1 - Math.pow(1 - x, 3);
-}
-function easeInOutCubic(x: number): number {
-  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-}
-/**
- * Pivot yaw over a normalized swing t∈[0,1]: a snappy 45° wind-up (rest→windup,
- * easeOut), a powered 180° strike (windup→strike end, easeInOut), then an
- * easeInOut recovery back to the rest pose. Shared by the local player and (later)
- * remote saber rendering so both clients see the identical arc.
- */
-function sampleSaberYaw(t: number): number {
-  if (t < SWING_WINDUP_END_T) {
-    const u = easeOutCubic(t / SWING_WINDUP_END_T);
-    return SABER_REST_YAW + (SABER_WINDUP_YAW - SABER_REST_YAW) * u; // rest → wind-up
-  }
-  // Strike: the full 180° sweep over the rest of the swing, ending HELD at the
-  // follow-through. The return to rest is the gentle settle in update(), not here.
-  const u = easeInOutCubic((t - SWING_WINDUP_END_T) / (1 - SWING_WINDUP_END_T));
-  return SABER_WINDUP_YAW + (SABER_STRIKE_YAW - SABER_WINDUP_YAW) * u;
-}
 const KAME_CHARGE = 3.0; // seconds to hold before the concentrated shot is ready (recharge cadence)
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
@@ -886,9 +875,18 @@ export class Player implements BulletTarget {
     if (this.staggerFlashT > 0) this.staggerFlashT = Math.max(0, this.staggerFlashT - dt);
     const stunned = this.stunTimer > 0;
 
-    // Movement. The "speed" power-up multiplies the top speed ×1.6 while active.
+    // Movement. The "speed" power-up multiplies the top speed ×1.6 while active;
+    // the active weapon's weight then scales it again (light gun faster, saber
+    // slower). Carrying a charging OR loaded concentrated super weighs you down
+    // harder still (−20%, heavier than the saber) — nerfs the "charge in safety
+    // → strike → flee and recharge" kite (see docs/systems/weapons-weight-speed.md).
     const move = this.input.getMoveVector();
-    const effSpeed = MOVE_SPEED * (this.speedTimer > 0 ? 1.6 : 1);
+    const superLoaded =
+      this.fireMode === "concentrated" && this.kameState !== "idle";
+    const weaponWeight = superLoaded
+      ? SUPER_LOADED_SPEED_MULT
+      : WEAPON_SPEED_MULT[this.fireMode];
+    const effSpeed = MOVE_SPEED * (this.speedTimer > 0 ? 1.6 : 1) * weaponWeight;
     const targetVx = stunned ? 0 : move.x * effSpeed;
     const targetVz = stunned ? 0 : move.z * effSpeed;
     const lerpAmt = 1 - Math.exp(-ACCEL * dt);
@@ -1124,13 +1122,7 @@ export class Player implements BulletTarget {
       const yaw = sampleSaberYaw(t);
       this.staffPivot.rotation.y = yaw;
       // Dynamic forward mount: clear the cube during the backward part of the arc.
-      const cosY = Math.cos(yaw);
-      let mountX = BASE_SABER_MOUNT;
-      if (cosY < 0) {
-        const sinY = Math.abs(Math.sin(yaw)) || 1;
-        mountX = Math.min(SABER_MAX_MOUNT, Math.max(mountX, SABER_CLEAR_R / sinY));
-      }
-      this.staff.position.x = mountX;
+      this.staff.position.x = saberMountX(yaw);
       this.staff.updateWorldMatrix(true, true); // fresh blade transform for the sample
 
       // No "recovery" phase any more — the strike sweeps the full arc, so hits
@@ -1276,16 +1268,17 @@ export class Player implements BulletTarget {
   dispose() {
     this.avatar.dispose();
     this.shadow.dispose();
-    // The gun's geometries AND its material are per-instance (buildGun() makes a
-    // fresh MeshLambertMaterial shared across this gun's meshes) — dispose both.
-    // The shared material is referenced by every gun mesh; Material.dispose() is
-    // idempotent, so traversing and disposing per-mesh is safe.
-    this.gun.traverse((c) => {
-      const m = c as THREE.Mesh;
-      if (m.geometry) m.geometry.dispose();
-      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-      else if (mat) mat.dispose();
-    });
+    // The gun + saber geometries AND their materials are per-instance (buildGun /
+    // buildSaber make fresh materials shared across each weapon's meshes) — dispose
+    // both weapons. Material.dispose() is idempotent, so per-mesh traversal is safe.
+    for (const weapon of [this.gun, this.staff]) {
+      weapon.traverse((c) => {
+        const m = c as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else if (mat) mat.dispose();
+      });
+    }
   }
 }

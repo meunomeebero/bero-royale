@@ -27,6 +27,16 @@ export interface NetState {
   /** Charge progress 0→1 (so remotes grow the orb to full as it nears ready). */
   chargeT?: number;
   /**
+   * Which weapon this player is currently holding, so every other client renders
+   * the SAME item the owner sees (netcode fidelity golden rule — a held saber must
+   * be visible to opponents, not just the gun). "saber" = hotbar slot 3; "gun" =
+   * constant/concentrated/boss (all gun-held modes). Optional/back-compat: legacy
+   * peers omit it, and the receiver leaves it UNSET (never forces a value) so their
+   * weapon is inferred from events instead (melee→saber, shot/super→gun) — forcing
+   * "gun" here would cancel a legacy peer's saber swing mid-animation.
+   */
+  weapon?: "gun" | "saber";
+  /**
    * True = live socket present on the server; false = grace-window still-avatar
    * (server keeps the player alive during GRACE_MS after socket close).
    * Optional: absent or true on self-broadcast frames; false only when the server

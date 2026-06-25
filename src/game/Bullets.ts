@@ -393,6 +393,31 @@ export class Bullets {
     return true;
   }
 
+  /**
+   * Cancel the nearest still-flying VISUAL (non-damaging) bullet fired by
+   * `shooterId` within `radius` of (x,z). Used on OBSERVER clients when a remote
+   * parries another remote's shot: the forward tracer the observer renders must stop
+   * (the reflected visual is spawned separately), so the parry reads the same as on
+   * the shooter's own screen. Visual bullets carry the firing player's `shooterId`.
+   * Returns true if one was cancelled.
+   */
+  cancelVisualByShooterNear(shooterId: string, x: number, z: number, radius: number): boolean {
+    let best = -1;
+    let bestD2 = radius * radius;
+    for (let i = 0; i < this.bullets.length; i++) {
+      const b = this.bullets[i];
+      if (b.damaging || b.shooterId !== shooterId) continue;
+      const d2 = (b.mesh.position.x - x) ** 2 + (b.mesh.position.z - z) ** 2;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        best = i;
+      }
+    }
+    if (best < 0) return false;
+    this.removeAt(best);
+    return true;
+  }
+
   update(dt: number) {
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const b = this.bullets[i];

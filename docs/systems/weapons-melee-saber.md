@@ -17,15 +17,17 @@ antigo bastão de madeira.
 | Peça | Arquivo | O quê |
 |---|---|---|
 | Mesh do sabre | `src/game/PigParts.ts` → `buildSaber()` | hilt + guarda + lâmina emissiva ciano + glow aditivo + `tip` |
-| Rastro de luz (arco azul) | `src/game/SaberTrail.ts` | ribbon (triangle-strip) aditivo azul ao longo da lâmina varrida; alimentado por `Game` durante o strike; `clear()` por swing |
-| Animação + input + stagger local | `src/game/Player.ts` | `sampleSaberYaw()` (wind-up 45° → strike 180° que SEGURA no follow-through; o retorno é o settle pós-swing), montagem dinâmica que nunca toca o corpo, `MeleeSample`, `applyMeleeStagger` (hop + flash), freeze de aim durante o swing |
+| **Cinemática do swing (compartilhada)** | `src/game/saberKinematics.ts` | **Única fonte da verdade** do arco: `sampleSaberYaw()`, `saberMountX()`, `MELEE_SWING_DUR`, `SABER_REST_YAW`, etc. Importada por `Player` E `RemotePlayer` → o swing do remoto é **idêntico** ao do dono (regra de ouro de fidelidade). |
+| Rastro de luz (arco azul) | `src/game/SaberTrail.ts` | ribbon (triangle-strip) aditivo azul ao longo da lâmina varrida; `clear()` por swing. Alimentado por `Game` (jogador local) **e por cada `RemotePlayer`** (um `SaberTrail` por remoto, mesh adicionado à cena por `Game`). |
+| Animação + input + stagger local | `src/game/Player.ts` | usa `saberKinematics` (wind-up 45° → strike 180° que SEGURA no follow-through; o retorno é o settle pós-swing), montagem dinâmica que nunca toca o corpo, `MeleeSample`, `applyMeleeStagger` (hop + flash), freeze de aim durante o swing |
+| **Render do sabre no remoto (fidelidade)** | `src/game/RemotePlayer.ts` → `updateHeldWeapon()`, `triggerSwing()` | monta `buildGun()`+`buildSaber()` num `aimGroup`; mostra a arma ativa pelo campo `weapon` do snapshot; toca o swing completo (mesma cinemática) + `SaberTrail` + smoke de fim de swing; recuo da arma no tiro |
 | Resolução de hit/parry + netcode + trail | `src/game/Game.ts` → `handleMeleeSample()` | hit varrido por sub-passos, parry de balas (`bullets.reflectInArc`) E de super (`kame.reflectInArc`), stagger, alimenta `SaberTrail`, handler `parry` |
 | Projéteis + reflexão | `src/game/Bullets.ts` → `reflectInArc()`, `cancelOwnedNear()` | reverte balas, varre trajeto da bala, gate vertical/inbound, `shooterId`/`reflections` |
 | Super (mega tiro) + reflexão | `src/game/Kamehameha.ts` → `reflectInArc()` | reflete feixes **damaging** que cruzam a lâmina (reverte + re-owna → voltam pelo `onHit`); pula visuais (autoritativo no servidor); bot super é **dodgeable por pulo** |
 | Stagger + super do bot local | `src/game/Bot.ts` → `applyMeleeStagger()`, `knockback()` | hop (kb impulse + vy) + flash; stun + fire-lock + interromper super; bots locais agora disparam o super telegrafado (gate `onKame`) |
 | Stagger VISUAL de remotos (MP) | `src/game/RemotePlayer.ts` → `applyMeleeStagger()` | quando VOCÊ golpeia um bot-do-servidor/remoto: flash branco sustentado + "pulinho" (hop + recoil que decai, sem poluir a interp) + fumaça de impacto/queda. (Servidor resolve o stun real via `staggerBot`; o atacante não recebe eco do `hit`/`meleehit`, por isso o juice é local.) |
 | Stagger do bot do servidor | `server/src/ws/bots.ts` → `staggerBot()` + `server/src/ws/index.ts` | stun/fire-lock/super-interrupt server-authoritative |
-| Mensagens de rede | `src/game/net/Multiplayer.ts` | `MeleeEvent`, `MeleeHitEvent` (stun opcional), `ParryEvent` + `sendParry` |
+| Mensagens de rede | `src/game/net/Multiplayer.ts` | `MeleeEvent`, `MeleeHitEvent` (stun opcional), `ParryEvent` + `sendParry`; campo `weapon` (`"gun"\|"saber"`) no snapshot `NetState` → qual arma o remoto segura |
 | HUD | `src/components/hud/WeaponHotbar.tsx` | rótulo do slot ("Sabre de luz") |
 
 ## Mecânicas (números canônicos)
@@ -46,11 +48,17 @@ antigo bastão de madeira.
   jogador (quando golpeado por sabre remoto).
 - **Super dos bots locais:** agora disparam o super telegrafado (wind-up ~1s, orb de carga visível),
   dodgeable por **pulo/dash** e **parryável** — pra dar ao parry-de-super algo pra refletir offline.
+- **Fidelidade no online (regra de ouro):** os oponentes veem o sabre **montado** (slot 3), o
+  **swing completo de 180°** (mesma cinemática do dono), o **rastro azul** e a **fumaça** de fim de
+  swing — não mais só uma fumacinha. Também veem a **arma** (gun) montada e o **recuo** no tiro, e a
+  **bala refletida** voltando no parry. Ver [`netcode-fidelity-golden-rule.md`](netcode-fidelity-golden-rule.md).
 
 ## Limitações conhecidas (diferidas — ver [`../PENDENCIAS.md`](../PENDENCIAS.md))
 - Parry PvP é **best-effort** sob latência (sem lag-comp; o cancelamento do tiro é por proximidade).
 - Parry server-authoritative com shot-id e validação de swing estão diferidos (postura de
   anti-cheat diferida do projeto).
+- A orientação do swing no remoto usa a direção do evento `melee` (congelada); o corpo segue o `yaw`
+  interpolado — pode divergir por ~1 frame no início do swing (autocorrige). Sem impacto de gameplay.
 
 ## Histórico
 Projetado e revisado via Mega Brain (DeepSeek V4 Pro + GLM 5.2 + GPT-5.5/Codex), 2026-06-24.

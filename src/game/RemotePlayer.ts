@@ -1,7 +1,16 @@
 import * as THREE from "three";
 import { Avatar, AVATAR_HEIGHT } from "./Avatar";
 import { BlobShadow } from "./Shadow";
-import { buildNameLabel } from "./PigParts";
+import { buildNameLabel, buildGun, buildSaber } from "./PigParts";
+import { SaberTrail } from "./SaberTrail";
+import {
+  MELEE_SWING_DUR,
+  SABER_REST_YAW,
+  SWING_WINDUP_END_T,
+  BASE_SABER_MOUNT,
+  sampleSaberYaw,
+  saberMountX,
+} from "./saberKinematics";
 import type { BulletTarget } from "./Bullets";
 import type { AudioEngine } from "./AudioEngine";
 import {
@@ -122,6 +131,28 @@ export class RemotePlayer implements BulletTarget {
   private recoilVy = 0; // hop vertical velocity
   private hopActive = false;
 
+  // ── Held weapon rig (fidelity: opponents see the SAME item the owner holds) ──
+  // Mirrors Player's aimGroup → gun/saber mount so a remote shows its weapon and
+  // sweeps the IDENTICAL saber arc (shared math in ./saberKinematics). The blue
+  // trail is world-space, so its mesh is added to the SCENE by Game (not parented
+  // to root). See docs/systems/netcode-fidelity-golden-rule.md.
+  private aimGroup: THREE.Group;
+  private gun: THREE.Group;
+  private gunBaseX = 0.12; // mirror Player.gunBaseX
+  private gunRecoil = 0;
+  private staff: THREE.Group;
+  private staffPivot: THREE.Group;
+  private staffTip: THREE.Object3D;
+  private weapon: "gun" | "saber" = "gun";
+  readonly saberTrail = new SaberTrail();
+  // Saber swing animation, driven by the "melee" event (NOT the snapshot):
+  private swingTimer = 0;
+  private swingElapsed = 0;
+  private swingYaw = 0; // facing frozen for the swing (committed event direction)
+  private swingEndTip: THREE.Vector3 | null = null; // one-shot end-of-swing smoke pos
+  private bladeA = new THREE.Vector3(); // scratch: blade base world pos
+  private bladeB = new THREE.Vector3(); // scratch: blade tip world pos
+
   // ── One-shot flags consumed by Game each frame for particle spawns ────────
   private _justDashed = false;
   private _justJumped = false;
@@ -157,6 +188,25 @@ export class RemotePlayer implements BulletTarget {
     this.label = buildNameLabel(name);
     this.label.position.set(0, AVATAR_HEIGHT * 0.85 + 0.35, 0);
     this.root.add(this.label);
+
+    // ── Held weapon rig — mirror Player's mount (aimGroup → gun + saber) so the
+    // opponent renders the SAME item the owner sees. The aimGroup is rotated by
+    // -yaw each frame; the saber pivot performs the swing.
+    this.aimGroup = new THREE.Group();
+    this.root.add(this.aimGroup);
+
+    this.gun = buildGun().group;
+    this.gun.position.set(this.gunBaseX, 0, -0.3);
+    this.aimGroup.add(this.gun);
+
+    const saberParts = buildSaber();
+    this.staff = saberParts.group;
+    this.staffPivot = saberParts.pivot;
+    this.staffTip = saberParts.tip;
+    this.staff.position.set(BASE_SABER_MOUNT, 0.05, 0);
+    this.staffPivot.rotation.y = SABER_REST_YAW;
+    this.staff.visible = false; // shown when weapon === "saber" or mid-swing
+    this.aimGroup.add(this.staff);
   }
 
   isAlive(): boolean {
@@ -326,6 +376,46 @@ export class RemotePlayer implements BulletTarget {
     this._justJumped = true;
   }
 
+  // ── Held weapon (netcode fidelity) ────────────────────────────────────────
+
+  /** Set which weapon this remote holds (from the snapshot's `weapon` field). */
+  setWeapon(weapon: "gun" | "saber") {
+    this.weapon = weapon;
+  }
+
+  /**
+   * Play a full saber swing — the SAME 180° arc the owner sees locally — oriented
+   * by the committed swing direction from the "melee" event. Drives the blade pivot
+   * + the blue SaberTrail; the end-of-swing smoke is handed back via consumeSwingEnd.
+   */
+  triggerSwing(dirX: number, dirZ: number) {
+    if (!this.alive) return;
+    this.weapon = "saber"; // a swing implies the saber is out
+    this.swingTimer = MELEE_SWING_DUR;
+    this.swingElapsed = 0;
+    this.swingYaw =
+      dirX !== 0 || dirZ !== 0 ? Math.atan2(dirZ, dirX) : this.renderYaw;
+    this.saberTrail.clear(); // fresh arc; never weld to the previous swing
+  }
+
+  /** Small gun kick when this remote fires (mirrors Player.shoot recoil). No-op on
+   *  a dead remote so stale recoil can't latch (decay only runs on the alive path). */
+  triggerGunRecoil() {
+    if (!this.alive) return;
+    this.gunRecoil = 0.08;
+  }
+
+  /**
+   * One-shot: the blade-tip world position at the frame the swing ended (so Game
+   * spawns the white smoke-cube puff there, matching the local end-of-swing look),
+   * else null. Cleared on read.
+   */
+  consumeSwingEnd(): THREE.Vector3 | null {
+    const v = this.swingEndTip;
+    this.swingEndTip = null;
+    return v;
+  }
+
   // ── One-shot particle-spawn hooks (consumed each frame by Game) ───────────
 
   /**
@@ -388,6 +478,10 @@ export class RemotePlayer implements BulletTarget {
   }
 
   update(dt: number, groundY: number) {
+    // Age the world-space saber trail every frame (so an in-flight arc keeps
+    // fading even if this remote dies/falls mid-swing); the swing pushes new ribs.
+    this.saberTrail.update(dt);
+
     // ── 1. Reconstruct the target world position (interpolate or extrapolate)
     const target = this.computeTargetPos();
 
@@ -445,6 +539,8 @@ export class RemotePlayer implements BulletTarget {
     // ── 5. Falling tumble overrides the normal deformation pipeline ──────────
     if (this.state === "falling") {
       this.label.visible = false;
+      this.aimGroup.visible = false; // no held weapon while tumbling off the edge
+      this.resetSwing(); // a swing can't survive the tumble / resume on respawn
       this.updateFalling(dt, groundY);
       this.runAudioInference(dt);
       return;
@@ -456,6 +552,8 @@ export class RemotePlayer implements BulletTarget {
     // respawn spot) would spoil where the player is/reappears.
     if (this.state === "dead" || !this.alive) {
       this.label.visible = false;
+      this.aimGroup.visible = false; // hide the held weapon with the corpse
+      this.resetSwing(); // a swing can't survive death / resume on respawn
       this.avatar.setOpacity(0);
       this.body.scale.setScalar(0.0001);
       this.shadow.setVisible(false);
@@ -548,12 +646,96 @@ export class RemotePlayer implements BulletTarget {
       this.avatar.faceYaw(this.dashYaw);
       this.avatar.setDashStretch(amt);
     } else {
-      this.avatar.faceYaw(this.renderYaw);
+      // During a swing, face the body to the committed swing direction so the body
+      // and blade stay locked together exactly as the owner sees it (the local
+      // player freezes aim during its swing); otherwise track the interpolated yaw.
+      this.avatar.faceYaw(this.swingTimer > 0 ? this.swingYaw : this.renderYaw);
       this.avatar.setDashStretch(0);
     }
 
+    // ── 9b. Held weapon: aim it, show gun vs saber, play the swing arc + trail ─
+    this.updateHeldWeapon(dt);
+
     // ── 10. Spatial audio inference (land/jump/footstep/death) ───────────────
     this.runAudioInference(dt);
+  }
+
+  /**
+   * Render the held weapon (netcode fidelity): aim the weapon group by the body
+   * yaw, show the gun vs the saber, and — when a swing is in flight — sweep the
+   * blade through the SAME 180° arc the owner sees locally (shared sampleSaberYaw /
+   * saberMountX), feeding the blue SaberTrail and flagging the end-of-swing smoke.
+   * Only runs on the alive path (root.position + renderYaw are final by here).
+   */
+  /** Cancel any in-flight swing (death/fall / weapon switch) so it can't resume on
+   *  respawn or finish a phantom arc. Also zeroes the gun recoil so no rig state
+   *  survives a death. The trail fades on its own via saberTrail.update(). */
+  private resetSwing() {
+    this.gunRecoil = 0;
+    this.gun.position.x = this.gunBaseX;
+    if (this.swingTimer === 0 && this.staffPivot.rotation.y === SABER_REST_YAW) return;
+    this.swingTimer = 0;
+    this.swingElapsed = 0;
+    this.swingEndTip = null;
+    this.staffPivot.rotation.y = SABER_REST_YAW;
+    this.staff.position.x = BASE_SABER_MOUNT;
+  }
+
+  private updateHeldWeapon(dt: number) {
+    this.aimGroup.visible = true;
+
+    // Mid-swing weapon switch: if the owner swapped off the saber while a swing was
+    // in flight, cancel it — otherwise the remote completes a phantom arc + smoke
+    // the owner never finished (the local setFireMode cancels its swing too).
+    if (this.swingTimer > 0 && this.weapon !== "saber") this.resetSwing();
+    const swinging = this.swingTimer > 0;
+
+    // Aim the weapon group: a swing FREEZES facing to its committed direction
+    // (mirrors the local player, which freezes aim during the swing); otherwise it
+    // tracks the interpolated body yaw. Negated to match Player's aimGroup mount.
+    this.aimGroup.rotation.y = -(swinging ? this.swingYaw : this.renderYaw);
+
+    // Show the saber whenever it's the held weapon OR a swing is mid-flight.
+    const showSaber = this.weapon === "saber" || swinging;
+    this.staff.visible = showSaber;
+    this.gun.visible = !showSaber;
+
+    // Gun recoil decay (mirror of Player).
+    this.gunRecoil += (0 - this.gunRecoil) * Math.min(1, 18 * dt);
+    this.gun.position.x = this.gunBaseX - this.gunRecoil;
+
+    if (swinging) {
+      this.swingTimer = Math.max(0, this.swingTimer - dt);
+      this.swingElapsed += dt;
+      const t = Math.min(1, this.swingElapsed / MELEE_SWING_DUR);
+      const yaw = sampleSaberYaw(t);
+      this.staffPivot.rotation.y = yaw;
+      this.staff.position.x = saberMountX(yaw);
+      this.staff.updateWorldMatrix(true, true); // fresh blade transform for the trail
+      // Feed the blue light trail ONLY during the STRIKE phase — the local trail is
+      // strike-only too (Game.handleMeleeSample returns before saberTrail.push during
+      // wind-up), so pushing in wind-up would draw an extra backward arc opponents
+      // shouldn't see.
+      if (t >= SWING_WINDUP_END_T) {
+        this.staffPivot.getWorldPosition(this.bladeA);
+        this.staffTip.getWorldPosition(this.bladeB);
+        this.saberTrail.push(this.bladeA, this.bladeB);
+      }
+      // End of swing → flag the tip so Game spawns the white smoke-cube puff there
+      // (mirrors the local end-of-swing look).
+      if (this.swingTimer <= 0) {
+        this.staffTip.getWorldPosition(this.bladeA);
+        this.swingEndTip = this.bladeA.clone();
+      }
+    } else if (this.staffPivot.rotation.y !== SABER_REST_YAW) {
+      // Settle smoothly back to the perpendicular rest pose + reset the mount.
+      this.staffPivot.rotation.y +=
+        (SABER_REST_YAW - this.staffPivot.rotation.y) * Math.min(1, 18 * dt);
+      if (Math.abs(this.staffPivot.rotation.y - SABER_REST_YAW) < 0.002) {
+        this.staffPivot.rotation.y = SABER_REST_YAW;
+      }
+      this.staff.position.x = BASE_SABER_MOUNT;
+    }
   }
 
   /** Off-edge fall: tumble + shrink + fade (mirror of Player falling branch). */
@@ -680,5 +862,28 @@ export class RemotePlayer implements BulletTarget {
     const mat = this.label.material as THREE.SpriteMaterial;
     mat.map?.dispose();
     mat.dispose();
+    // Held weapon rig + world-space trail (each builder makes per-instance
+    // geometries + materials, so traverse and dispose both).
+    this.saberTrail.dispose();
+    disposeObject(this.gun);
+    disposeObject(this.staff);
   }
+}
+
+/** Dispose every geometry + material under a built weapon group. Materials can be
+ *  shared across meshes (buildGun reuses one), so dedupe to dispose each only once. */
+function disposeObject(group: THREE.Object3D) {
+  const seenMats = new Set<THREE.Material>();
+  const disposeMat = (m: THREE.Material) => {
+    if (seenMats.has(m)) return;
+    seenMats.add(m);
+    m.dispose();
+  };
+  group.traverse((c) => {
+    const m = c as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) mat.forEach(disposeMat);
+    else if (mat) disposeMat(mat);
+  });
 }

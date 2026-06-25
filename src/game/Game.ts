@@ -852,6 +852,11 @@ export class Game {
       // Player.shoot which calls spawnFlash + spawnPuff at its own muzzle).
       this.smoke.spawnFlash(origin, dir);
       this.smoke.spawnPuff(origin, dir, 6, "#cccccc");
+      // Gun kick on the firing remote (mirrors Player.shoot recoil) + infer that it
+      // holds the gun (so legacy peers without the snapshot weapon field show right).
+      const shooterRp = this.remotePlayers.get(e.id);
+      shooterRp?.setWeapon("gun");
+      shooterRp?.triggerGunRecoil();
     });
     this.mp.setDashHandler((e) => {
       this.remotePlayers.get(e.id)?.triggerDash(e.dir);
@@ -902,6 +907,10 @@ export class Game {
       // back (and never re-target the caster as if it were the parrier's own).
       this.kame.fire(origin, dir, false, "player", true, e.id);
       this.audio.playShot(origin, false);
+      // The super fires from the gun → kick the remote's gun + infer gun-held (so
+      // legacy peers without the snapshot weapon field don't get stuck showing the saber).
+      rp?.setWeapon("gun");
+      rp?.triggerGunRecoil();
     });
     // We got hit by someone's kamehameha. Damage + death are now SERVER-authoritative
     // (the server resolves the "kamehit" shield-first via SUPER_DAMAGE and pushes the
@@ -916,14 +925,12 @@ export class Game {
       this.kame.impactAt(hitPos);
       this.audio.playShot(hitPos, false);
     });
-    // Remote saber swing → the white smoke-cube puff (matches the local end-of-
-    // swing look; remotes aren't blade-animated, so it fires at the event).
+    // Remote saber swing → play the FULL 180° blade arc on that remote (the SAME
+    // animation + blue light trail its owner sees locally — netcode fidelity). The
+    // end-of-swing white smoke puff is spawned when the swing completes (polled via
+    // consumeSwingEnd in the reconcile loop) so it lands at the blade tip.
     this.mp.setMeleeHandler((e) => {
-      const rp = this.remotePlayers.get(e.id);
-      const pos = rp
-        ? rp.getPosition()
-        : new THREE.Vector3(e.origin.x, e.origin.y, e.origin.z);
-      this.kame.smokeBurst(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), 0.6, 9);
+      this.remotePlayers.get(e.id)?.triggerSwing(e.dir.x, e.dir.z);
     });
     // We got clubbed by a remote staff → small knockback (damage arrives via the
     // server "hit" path). Best-effort: the server may re-assert our position.
@@ -956,11 +963,43 @@ export class Game {
     // their parry an actual shield (otherwise our bullet would still hit them).
     // The reflected damage to us already arrived via that parrier's "hit".
     this.mp.setParryHandler((e) => {
-      if (e.from !== this.mp?.id) return; // only the parried shooter acts
       const rp = this.remotePlayers.get(e.id); // the parrying player
       const p = rp ? rp.getPosition() : null;
       if (!p) return;
-      this.bullets.cancelOwnedNear("player", p.x, p.z, PARRY_CANCEL_RADIUS);
+      // The parrying player's OWN client already reflected the bullet locally
+      // (bullets.reflectInArc) — nothing to mirror for them.
+      if (e.id === this.mp?.id) return;
+
+      // Cancel the forward shot near the parrier and find where the reflection flies
+      // back TO (the shooter). Fidelity golden rule: EVERY client that was rendering
+      // the forward tracer must see it stop and bounce back, not just the shooter.
+      let cancelled = false;
+      let dest: THREE.Vector3 | null = null;
+      if (e.from === this.mp?.id) {
+        // We are the parried shooter: our forward bullet is a real owned bullet.
+        cancelled = this.bullets.cancelOwnedNear("player", p.x, p.z, PARRY_CANCEL_RADIUS);
+        dest = this.player.root.position;
+      } else {
+        // Pure observer: cancel the VISUAL tracer we render for that shooter, and
+        // bounce it back toward the shooter's avatar.
+        cancelled = this.bullets.cancelVisualByShooterNear(e.from, p.x, p.z, PARRY_CANCEL_RADIUS);
+        dest = this.remotePlayers.get(e.from)?.getPosition() ?? null;
+      }
+      // Only show the reflected bullet if a forward shot was actually cancelled — a
+      // duplicate / stale / forged parry that cancels nothing must not spawn a
+      // phantom. The real reflected damage arrives via the parrier's "hit"; this is
+      // pure presentation (saber-blue so it reads as a reflected/energised shot).
+      if (!cancelled || !dest) return;
+      const dx = dest.x - p.x;
+      const dz = dest.z - p.z;
+      if (dx * dx + dz * dz > 1e-4) {
+        this.bullets.spawnVisual(
+          new THREE.Vector3(p.x, p.y, p.z),
+          new THREE.Vector3(dx, 0, dz),
+          "#49d6ff",
+          e.id,
+        );
+      }
     });
     // Relayed kill-feed events from other players → surface to React. Skip events
     // where WE are the victim: we self-report our own death locally (below) with
@@ -2014,6 +2053,10 @@ export class Game {
         state: this.player.getState(),
         charging: chg.charging,
         chargeT: chg.t,
+        // Held weapon → remotes render the SAME item (fidelity golden rule). The
+        // saber is slot 3 ("staff"); every gun-held mode (constant/concentrated/
+        // boss) reads as "gun".
+        weapon: this.player.getFireMode() === "staff" ? "saber" : "gun",
       });
     }
 
@@ -2070,6 +2113,10 @@ export class Game {
         rp.snap();
         this.remotePlayers.set(id, rp);
         this.scene.add(rp.root);
+        // The saber trail is world-space (absolute rib coords, frustumCulled off),
+        // so its mesh lives at the SCENE root — NOT parented to rp.root (which
+        // translates). Removed + disposed with the remote below.
+        this.scene.add(rp.saberTrail.mesh);
         this.bullets.registerTarget(rp);
         this.kame.registerTarget(rp);
         this.remoteRecvSeq.set(id, st.recvSeq ?? 0);
@@ -2102,6 +2149,12 @@ export class Game {
         }
         rp.setPresent(present);
       }
+      // Held weapon (fidelity): render the SAME item the owner holds. Only apply
+      // the explicit snapshot field when PRESENT — legacy peers omit it and instead
+      // have their weapon inferred from events (melee→saber, shot/super→gun). Forcing
+      // "gun" here every frame would clobber that inference and cancel a legacy
+      // peer's swing mid-animation. MUST run before rp.update() (saber visibility).
+      if (st.weapon) rp.setWeapon(st.weapon);
       // Kill attribution: a remote we hit recently just died (alive flip is now
       // server-authoritative — the server overwrites alive on relayed "s").
       const prevAlive = this.remoteAlivePrev.get(id) ?? true;
@@ -2149,6 +2202,12 @@ export class Game {
       }
       const gy = this.platform.surfaceY(rp.root.position.x, rp.root.position.z);
       rp.update(dt, gy);
+
+      // End-of-swing white smoke-cube puff at the remote blade tip — consumed AFTER
+      // update() (which sets the tip THIS frame), so it lands in lockstep with the
+      // swing completing, matching the local same-frame end-of-swing smoke.
+      const swingTip = rp.consumeSwingEnd();
+      if (swingTip) this.kame.smokeBurst(swingTip, 0.6, 9);
 
       // ── Remote particle hooks: consume one-shot flags set by RemotePlayer ──
       // Spawn after update() so rp.getPosition() reflects this frame's position.
@@ -2226,6 +2285,7 @@ export class Game {
       for (const [id, rp] of this.remotePlayers) {
         if (!presence.has(id)) {
           this.scene.remove(rp.root);
+          this.scene.remove(rp.saberTrail.mesh); // world-space trail (added above)
           this.bullets.unregisterTarget(rp);
           this.kame.unregisterTarget(rp);
           this.kame.clearCharge(id);
@@ -2623,7 +2683,10 @@ export class Game {
     this.player?.dispose();
     this.clearBots();
     this.featured?.dispose();
-    for (const rp of this.remotePlayers.values()) rp.dispose();
+    for (const rp of this.remotePlayers.values()) {
+      this.scene.remove(rp.saberTrail.mesh); // world-space trail lives on the scene
+      rp.dispose();
+    }
     this.remotePlayers.clear();
     this.voice?.dispose();
     if (this.voiceRing) {

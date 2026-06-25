@@ -10,8 +10,10 @@ import * as THREE from "three";
  * dims with age (older = darker = fades out under additive blending), giving a
  * glowing arc that trails the blade and dissolves a fraction of a second later.
  *
- * Self-contained: owns one Mesh (add `.mesh` to the scene). Local-player only for
- * now; remote saber trails would need per-frame remote blade reconstruction.
+ * Self-contained: owns one Mesh (add `.mesh` to the scene). Used by BOTH the local
+ * player (fed by `Game` during the strike) and each `RemotePlayer` (which owns its
+ * own trail and reconstructs the world-space blade segment per swing frame), so
+ * opponents see the same blue arc the owner does.
  */
 
 const MAX_RIBS = 18; // ribs kept in the strip (≈ the last MAX_RIBS frames of a swing)
