@@ -10,8 +10,9 @@
 | Doc | Domínio | Keywords |
 |---|---|---|
 | [`systems/netcode-fidelity-golden-rule.md`](systems/netcode-fidelity-golden-rule.md) | 🥇 **Regra de ouro:** fidelidade 100% no online | fidelidade, golden rule, regra de ouro, espelhar, 100%, sabre invisível, o que me matou, parry visível, presentation |
-| [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo (slot 3) | sabre, saber, melee, swing, parry, reflect, stun, stagger, knockback |
-| [`systems/weapons-weight-speed.md`](systems/weapons-weight-speed.md) | Peso das armas → velocidade | peso, weight, arma, velocidade, speed, movimento, balance, leve, pesada |
+| [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo — Lightsaber (slot 3) | lightsaber, sabre, saber, melee, swing, parry, reflect, deflect, impact spark, dano puro |
+| [`systems/weapons-energy-blast.md`](systems/weapons-energy-blast.md) | Energy Blast — super canalizado (slot 2) | energy blast, super, kamehameha, canalizar, channel, channeling, stun, stagger, fire-lock, bare-handed, knockback |
+| [`systems/weapons-weight-speed.md`](systems/weapons-weight-speed.md) | Peso das armas → velocidade | peso, weight, arma, velocidade, speed, movimento, balance, pistol, energy blast, lightsaber, leve, pesada |
 | [`systems/netcode-trust-model.md`](systems/netcode-trust-model.md) | Autoridade de rede | netcode, online, servidor, autoritativo, broadcast, hit, parry, tiros invisíveis, interpolação |
 | [`systems/online-invisible-shots-diagnosis.md`](systems/online-invisible-shots-diagnosis.md) | 🔴 Bug online (diagnosticado) | tiros invisíveis, morte súbita, hitscan, tracer, dano vs visual, bot, throttle |
 | [`systems/netcode-hit-sync-plan.md`](systems/netcode-hit-sync-plan.md) | 🔴→🛠️ Arquitetura da correção (tiro↔dano) | tiros invisíveis, hit sync, damage-on-arrival, scheduler, applyAt, impact gate, shotSeq, beam-front, favor-the-victim |

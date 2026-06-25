@@ -19,6 +19,55 @@ velocidade, armas, super, kite, dano, fire rate, cooldown, números canônicos, 
 
 ---
 
+## Sessão 2026-06-25 — rename + rebalance: Pistol / Energy Blast / Lightsaber
+**Contexto/objetivo:** padronizar a nomenclatura das armas e re-equilibrar o trio. O Lightsaber
+estava **OP** (dano alto + control de stun); a antiga "tiro concentrado" era pouco recompensadora pro
+risco do canal; a "tiro constante" continuava fraca demais. Princípio: **cada arma com uma
+força↔custo clara**.
+
+**Rename (nomenclatura canônica):**
+- Arma 1 = **Pistol** (`FireMode "pistol"`)
+- Arma 2 = **Energy Blast** (`FireMode "energyBlast"`)
+- Arma 3 = **Lightsaber** (`FireMode "lightsaber"`)
+- "boss" (easter egg "bero") inalterado.
+- Snapshot `NetState.weapon` agora ∈ `"gun" | "saber" | "blast"` (`"blast"` = Energy Blast de mãos
+  vazias → remotos não mostram arma).
+
+**Mudanças:**
+1. **Pistol — fire rate +20%.** `SHOOT_COOLDOWN 0.12 → 0.10` (~10 tiros/s). A arma fraca de
+   run-and-gun ganha DPS pra valer a pena ficar nela (mantém o +30% de mobilidade do peso leve).
+2. **Energy Blast — mais difícil, mas recompensa.** Não segura nada (canaliza de mãos vazias; o mesh
+   da gun some mas o feixe ainda sai do anchor do cano). Canal **−50%** (`KAME_CHARGE 3.0 → 1.5s`).
+   Movimento: **rápida quando idle** (×1.30, igual à Pistol) e só **−20%** (×0.80) enquanto canaliza.
+   Ganhou um **stun-on-hit** (knockback + flash + stun que interrompe o canal da vítima + trava o
+   tiro ~1s) e um HUD piscante **"Channeling…"** (baixa opacidade, estilo Dota). Dano segue
+   server-authoritative (`SUPER_DAMAGE=3`, **não** insta-kill).
+3. **Lightsaber — stun removido (era OP).** Tirado o stun/fire-lock/super-interrupt/freeze/pulinho/
+   flash; **não** envia mais `meleehit`. Agora é **dano puro (`MELEE_DAMAGE=3`) + deflexão (parry de
+   balas/super) + impact spark**. O control que ele tinha foi o que migrou pra Energy Blast.
+
+**Princípio de design:** cada arma com uma força↔custo clara — Pistol = mobilidade + RoF (DPS
+sustentado, sem burst); Energy Blast = burst + control, ao custo de canal lento/exposto; Lightsaber =
+deflexão + dano corpo-a-corpo, sem mais control gratuito.
+
+**Decisões em aberto / próximos passos:**
+- Sentir se o stun na Energy Blast não fica forte demais sob o canal curto (1.5s) — ajustar
+  `MELEE_STUN`/`MELEE_FIRE_LOCK` ou o canal se virar dominante.
+- Avaliar se o Lightsaber, sem control, precisa de algum buff (alcance/cooldown) pra continuar
+  relevante vs a deflexão.
+
+**Arquivos:** `src/game/Player.ts` (`SHOOT_COOLDOWN`, `FireMode`, `SLOT_MODES`, `WEAPON_SPEED_MULT`,
+`KAME_CHARGE`, `setFireMode` bare-handed), `src/game/Game.ts` (`handleMeleeSample` sem stun;
+`onKameHit`/`setKameHitHandler` com stagger; mapeamento `weapon`), `src/game/net/Multiplayer.ts`
+(`NetState.weapon "blast"`), `src/components/hud/ChannelingIndicator.tsx` + `src/index.css`
+(`.channel-flash`), `src/components/hud/WeaponHotbar.tsx` (rótulos). Docs:
+[`systems/weapons-energy-blast.md`](systems/weapons-energy-blast.md) (novo),
+[`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md),
+[`systems/weapons-weight-speed.md`](systems/weapons-weight-speed.md),
+[`systems/netcode-fidelity-golden-rule.md`](systems/netcode-fidelity-golden-rule.md).
+
+---
+
 ## Sessão 2026-06-25 — peso das armas e nerf do kite do super
 **Contexto/objetivo:** o **tiro constante** (arma 1) é a arma mais fraca; jogadores que ficam nela
 ficavam sem recompensa. Introduzir **peso por arma** como alavanca de mobilidade e amarrar o super

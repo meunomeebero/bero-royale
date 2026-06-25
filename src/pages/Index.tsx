@@ -30,6 +30,7 @@ import { ChatPanel, type ChatMessage } from "@/components/hud/ChatPanel";
 import { PlayersList } from "@/components/hud/PlayersList";
 import { PingBadge } from "@/components/hud/PingBadge";
 import { WeaponHotbar } from "@/components/hud/WeaponHotbar";
+import { ChannelingIndicator } from "@/components/hud/ChannelingIndicator";
 import { KillFeed, type KillEvent } from "@/components/hud/KillFeed";
 import { BoostBar } from "@/components/hud/BoostBar";
 import { PickupToast, type PickupEvent } from "@/components/hud/PickupToast";
@@ -53,7 +54,7 @@ const INITIAL_STATS: GameStats = {
   ping: null,
   talking: false,
   voiceMode: "ptt",
-  fireMode: "constant",
+  fireMode: "pistol",
   weaponSlot: 0,
   chargeProgress: 0,
   respawnIn: 0,
@@ -502,7 +503,7 @@ const Index = () => {
               no boosts are active. */}
           <BoostBar boosts={stats.boosts} isMobile={isMobile} />
           <div className="flex items-end gap-2.5">
-            {/* Minecraft-style weapon hotbar: 1 constant · 2 concentrated · 3 staff.
+            {/* Minecraft-style weapon hotbar: 1 Pistol · 2 Energy Blast · 3 Lightsaber.
                 Keys 1/2/3 or click/tap a slot. (BOSS, the "bero" double-tap-Tab
                 override, lights no slot.) */}
             <WeaponHotbar
@@ -514,6 +515,15 @@ const Index = () => {
             <DashMeter charges={stats.dashCharges} max={stats.dashMaxCharges} compact />
           </div>
         </div>
+      )}
+
+      {/* Energy-blast "Channeling…" cue — pulses below the crosshair while the super
+          channels, vanishes on fire/cancel. Self-positions; renders null when idle. */}
+      {!loading && (
+        <ChannelingIndicator
+          weaponSlot={stats.weaponSlot}
+          chargeProgress={stats.chargeProgress}
+        />
       )}
 
       {/* Kill feed — stacked kill-notification chips, top-center */}

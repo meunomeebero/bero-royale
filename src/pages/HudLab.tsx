@@ -63,7 +63,7 @@ export default function HudLab() {
   const [nBoosts, setNBoosts] = useState(num("boosts", 2));
   const showToast = q("toast", "1") === "1";
   const showKf = q("kf", "1") === "1";
-  const fireMode = q("fire", "concentrated") as GameStats["fireMode"];
+  const fireMode = q("fire", "energyBlast") as GameStats["fireMode"];
 
   const [pickup, setPickup] = useState<PickupEvent | null>(null);
   const [killEvents, setKillEvents] = useState<KillEvent[]>([]);
@@ -99,7 +99,7 @@ export default function HudLab() {
     elapsed: 137, topScore: 24, botCount: 3, health, maxHealth: 10, isDead: false,
     dashCharges: 2, dashMaxCharges: 3, kills: 8, mode: "multiplayer", mpConnected: true,
     mpLocal: false, mpPlayers: 9, ping: 42, talking: false, voiceMode: "ptt", fireMode,
-    weaponSlot: fireMode === "concentrated" ? 1 : fireMode === "boss" ? -1 : 0,
+    weaponSlot: fireMode === "energyBlast" ? 1 : fireMode === "boss" ? -1 : 0,
     chargeProgress: 0.6, respawnIn: 0, shield, leaderboard: [], roster: ROSTER,
     bestRuns: BEST_RUNS, boosts,
   };

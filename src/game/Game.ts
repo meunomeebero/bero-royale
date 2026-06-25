@@ -751,6 +751,17 @@ export class Game {
       const hitPos = this.player.root.position.clone();
       this.kame.impactAt(hitPos);
       this.audio.playShot(hitPos, false);
+      // 2026 rebalance: the energy blast STAGGERS its victim — knockback + white
+      // flash + a stun that INTERRUPTS our own channel and briefly locks fire.
+      // (kamehit is only sent for the lethal energy blast, so this is always it;
+      // the damage stays server-authoritative — this is the client-trusted cue.)
+      // Guard alive: a kamehit arriving just after we died (net-order race) must not
+      // knock back / stagger a corpse (applyMeleeStagger self-guards, but knockback
+      // does not — and a dead player shouldn't move).
+      if (this.player.isAlive()) {
+        this.player.applyKnockback(new THREE.Vector3(e.dir.x, 0, e.dir.z), MELEE_KNOCKBACK);
+        this.player.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      }
     });
     // Remote saber swing → play the FULL 180° blade arc on that remote (the SAME
     // animation + blue light trail its owner sees locally — netcode fidelity). The
@@ -759,6 +770,9 @@ export class Game {
     this.mp.setMeleeHandler((e) => {
       this.remotePlayers.get(e.id)?.triggerSwing(e.dir.x, e.dir.z);
     });
+    // LEGACY (remove once the old bundle fully drains from prod): the new lightsaber
+    // no longer sends `meleehit` (its stun moved to the energy blast), but a LEGACY
+    // peer's saber still does — so we keep this handler to apply that incoming stun.
     // We got clubbed by a remote staff → small knockback (damage arrives via the
     // server "hit" path). Best-effort: the server may re-assert our position.
     this.mp.setMeleeHitHandler((e) => {
@@ -1147,8 +1161,8 @@ export class Game {
       this.meleeHitIds.add(bot.id);
       this.meleeImpactFx(bot.root.position, push);
       for (let i = 0; i < MELEE_DAMAGE && bot.isAlive(); i++) bot.takeHit(push);
-      bot.knockback(push, MELEE_KNOCKBACK);
-      bot.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      // 2026 rebalance: the lightsaber no longer STUNS (knockback + flash + stun all
+      // moved to the energy blast). It's now pure damage + deflection + impact spark.
     }
     for (const rp of this.remotePlayers.values()) {
       if (!rp.isAlive() || this.meleeHitIds.has(rp.id)) continue;
@@ -1157,21 +1171,12 @@ export class Game {
       if (!push) continue;
       this.meleeHitIds.add(rp.id);
       this.meleeImpactFx(p, push);
-      // INSTANT client juice on the target WE hit: white flash + backward hop +
-      // impact dust (the server resolves the actual stun/damage; the "hit"/
-      // "meleehit" echoes are NOT sent back to us, so without this the attacker
-      // sees no reaction on a server bot / remote player).
-      rp.applyMeleeStagger(push.x, push.z);
+      // 2026 rebalance: the lightsaber no longer stuns — it only damages (+ deflects
+      // + impact spark). No meleehit (which would stun server bots) and no body
+      // hop/flash are sent; the knockback + stun moved to the energy blast.
       const gy = this.platform.surfaceY(p.x, p.z);
       this.dust.spawnBurst(new THREE.Vector3(p.x, gy + 0.05, p.z), 8);
       for (let i = 0; i < MELEE_DAMAGE; i++) this.mp?.sendHit(rp.id);
-      this.mp?.sendMeleeHit(
-        rp.id,
-        { x: push.x, y: 0, z: push.z },
-        MELEE_STUN * 1000,
-        MELEE_FIRE_LOCK * 1000,
-        true,
-      );
     }
     // The saber also smashes loot crates (server-authoritative: takeHit() flashes
     // + relays sendHit, the server tracks crate HP + broadcasts the burst).
@@ -1219,6 +1224,12 @@ export class Game {
       for (let i = 0; i < dmg && this.player.isAlive(); i++) {
         this.player.takeHit(dir);
       }
+      // Energy blast staggers the player (offline / local-bot supers): knockback +
+      // flash + stun that interrupts our channel.
+      if (lethal && this.player.isAlive()) {
+        this.player.applyKnockback(dir, MELEE_KNOCKBACK);
+        this.player.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      }
       return;
     }
     // Attribute the kill so bot-vs-bot mega kills show in the feed.
@@ -1229,13 +1240,20 @@ export class Game {
       for (let i = 0; i < dmg && target.isAlive(); i++) {
         target.takeHit(dir);
       }
+      // Energy blast staggers a SURVIVING bot (knockback + flash + stun + interrupt).
+      if (lethal && target.isAlive()) {
+        target.knockback(dir, MELEE_KNOCKBACK);
+        target.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      }
       if (!target.isAlive()) this.kameKillFx(target.position.x, target.position.z);
     } else if (target instanceof RemotePlayer) {
       this.recentHits.set(target.id, Date.now());
       if (lethal) {
-        // Concentrated super: one kamehit event. The SERVER resolves it shield-first
-        // for SUPER_DAMAGE (3) and pushes the victim's real HP back — no client-side
-        // damage here, so the two supers (player + bot) share one authoritative model.
+        // Energy blast: attacker-side impact cue (the victim hops back + flashes;
+        // the victim's OWN client applies the real stun via setKameHitHandler), then
+        // the authoritative damage via kamehit (server resolves SUPER_DAMAGE=3
+        // shield-first and pushes the victim's real HP back).
+        target.applyStaggerVisual(dir.x, dir.z);
         this.mp?.sendKameHit(target.id, { x: dir.x, y: dir.y, z: dir.z });
       } else {
         for (let i = 0; i < BOSS_SHOT_DAMAGE; i++) this.mp?.sendHit(target.id);
@@ -1577,7 +1595,7 @@ export class Game {
         ping: this.mp?.getPing() ?? null,
           talking: this.lastTalking,
           voiceMode: this.voiceMode,
-          fireMode: "constant",
+          fireMode: "pistol",
           weaponSlot: 0,
           chargeProgress: 0,
           respawnIn: 0,
@@ -1793,7 +1811,7 @@ export class Game {
   }
   /** Current fire mode for the HUD toggle. */
   getFireMode(): FireMode {
-    return this.player?.getFireMode() ?? "constant";
+    return this.player?.getFireMode() ?? "pistol";
   }
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1880,10 +1898,15 @@ export class Game {
         state: this.player.getState(),
         charging: chg.charging,
         chargeT: chg.t,
-        // Held weapon → remotes render the SAME item (fidelity golden rule). The
-        // saber is slot 3 ("staff"); every gun-held mode (constant/concentrated/
-        // boss) reads as "gun".
-        weapon: this.player.getFireMode() === "staff" ? "saber" : "gun",
+        // Held weapon → remotes render the SAME item (fidelity golden rule):
+        // lightsaber → "saber"; energy blast → "blast" (channels bare-handed); the
+        // pistol + boss read as "gun". (Legacy clients ignore the unknown "blast".)
+        weapon:
+          this.player.getFireMode() === "lightsaber"
+            ? "saber"
+            : this.player.getFireMode() === "energyBlast"
+              ? "blast"
+              : "gun",
       });
     }
 
@@ -2550,7 +2573,7 @@ export interface GameStats {
   talking: boolean;
   voiceMode: VoiceMode;
   fireMode: FireMode;
-  /** Active hotbar weapon slot: 0=constant, 1=concentrated, 2=staff; -1 in boss. */
+  /** Active hotbar weapon slot: 0=pistol, 1=energyBlast, 2=lightsaber; -1 in boss. */
   weaponSlot: number;
   /** 0→1 concentrated-shot charge progress (drives the HUD toggle fill). */
   chargeProgress: number;

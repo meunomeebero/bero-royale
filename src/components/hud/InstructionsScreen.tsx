@@ -68,9 +68,9 @@ const COMBAT: ControlEntry[] = [
   },
   {
     keys: ["Tab"],
-    label: "trocar entre tiro constante e tiro concentrado",
+    label: "trocar arma (Pistol · Energy Blast · Lightsaber)",
     icon: <Crosshair className="h-4 w-4" />,
-    sub: "Tiro concentrado — segura 5s e solta quando o personagem brilhar (fica pronto)",
+    sub: "Energy Blast — segura para canalizar e solta quando o personagem brilhar (fica pronto)",
   },
 ];
 

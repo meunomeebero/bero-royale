@@ -143,7 +143,7 @@ export class RemotePlayer implements BulletTarget {
   private staff: THREE.Group;
   private staffPivot: THREE.Group;
   private staffTip: THREE.Object3D;
-  private weapon: "gun" | "saber" = "gun";
+  private weapon: "gun" | "saber" | "blast" = "gun";
   readonly saberTrail = new SaberTrail();
   // Saber swing animation, driven by the "melee" event (NOT the snapshot):
   private swingTimer = 0;
@@ -261,7 +261,7 @@ export class RemotePlayer implements BulletTarget {
    * so Game spawns the landing dust ("fumaça na queda"). `dirX/dirZ` is the unit
    * push direction (away from the attacker).
    */
-  applyMeleeStagger(dirX: number, dirZ: number) {
+  applyStaggerVisual(dirX: number, dirZ: number) {
     if (!this.alive) return;
     this.stunFlashT = STAGGER_FLASH_DUR;
     this.hitFlashTimer = 0.18; // immediate white pop too
@@ -379,7 +379,7 @@ export class RemotePlayer implements BulletTarget {
   // ── Held weapon (netcode fidelity) ────────────────────────────────────────
 
   /** Set which weapon this remote holds (from the snapshot's `weapon` field). */
-  setWeapon(weapon: "gun" | "saber") {
+  setWeapon(weapon: "gun" | "saber" | "blast") {
     this.weapon = weapon;
   }
 
@@ -698,7 +698,8 @@ export class RemotePlayer implements BulletTarget {
     // Show the saber whenever it's the held weapon OR a swing is mid-flight.
     const showSaber = this.weapon === "saber" || swinging;
     this.staff.visible = showSaber;
-    this.gun.visible = !showSaber;
+    // Gun only for the "gun" weapon — the energy blast ("blast") channels bare-handed.
+    this.gun.visible = !showSaber && this.weapon === "gun";
 
     // Gun recoil decay (mirror of Player).
     this.gunRecoil += (0 - this.gunRecoil) * Math.min(1, 18 * dt);

@@ -29,13 +29,15 @@ export interface NetState {
   /**
    * Which weapon this player is currently holding, so every other client renders
    * the SAME item the owner sees (netcode fidelity golden rule — a held saber must
-   * be visible to opponents, not just the gun). "saber" = hotbar slot 3; "gun" =
-   * constant/concentrated/boss (all gun-held modes). Optional/back-compat: legacy
-   * peers omit it, and the receiver leaves it UNSET (never forces a value) so their
-   * weapon is inferred from events instead (melee→saber, shot/super→gun) — forcing
-   * "gun" here would cancel a legacy peer's saber swing mid-animation.
+   * be visible to opponents, not just the gun). "saber" = lightsaber (slot 3);
+   * "gun" = pistol/boss; "blast" = energy blast (held bare-handed → no weapon shown).
+   * Optional/back-compat: legacy peers omit it, and the receiver leaves it UNSET
+   * (never forces a value) so their weapon is inferred from events instead
+   * (melee→saber, shot→gun) — forcing "gun" here would cancel a legacy peer's saber
+   * swing mid-animation. A legacy peer that RECEIVES "blast" doesn't crash: its
+   * `weapon === "saber"` check falls through, so it just renders the gun (graceful).
    */
-  weapon?: "gun" | "saber";
+  weapon?: "gun" | "saber" | "blast";
   /**
    * True = live socket present on the server; false = grace-window still-avatar
    * (server keeps the player alive during GRACE_MS after socket close).

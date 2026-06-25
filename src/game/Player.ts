@@ -30,7 +30,7 @@ import {
 const PLAYER_SIZE = 0.5;
 const ACCEL = 28;
 
-const SHOOT_COOLDOWN = 0.12;
+const SHOOT_COOLDOWN = 0.1; // pistol: ~10 shots/s (+20% rate/DPS vs the old 0.12)
 
 const MAX_HEALTH = 10;
 const RESPAWN_DELAY = 5.0; // seconds
@@ -45,32 +45,32 @@ const DASH_MAX_CAP = 6; // hard cap including TEMPORARY bonus bars from dash pic
 const DASH_RECHARGE = 3.0; // seconds to refill one BASE charge (9s for all 3)
 const DASH_IMPULSE = 36.0; // strong forward launch (~9 tiles)
 
-// ── Fire modes (Tab toggles) ────────────────────────────────────────────────
-// "constant"     — hold the shoot button to autofire normal shots (comfortable).
-// "concentrated" — hold 5s to charge the super shot; release when ready to fire.
-// "boss"         — hidden easter egg (name "bero", double-tap Tab): 3× HP, 10×
+// ── Fire modes / weapons (Tab toggles / hotbar 1·2·3) ───────────────────────
+// "pistol"      — Weapon 1: hold to autofire normal shots (fast + high rate of fire).
+// "energyBlast" — Weapon 2: hold to CHANNEL the super shot; release when ready to fire.
+// "lightsaber"  — Weapon 3: heavy melee; high damage + deflects shots if timed right.
+// "boss"        — hidden easter egg (name "bero", double-tap Tab): 3× HP, 10×
 //                  size, rapid-fire mega beams at half damage.
-export type FireMode = "constant" | "concentrated" | "boss" | "staff";
+export type FireMode = "pistol" | "energyBlast" | "boss" | "lightsaber";
 
 /** Hotbar weapon slots (Minecraft-style): index → FireMode. "boss" is a separate
  *  override (the "bero" easter egg), NOT a slot. */
-const SLOT_MODES: FireMode[] = ["constant", "concentrated", "staff"];
+const SLOT_MODES: FireMode[] = ["pistol", "energyBlast", "lightsaber"];
 
 // ── Weapon "weight" → movement-speed multiplier while that weapon is active ──
-// Balance lever: the constant gun is the weakest weapon, so its light weight
-// rewards aggression with +30% run speed; the concentrated gun is neutral; the
-// saber is heavy (−10%). Multiplies with the "speed" power-up (so light + speed
-// = 1.6 × 1.3). Affects sustained run speed only — dash impulse is unchanged.
-// "boss" is the easter-egg override and stays neutral.
+// Balance: the pistol is the fast run-and-gun weapon (+30%). The energy blast matches
+// it WHILE IDLE (+30%) and only slows once channeling begins (SUPER_LOADED_SPEED_MULT
+// below). The lightsaber is heavy (−10%). Multiplies with the "speed" power-up.
+// Affects sustained run speed only — dash impulse is unchanged. "boss" stays neutral.
 const WEAPON_SPEED_MULT: Record<FireMode, number> = {
-  constant: 1.3,
-  concentrated: 1.0,
-  staff: 0.9,
+  pistol: 1.3,
+  energyBlast: 1.3, // fast as the pistol when NOT channeling; slows only mid-channel
+  lightsaber: 0.9,
   boss: 1.0,
 };
 
-// Carrying a charging/loaded concentrated super weighs the player down even more
-// than the saber — the charge-and-kite nerf, tuned heavier in playtest (−20%).
+// While CHANNELING the energy blast (kameState charging/ready), the player slows to
+// this (−20%) — the channel-and-kite nerf. Idle energy-blast speed is the pistol's.
 const SUPER_LOADED_SPEED_MULT = 0.8;
 
 /**
@@ -108,11 +108,12 @@ const MELEE_COOLDOWN = 0.55; // seconds between swings while held (was 0.45; off
 // Parry window (fraction of the swing) — when the blade can reflect projectiles.
 const SWING_PARRY_START_T = 0.2;
 const SWING_PARRY_END_T = 0.75;
-// Saber stagger taken BY the local player from a remote saber hit.
+// Stagger taken BY the local player from an ENERGY-BLAST hit. (2026 rebalance: the
+// stun moved OFF the lightsaber — which no longer stuns — ONTO the energy blast.)
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
-const SABER_HOP = 3.4; // small upward "pulinho" on a saber hit (< JUMP_VELOCITY 6)
-const KAME_CHARGE = 3.0; // seconds to hold before the concentrated shot is ready (recharge cadence)
+const STAGGER_HOP = 3.4; // small upward "pulinho" on a stagger (< JUMP_VELOCITY 6)
+const KAME_CHARGE = 1.5; // channel time to ready the energy blast (−50% from 3.0)
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
 const BOSS_CADENCE = 0.18; // seconds between boss mega beams (≈ constant fire feel)
@@ -153,7 +154,7 @@ export class Player implements BulletTarget {
   private shootTimer = 0;
 
   // Fire mode + charged-special state.
-  private fireMode: FireMode = "constant";
+  private fireMode: FireMode = "pistol";
   private bossUnlocked = false; // true only for the "bero" easter egg
   private lastTabMs = 0; // for double-tap-Tab detection
   private kameState: "idle" | "charging" | "ready" = "idle";
@@ -401,7 +402,7 @@ export class Player implements BulletTarget {
     this.bossUnlocked = on;
   }
 
-  /** Tab cycles the 3 hotbar slots (constant → concentrated → staff → …); from
+  /** Tab cycles the 3 hotbar slots (pistol → energyBlast → lightsaber → …); from
    *  the boss override it drops back to the first slot. */
   toggleFireMode() {
     const i = SLOT_MODES.indexOf(this.fireMode);
@@ -470,7 +471,7 @@ export class Player implements BulletTarget {
     // hit reads as a stagger (the horizontal push rides applyKnockback's dashVel).
     this.staggerFlashT = Math.max(this.staggerFlashT, fireLockSeconds);
     if (this.grounded) {
-      this.velocity.y = SABER_HOP;
+      this.velocity.y = STAGGER_HOP;
       this.grounded = false;
     }
     if (interruptCharge) this.cancelKameCharge();
@@ -486,9 +487,12 @@ export class Player implements BulletTarget {
     this.swingElapsed = 0;
     this.staffPivot.rotation.y = SABER_REST_YAW;
     this.staff.position.x = BASE_SABER_MOUNT;
-    // Swap the held item: energy saber for melee, gun for every shooting mode.
-    this.staff.visible = mode === "staff";
-    this.gun.visible = mode !== "staff";
+    // Held item: lightsaber for melee, gun for the pistol + boss, NOTHING for the
+    // energy blast (it channels bare-handed). The gun's barrel-tip anchor still
+    // provides the beam's muzzle origin even while the gun mesh is hidden (the
+    // transform is unaffected by visibility).
+    this.staff.visible = mode === "lightsaber";
+    this.gun.visible = mode === "pistol" || mode === "boss";
     if ((mode === "boss") !== wasBoss) this.applyBossState(mode === "boss");
   }
 
@@ -556,9 +560,18 @@ export class Player implements BulletTarget {
   }
 
   private fireKame(lethal: boolean) {
-    const muzzle = new THREE.Vector3();
-    this.gunBarrelTip.getWorldPosition(muzzle);
     const dir = this.getAimDirection(this.tmpDir).clone();
+    const muzzle = new THREE.Vector3();
+    if (this.fireMode === "energyBlast") {
+      // Bare-handed channel: emit from the chest, slightly forward along aim, so the
+      // beam doesn't appear to leave a floating muzzle where the hidden gun would be.
+      // (Matches the charge orb anchored at the body center.)
+      muzzle.copy(this.root.position);
+      muzzle.y += 0.3;
+      muzzle.addScaledVector(dir, 0.4);
+    } else {
+      this.gunBarrelTip.getWorldPosition(muzzle); // pistol + boss hold the gun
+    }
     this.onKame?.(muzzle.clone(), dir, lethal);
     this.audio.playShot(this.root.position, true);
     this.gunRecoil = 0.14;
@@ -875,14 +888,13 @@ export class Player implements BulletTarget {
     if (this.staggerFlashT > 0) this.staggerFlashT = Math.max(0, this.staggerFlashT - dt);
     const stunned = this.stunTimer > 0;
 
-    // Movement. The "speed" power-up multiplies the top speed ×1.6 while active;
-    // the active weapon's weight then scales it again (light gun faster, saber
-    // slower). Carrying a charging OR loaded concentrated super weighs you down
-    // harder still (−20%, heavier than the saber) — nerfs the "charge in safety
-    // → strike → flee and recharge" kite (see docs/systems/weapons-weight-speed.md).
+    // Movement. The "speed" power-up multiplies the top speed ×1.6 while active; the
+    // active weapon's weight then scales it. The energy blast is pistol-fast while
+    // idle and only slows (−20%) once CHANNELING begins — nerfs the channel-and-flee
+    // kite (see docs/systems/weapons-weight-speed.md).
     const move = this.input.getMoveVector();
     const superLoaded =
-      this.fireMode === "concentrated" && this.kameState !== "idle";
+      this.fireMode === "energyBlast" && this.kameState !== "idle";
     const weaponWeight = superLoaded
       ? SUPER_LOADED_SPEED_MULT
       : WEAPON_SPEED_MULT[this.fireMode];
@@ -937,7 +949,7 @@ export class Player implements BulletTarget {
     if (this.input.consumeTab()) {
       const now = performance.now();
       if (this.bossUnlocked && now - this.lastTabMs < DOUBLE_TAB_MS) {
-        this.setFireMode(this.fireMode === "boss" ? "constant" : "boss");
+        this.setFireMode(this.fireMode === "boss" ? "pistol" : "boss");
       } else {
         this.toggleFireMode();
       }
@@ -948,10 +960,10 @@ export class Player implements BulletTarget {
     if (slot !== null) this.setWeaponSlot(slot);
 
     // Shooting. The MODE decides what holding does:
-    //  • constant     → hold to autofire normal shots (comfortable).
-    //  • concentrated → hold 5s to charge; release once ready (glow) to fire the
-    //    super shot (insta-kill). Releasing before ready cancels.
-    //  • boss         → hold to RAPID-FIRE mega beams (half damage, no insta-kill).
+    //  • pistol      → hold to autofire normal shots (fast + high rate of fire).
+    //  • energyBlast → hold to channel; release once ready (glow) to fire the super
+    //    shot (significant damage + stun). Releasing before ready cancels.
+    //  • boss        → hold to RAPID-FIRE mega beams (half damage, no insta-kill).
     this.shootTimer -= dt;
     this.input.consumeShoot(); // drain the one-shot press (modes use the hold state)
     // While stunned, no weapon acts (but an already-committed swing finishes its
@@ -959,21 +971,21 @@ export class Player implements BulletTarget {
     const held = !stunned && this.input.isShootHeld();
     if (this.fireMode === "boss") {
       if (this.kameState !== "idle") this.kameState = "idle";
-      // Boss rapid-beam is "constant-like" fire → also held off by the saber lock.
+      // Boss rapid-beam is "pistol-like" fire → also held off by the stagger lock.
       if (held && this.shootTimer <= 0 && this.fireLockTimer <= 0) {
         this.fireKame(false); // mega beam, non-lethal (2 hits to kill)
         this.shootTimer = BOSS_CADENCE;
       }
-    } else if (this.fireMode === "staff") {
+    } else if (this.fireMode === "lightsaber") {
       if (this.kameState !== "idle") this.kameState = "idle";
       // Don't restart a swing while one is mid-flight (keeps swingId stable).
       if (held && this.shootTimer <= 0 && this.swingTimer <= 0) {
         this.swingStaff();
         this.shootTimer = MELEE_COOLDOWN;
       }
-    } else if (this.fireMode === "constant") {
+    } else if (this.fireMode === "pistol") {
       if (this.kameState !== "idle") this.kameState = "idle"; // safety
-      if (held && this.fireLockTimer <= 0) this.tryPistol(); // saber locks constant fire ~1s
+      if (held && this.fireLockTimer <= 0) this.tryPistol(); // stagger locks pistol fire
     } else if (this.kameState === "idle") {
       if (held) {
         this.kameState = "charging";
@@ -990,7 +1002,7 @@ export class Player implements BulletTarget {
         }
       }
     } else if (!held) {
-      this.fireKame(true); // ready → fire the insta-kill super shot on release
+      this.fireKame(true); // ready → fire the energy blast (significant dmg + stun) on release
       this.kameState = "idle";
     }
 

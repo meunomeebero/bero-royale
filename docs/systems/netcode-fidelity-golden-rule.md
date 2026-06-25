@@ -27,10 +27,13 @@ o jogo parece injusto/quebrado. Fidelidade total = combate legível = jogo justo
 ## Como aplicar (checklist para qualquer ação nova ou existente)
 Para CADA ação que o ator vê localmente, pergunte:
 1. **A arma/objeto certo aparece no remoto?** (ex.: sabre montado quando o slot 3 está ativo, arma
-   quando é tiro). Se o remoto não sabe qual arma, **transmita** (campo no snapshot `NetState`).
+   quando é tiro, **nada nas mãos** quando canaliza a Energy Blast). Se o remoto não sabe qual arma,
+   **transmita** (campo `NetState.weapon`, valores `"gun" | "saber" | "blast"` — `"blast"` = Energy
+   Blast canalizada de mãos vazias → o remoto não mostra arma nenhuma).
    **Sem mudança no servidor:** o `s` é parseado só para os campos autoritativos (`health`/`alive`,
    sobrescritos pelo servidor); **campos desconhecidos passam intactos**. Já os eventos `melee`/`parry`
-   são relay **verbatim**. Então adicionar `weapon` ao snapshot é seguro e backward-compatible.
+   são relay **verbatim**. Então adicionar `weapon` ao snapshot é seguro e backward-compatible
+   (peers legados ignoram o valor desconhecido `"blast"`).
 2. **A animação aparece?** (swing de 180°, recuo do tiro, carga do super). Reutilize a MESMA função
    de animação do local (ex.: `sampleSaberYaw`) para ficar idêntico.
 3. **O VFX aparece?** (rastro/`SaberTrail`, fumaça, luz, flash, tracer, feixe).
@@ -53,9 +56,10 @@ Se qualquer resposta for "não", é uma lacuna de fidelidade → **corrija** (n�
 - [x] **Bala refletida** — ✅ 2026-06-25: o atirador **e os observadores** veem a bala refletida
       voltar do parry (o tracer pra frente é cancelado em todos os clientes; visual azul-sabre; o
       dano real continua via `hit` autoritativo).
-- [x] **Arma segurada** (gun vs sabre) — ✅ 2026-06-25: transmitida no snapshot
-      (`NetState.weapon`); o remoto mostra a arma certa (o sabre aparece assim que o slot 3 é
-      selecionado) + recuo da arma no tiro.
+- [x] **Arma segurada** (gun / saber / blast) — ✅ 2026-06-25: transmitida no snapshot
+      (`NetState.weapon` ∈ `"gun" | "saber" | "blast"`); o remoto mostra a arma certa (o sabre
+      aparece assim que o slot 3 é selecionado; `"blast"` = Energy Blast canalizada **de mãos
+      vazias** → nenhuma arma no remoto) + recuo da arma no tiro.
 - [x] **Recoil do super/boss no remoto** — ✅ 2026-06-25: a arma do remoto recua no super também.
 - [ ] **DRY (dívida técnica, não-bug):** o driver de swing + settle + decay-de-recoil ainda é
       duplicado entre `Player` e `RemotePlayer` (só a cinemática pura foi extraída pra
