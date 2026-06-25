@@ -4,7 +4,7 @@ import { WebSocketServer } from "ws";
 import type { ClientMsg, NetSnapshot, ServerMsg, Sock } from "./protocol";
 import { parseClientMsg } from "./protocol";
 import { RoomHub } from "./rooms";
-import { BOT_TICK_MS, BOT_TICK_SECONDS, SUPER_DAMAGE } from "./bots";
+import { BOT_TICK_MS, BOT_TICK_SECONDS } from "./bots";
 
 /** Hard cap on concurrent sockets per room. */
 const MAX_ROOM = 64;
@@ -205,15 +205,10 @@ export function attachWebSocket(server: Server): RoomHub {
                 });
               }
             } else if (typeof target === "string" && hub.isPlayer(ws.room, target)) {
-              const res = hub.damagePlayerN(ws.room, target, ws.id, SUPER_DAMAGE);
-              if (res?.died) {
-                hub.fanout(ws.room, {
-                  t: "broadcast",
-                  event: "died",
-                  payload: { id: target, x: res.x, z: res.z, by: ws.id },
-                  from: ws.id,
-                });
-              }
+              // Player victim: Phase 5 — apply SUPER_DAMAGE now (the shooter sent
+              // "kamehit" after its beam visibly hit) and stamp a seq so the victim's
+              // impact gate shows a cause before the death instead of dying instantly.
+              hub.resolvePlayerHit(ws.room, target, ws.id, "super");
             }
           }
 
@@ -259,9 +254,19 @@ export function attachWebSocket(server: Server): RoomHub {
             break;
           }
 
+          // PvP (player victim): Phase 5 — apply the damage now (the shooter's "hit"
+          // already fired AFTER its local bullet visibly collided, so travel is
+          // counted) but stamp a `seq` on the "died" so the victim's impact gate
+          // synthesizes a visible impact before the death instead of dying instantly
+          // from an unseen shot. Favor the victim. See netcode-hit-sync-plan.md (Phase 5).
+          if (hub.isPlayer(ws.room, m.target)) {
+            hub.resolvePlayerHit(ws.room, m.target, ws.id, "shot");
+            break;
+          }
+          // Bot victim (or other): no client owns its death-feel, so resolve
+          // synchronously as before (the "died" needs no seq).
           const result = hub.applyHit(ws.room, m.target, ws.id);
           if (result?.died) {
-            // Broadcast the existing "died" event so all observers run death FX.
             const diedMsg: ServerMsg = {
               t: "broadcast",
               event: "died",

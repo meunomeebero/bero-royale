@@ -43,7 +43,12 @@ direta). Implicações p/ a autoridade:
   reconcilia na hora.
 - **Nenhum cue letal "pelado" mata instantâneo:** um `"hp=0"`/`"died"` sem porta viva (super do bot, PvP,
   ou porta expirada) passa por uma **rede de segurança** que sintetiza o impacto num frame e solta a morte
-  no frame seguinte (nunca morte sem causa visível). PvP só fecha o invariante de timing na **Fase 5**.
+  no frame seguinte (nunca morte sem causa visível).
+- **PvP humano-vs-humano (Fase 5, server-only):** o `hit`/`kamehit` de um jogador em outro jogador aplica
+  dano **na hora** (`rooms.ts resolvePlayerHit`) — NÃO se re-agenda `dist/22` porque o atirador só envia `hit`
+  depois que a bala dele já colidiu localmente, então o travel já está contado (re-agendar dobraria). O que
+  muda é que o `died` carrega `seq`, então a vítima cai na rede de segurança bare-cue acima (impacto antes da
+  morte) em vez de morrer instantâneo. Vítima-bot continua sem `seq` (não tem gate de cliente).
 
 ## Fluxo de dano PvP (por que "tiros invisíveis" acontecem)
 Balas de remotos chegam como `shot` → `spawnVisual` (NÃO-damaging) no cliente do alvo. O dano é

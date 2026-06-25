@@ -7,10 +7,11 @@ super, kame, beam-front, favor-the-victim, responsividade, netcode.
 > **Origem:** saída de um MegaBrain (workflow de 17 agentes) + conselho externo **GLM 5.2** e
 > **Codex GPT‑5.5** (ver `mega-brain.md`). Diagnóstico em
 > [`online-invisible-shots-diagnosis.md`](online-invisible-shots-diagnosis.md); autoridade em
-> [`netcode-trust-model.md`](netcode-trust-model.md). Status: **Fases 0–4 implementadas**
+> [`netcode-trust-model.md`](netcode-trust-model.md). Status: **Fases 0–5 implementadas — COMPLETO.**
 > (oracle `server/test/hit-sync-harness.mjs`: BEFORE mediana **−284 ms** → AFTER tiro **+27 ms**, super **+35 ms**).
-> **Fase 3 (gate de impacto no cliente) feita** — o invariante agora é fechado no cliente para o
-> tiro normal do bot (caminho dominante do bug); falta só **Fase 5 (PvP throttle/loss)**.
+> O invariante "nunca morrer de um tiro não-visto" está fechado para **bot** (Fases 1–4 + gate do cliente
+> Fase 3) **e PvP humano-vs-humano** (Fase 5 — server agenda + `seq`, gate do cliente já trata). Cobertura
+> automatizada determinística em [`netcode-testing.md`](netcode-testing.md).
 
 ## Invariante (requisito inegociável do dono)
 **Nunca morrer de um tiro que você não viu chegar.** É aceitável: servidor mais pesado, animação de
@@ -79,9 +80,25 @@ Três pilares (todos necessários; nenhum sozinho satisfaz o invariante):
     [`netcode-testing.md`](netcode-testing.md).
 - ✅ **Fase 4 — super/kame do BOT (beam-front, não bala de velocidade 22).** *(feito: `fireSuper()`→`resolveSuper()` enfileirado com `applyAt = now + SUPER_REVEAL_MS=120ms`, gate de esquiva mantido no fire-time, `seq` no `kame`. Verificado: super delta mediana 35ms (≥0). O `kamehit` do JOGADOR fica na Fase 5 (precisa o cliente carimbar `seq`).)*
   `bots.ts fireSuper()`: manter o gate de dodge no **fire time**; trocar dano síncrono por `enqueueHit(kind:'super', applyAt = now + SUPER_REVEAL_MS)` atado ao **blast-FX** (o feixe é quase instantâneo visualmente, não viaja a 22). `index.ts kamehit`: idem p/ super do jogador. `Game.ts`/`Kamehameha.ts`: morte/HP do super dirigida pelo `impactAt` do beam, com o mesmo fallback.
-- **Fase 5 — PvP throttle/loss + docs (tranca o invariante).**
-  `index.ts`: `shot` letal não-dropável enquanto seu `hit` passa (reestruturar o bucket pré-parse).
-  `hit` PvP: `applyAt = now + dist/22`, **CLAMP a `BULLET_MAX_RANGE` e FLOOR a `MIN_TRAVEL_MS`** (dist forjada pequena não pode instant-kill nem grande agendar futuro). Correlacionar `shot`↔`hit` (hoje são mensagens **não relacionadas**, ambas dropáveis — Codex). Documentar a inversão deliberada (favor-the-VICTIM) aqui + em `netcode-trust-model.md`; cap defensivo no tamanho de `pendingHits`.
+- ✅ **Fase 5 — PvP: `seq` na morte (tranca o invariante p/ humano-vs-humano).** *(feito, 2026-06-25, server-only.)*
+  - **Insight:** a rede de segurança bare-cue da Fase 3 (`requestBareDeath` → impacto sintetizado +
+    morte ≥1 frame depois) **já trata** um `died(seq)` sem porta. Então a Fase 5 é **só servidor**: basta o
+    `died` do PvP carregar um `seq`; o gate do cliente (já testado) faz o resto. **Zero mudança de cliente.**
+  - **NÃO agendar (correção do Codex P1):** ao contrário do bot — cujo `shot` E o dano nascem no fire-time, então
+    o server **atrasa** o dano p/ casar com o tracer — o atirador HUMANO só envia `hit` **depois** que a bala dele
+    já colidiu localmente (`RemotePlayer.takeHit`). O travel `dist/BULLET_SPEED` **já está contado**; re-agendar
+    `dist/22` **dobraria** a contagem (morte ~455ms tarde no alcance máximo). Logo o dano PvP é **aplicado na hora**.
+  - `rooms.ts` `resolvePlayerHit(room, target, by, "shot"|"super")`: aplica dano síncrono (`applyHit`/`damagePlayerN`)
+    e, na morte, faz fanout do `died` com `seq = playerHitSeq++`. Vítima-bot continua **sem `seq`** (não tem gate).
+  - `index.ts`: `case "hit"` e o ramo `kamehit` → `resolvePlayerHit` p/ vítima-jogador.
+  - **Throttle:** decidido **não** isentar `shot`/`hit` do token-bucket (mantém a proteção anti-DoS). Um `shot`
+    dropado pelo bucket → a vítima ainda recebe um **impacto sintetizado** pela rede bare-cue, então o
+    invariante vale sem reabrir o furo de DoS — a rede da Fase 3 **supera** a necessidade de "shot não-dropável".
+  - **Dedup:** `server/src/ws/combat-consts.ts` (novo) — `BULLET_SPEED/MIN_TRAVEL_MS/SUPER_REVEAL_MS/SUPER_DAMAGE`
+    em um módulo, importado por `bots.ts`+`rooms.ts`+`index.ts` (some a tripla cópia no server; cliente fica como follow-up cross-pacote).
+  - **Verificação:** `server/test/pvp-hit-seq.test.ts` (5 casos: dano imediato 1pt, `died`+`seq` letal, super,
+    `seq` monotônico/único, não-mata-cadáver); `tsc`+eslint+`pnpm test`+build verdes; **review GPT-5.5/Codex**
+    (pegou o P1 do double-count → corrigido p/ síncrono).
 
 ## Verificação (dupla, por causa do aviso do Codex)
 1. **WS sintético** mede `t_hit − tracerArrival ≥ 0` (espaçamento de envio do server). 

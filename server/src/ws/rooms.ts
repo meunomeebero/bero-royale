@@ -2,6 +2,7 @@ import { WebSocket } from "ws";
 import type { Member, NetSnapshot, ServerMsg, Sock } from "./protocol";
 import { BotSim, type HitResult } from "./bots";
 import { PowerUpSim } from "./powerups";
+import { SUPER_DAMAGE } from "./combat-consts";
 
 /**
  * In-memory presence registry + fan-out helper.
@@ -106,6 +107,10 @@ export class RoomHub {
    * the shot. See `docs/systems/netcode-hit-sync-plan.md`.
    */
   private pendingHits = new Map<string, PendingHit[]>();
+
+  /** Monotonic per-shot id for PvP scheduled hits (Phase 5), stamped on the
+   *  victim's "died" so its client correlates the death with a tracer/beam. */
+  private playerHitSeq = 0;
 
   /**
    * Per-room player registry that outlives individual sockets.
@@ -336,6 +341,42 @@ export class RoomHub {
       else q[w++] = e;
     }
     q.length = w;
+  }
+
+  /**
+   * Resolve a PvP hit/super on a PLAYER victim (Phase 5 — lock the "never die from
+   * an unseen shot" invariant for human-vs-human). Damage is applied IMMEDIATELY:
+   * unlike a bot (whose shot + damage are both born at fire time, so the server
+   * must DELAY the damage to coincide with the travelling tracer), a human shooter
+   * sends its `hit` only AFTER its local bullet has already visibly collided
+   * (RemotePlayer.takeHit) — the dist/BULLET_SPEED travel is ALREADY counted, so
+   * re-adding it would double-count and land the death long after the tracer.
+   *
+   * What Phase 5 changes is the `died`: it now carries a monotonic `seq`, which
+   * routes the victim's client through its impact gate (whose bare-cue safety net
+   * synthesizes a visible impact and applies the death one frame later) instead of
+   * the instant `serverKilled()` a seq-less death triggers. Favor the victim. Bot
+   * victims stay on the seq-less path (no client owns their death-feel).
+   * See docs/systems/netcode-hit-sync-plan.md (Phase 5) + netcode-trust-model.md.
+   */
+  resolvePlayerHit(
+    room: string,
+    targetId: string,
+    byId: string,
+    kind: "shot" | "super",
+  ): void {
+    const res =
+      kind === "super"
+        ? this.damagePlayerN(room, targetId, byId, SUPER_DAMAGE)
+        : this.applyHit(room, targetId, byId);
+    if (res?.died) {
+      this.fanout(room, {
+        t: "broadcast",
+        event: "died",
+        payload: { id: targetId, x: res.x, z: res.z, by: byId, seq: this.playerHitSeq++ },
+        from: byId,
+      });
+    }
   }
 
   /**
