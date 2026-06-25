@@ -30,7 +30,6 @@ import { ChatPanel, type ChatMessage } from "@/components/hud/ChatPanel";
 import { PlayersList } from "@/components/hud/PlayersList";
 import { PingBadge } from "@/components/hud/PingBadge";
 import { WeaponHotbar } from "@/components/hud/WeaponHotbar";
-import { ChannelingIndicator } from "@/components/hud/ChannelingIndicator";
 import { KillFeed, type KillEvent } from "@/components/hud/KillFeed";
 import { BoostBar } from "@/components/hud/BoostBar";
 import { PickupToast, type PickupEvent } from "@/components/hud/PickupToast";
@@ -515,15 +514,6 @@ const Index = () => {
             <DashMeter charges={stats.dashCharges} max={stats.dashMaxCharges} compact />
           </div>
         </div>
-      )}
-
-      {/* Energy-blast "Channeling…" cue — pulses below the crosshair while the super
-          channels, vanishes on fire/cancel. Self-positions; renders null when idle. */}
-      {!loading && (
-        <ChannelingIndicator
-          weaponSlot={stats.weaponSlot}
-          chargeProgress={stats.chargeProgress}
-        />
       )}
 
       {/* Kill feed — stacked kill-notification chips, top-center */}

@@ -259,24 +259,5 @@ body,
   .animate-nudge {
     animation: nudge 0.4s ease-in-out;
   }
-  /* Energy-blast "Channeling…" cue: a low-opacity ghostly flash. */
-  @keyframes channel-flash {
-    0%,
-    100% {
-      opacity: 0.45;
-    }
-    50% {
-      opacity: 0.85;
-    }
-  }
-  .channel-flash {
-    animation: channel-flash 0.9s ease-in-out infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .channel-flash {
-      animation: none;
-      opacity: 0.62;
-    }
-  }
 }
 

@@ -70,7 +70,9 @@ const MELEE_ARC_DOT = 0.0; // forward hemisphere (was -0.15; too wide at 2× ran
 const MELEE_SWEEP_RADIUS = 0.6; // point-to-blade-segment hit thickness
 const MELEE_KNOCKBACK = 16; // push impulse applied to a hit target
 const MELEE_DT_CLAMP = 0.1; // skip collision/parry on bigger frame steps (tab resume)
-// Saber stagger applied to a hit target.
+// Lightsaber HIT: knockback + a brief white blink (NO stun) — impact feel only.
+const SABER_IMPACT_FLASH = 0.6; // seconds the hit target pulses white (no fire-lock)
+// Energy-blast stagger applied to a hit target (the stun moved off the saber).
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
 // Victim-side clamps for a RECEIVED stagger (meleehit is a blindly-relayed
@@ -1161,8 +1163,11 @@ export class Game {
       this.meleeHitIds.add(bot.id);
       this.meleeImpactFx(bot.root.position, push);
       for (let i = 0; i < MELEE_DAMAGE && bot.isAlive(); i++) bot.takeHit(push);
-      // 2026 rebalance: the lightsaber no longer STUNS (knockback + flash + stun all
-      // moved to the energy blast). It's now pure damage + deflection + impact spark.
+      // 2026 rebalance v2: the lightsaber knocks back + blinks the target + impact
+      // smoke (the satisfying hit feel) but NO stun — it never locks fire or
+      // interrupts a shot/energy-blast channel. That control lives on the energy blast.
+      bot.knockback(push, MELEE_KNOCKBACK);
+      bot.flash(SABER_IMPACT_FLASH);
     }
     for (const rp of this.remotePlayers.values()) {
       if (!rp.isAlive() || this.meleeHitIds.has(rp.id)) continue;
@@ -1171,9 +1176,12 @@ export class Game {
       if (!push) continue;
       this.meleeHitIds.add(rp.id);
       this.meleeImpactFx(p, push);
-      // 2026 rebalance: the lightsaber no longer stuns — it only damages (+ deflects
-      // + impact spark). No meleehit (which would stun server bots) and no body
-      // hop/flash are sent; the knockback + stun moved to the energy blast.
+      // 2026 rebalance v2: instant client juice on the opponent WE hit — a backward
+      // hop + white blink + impact smoke (the satisfying saber feel). This is the
+      // SAME visual as before. Crucially, NO stun is sent (no `meleehit`), so the
+      // victim's shots / energy-blast channel are never interrupted — the lightsaber
+      // is impact-without-control now; the stun lives on the energy blast.
+      rp.applyStaggerVisual(push.x, push.z);
       const gy = this.platform.surfaceY(p.x, p.z);
       this.dust.spawnBurst(new THREE.Vector3(p.x, gy + 0.05, p.z), 8);
       for (let i = 0; i < MELEE_DAMAGE; i++) this.mp?.sendHit(rp.id);

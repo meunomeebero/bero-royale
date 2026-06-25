@@ -19,6 +19,29 @@ velocidade, armas, super, kite, dano, fire rate, cooldown, números canônicos, 
 
 ---
 
+## Sessão 2026-06-25 (v2) — ajuste de playtest pós-deploy
+Feedback do playtest com amigos no online → 3 ajustes:
+1. **Pistol — DPS pra baixo.** `SHOOT_COOLDOWN 0.10 → 0.11` (~9 tiros/s). O +20% ficou OP; agora é só
+   **um pouco acima do antigo** 0.12.
+2. **Energy Blast — canal de volta a 3.0s + sem HUD de texto.** `KAME_CHARGE 1.5 → 3.0` (o 1.5 ficou
+   forte demais). O overlay **"Channeling…" foi removido** (poluía a tela; ficou só a barra de carga
+   sob o slot 2).
+3. **Lightsaber — impacto de volta, MAS sem stun.** Voltaram o **knockback + blink branco + fumaça**
+   no acerto (a pancada satisfatória), mas **continua sem stun** — não trava tiro nem interrompe o
+   canal/super da vítima. Client-side: `rp.applyStaggerVisual` (remotos) + `bot.knockback`/`bot.flash`
+   (bots); **sem** `meleehit` (não estuna nem bot de servidor). `SABER_IMPACT_FLASH=0.6s`.
+
+**Princípio confirmado:** Lightsaber = impacto **sem** controle; Energy Blast = burst + control (stun);
+Pistol = mobilidade + RoF sustentado (sem ser dominante).
+
+**Arquivos:** `src/game/Player.ts` (`SHOOT_COOLDOWN`, `KAME_CHARGE`), `src/game/Game.ts`
+(`handleMeleeSample` knockback+flash; `SABER_IMPACT_FLASH`), `src/game/Bot.ts` (`flash()`),
+`src/pages/Index.tsx` + `src/index.css` (HUD "Channeling…" removido; `ChannelingIndicator.tsx`
+deletado). Docs: [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md),
+[`systems/weapons-energy-blast.md`](systems/weapons-energy-blast.md).
+
+---
+
 ## Sessão 2026-06-25 — rename + rebalance: Pistol / Energy Blast / Lightsaber
 **Contexto/objetivo:** padronizar a nomenclatura das armas e re-equilibrar o trio. O Lightsaber
 estava **OP** (dano alto + control de stun); a antiga "tiro concentrado" era pouco recompensadora pro

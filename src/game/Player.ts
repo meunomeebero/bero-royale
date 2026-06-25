@@ -30,7 +30,7 @@ import {
 const PLAYER_SIZE = 0.5;
 const ACCEL = 28;
 
-const SHOOT_COOLDOWN = 0.1; // pistol: ~10 shots/s (+20% rate/DPS vs the old 0.12)
+const SHOOT_COOLDOWN = 0.11; // pistol: ~9 shots/s (a little above the old 0.12; +20% was too much)
 
 const MAX_HEALTH = 10;
 const RESPAWN_DELAY = 5.0; // seconds
@@ -113,7 +113,7 @@ const SWING_PARRY_END_T = 0.75;
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
 const STAGGER_HOP = 3.4; // small upward "pulinho" on a stagger (< JUMP_VELOCITY 6)
-const KAME_CHARGE = 1.5; // channel time to ready the energy blast (−50% from 3.0)
+const KAME_CHARGE = 3.0; // channel time to ready the energy blast (back to 3.0 — 1.5 was too strong)
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
 const BOSS_CADENCE = 0.18; // seconds between boss mega beams (≈ constant fire feel)

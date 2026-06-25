@@ -298,6 +298,13 @@ export class Bot implements BulletTarget {
     }
   }
 
+  /** A brief white "blink" on a hit WITHOUT any stun/fire-lock — used by the
+   *  lightsaber, which knocks back + flashes but no longer staggers. */
+  flash(seconds: number): void {
+    if (this.state !== "alive") return;
+    this.flashT = Math.max(this.flashT, seconds);
+  }
+
   /**
    * Saber stagger: a brief full-action freeze + a longer constant-fire lockout,
    * and (optionally) an interruption of any in-progress mega-beam charge — which

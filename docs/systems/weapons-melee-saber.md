@@ -5,8 +5,8 @@ swing, baseball, parry, reflexão de projéteis, reflect, deflect, deflexão, im
 dano puro, hotbar.
 
 > Domínio: combate / arma de melee. Para visão geral do combate veja
-> [`../ARCHITECTURE.md`](../ARCHITECTURE.md); para o stun/knockback (que **migrou** para a
-> Energy Blast) veja [`weapons-energy-blast.md`](weapons-energy-blast.md); para netcode veja
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md); o **stun** migrou para a Energy Blast (o knockback/flash
+> voltaram pro saber, **sem** stun) — veja [`weapons-energy-blast.md`](weapons-energy-blast.md); para netcode veja
 > [`netcode-trust-model.md`](netcode-trust-model.md).
 
 ## O que é
@@ -37,8 +37,11 @@ Energy Blast (ver [`weapons-energy-blast.md`](weapons-energy-blast.md)). Antes o
   no follow-through**; o retorno ao rest é o settle suave pós-swing (não há "recovery" no meio do golpe).
   `MELEE_SWING_DUR=0.4s`, `MELEE_COOLDOWN=0.55s`, wind-up = primeiros 18%. Aim **congela** durante o swing.
 - **Dano:** `MELEE_DAMAGE=3` HP por swing, hit por segmento varrido (`MELEE_SWEEP_RADIUS=0.6`), 1× por
-  alvo por `swingId`. **Sem stun/knockback** — só dano + **impact spark** (`meleeImpactFx`: fumaça
-  branca voxel no ponto de contato).
+  alvo por `swingId`.
+- **Impacto no acerto (SEM stun):** knockback pra trás + **blink branco** (`SABER_IMPACT_FLASH=0.6s`) +
+  **fumaça branca** (`meleeImpactFx`) — a sensação de pancada voltou. Mas **NÃO** trava tiro e **NÃO**
+  interrompe o canal/super da vítima (o controle vive na Energy Blast). Implementado client-side
+  (`rp.applyStaggerVisual` p/ remotos, `bot.knockback` + `bot.flash` p/ bots; **sem** `meleehit`).
 - **Alcance:** `MELEE_RANGE=3.2` (dobrado).
 - **Rastro:** `SaberTrail` desenha um arco azul aditivo seguindo a lâmina (alimentado no strike, fade ~0.16s,
   `clear()` no início de cada swing pra não soldar arcos).
@@ -64,5 +67,8 @@ Energy Blast (ver [`weapons-energy-blast.md`](weapons-energy-blast.md)). Antes o
 - Projetado e revisado via Mega Brain (DeepSeek V4 Pro + GLM 5.2 + GPT-5.5/Codex), 2026-06-24.
   Commits `feat(weapons): lightsaber melee …` + follow-ups de review.
 - **2026-06-25** (rename + rebalance) — renomeado para **Lightsaber** (`FireMode "lightsaber"`); **stun
-  removido** (era OP) e migrado para a Energy Blast → agora é dano + deflexão + impact spark. Ver
+  removido** (era OP) e migrado para a Energy Blast.
+- **2026-06-25 (v2, playtest)** — o **knockback + blink branco + fumaça** no acerto **voltaram** (a
+  pancada satisfatória), mas **continua SEM stun** (não trava tiro nem interrompe o canal da vítima).
+  `SABER_IMPACT_FLASH=0.6s`, client-side (`applyStaggerVisual`/`bot.flash`, sem `meleehit`). Ver
   [`weapons-energy-blast.md`](weapons-energy-blast.md) e [`../balance-log.md`](../balance-log.md).

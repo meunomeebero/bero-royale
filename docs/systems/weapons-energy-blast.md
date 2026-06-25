@@ -2,7 +2,7 @@
 
 **Keywords:** energy blast, super, mega tiro, kamehameha, canalizar, channel, channeling, carregar,
 charge, bare-handed, sem arma, mão livre, stun, stagger, fire-lock, interromper super, knockback,
-flash, indicador de canal, channeling HUD, slot 2.
+flash, stun, fire-lock, knockback, slot 2.
 
 > Domínio: combate / arma 2 (super canalizado). Para peso/velocidade veja
 > [`weapons-weight-speed.md`](weapons-weight-speed.md); o stun migrou do
@@ -23,7 +23,7 @@ anchor não é afetada pela visibilidade). Nos remotos o campo `weapon: "blast"`
 ## Números canônicos
 | Parâmetro | Valor | Onde |
 |---|---|---|
-| Tempo de canal (charge → ready) | `KAME_CHARGE = 1.5s` (−50%, era 3.0s) | `Player.ts` |
+| Tempo de canal (charge → ready) | `KAME_CHARGE = 3.0s` (voltou pra 3.0 — 1.5 ficou forte demais) | `Player.ts` |
 | Dano (server-authoritative, **não** insta-kill) | `SUPER_DAMAGE = 3` | `Game.ts` / servidor |
 | Knockback no acerto | `MELEE_KNOCKBACK = 16` | `Game.ts` |
 | Stun (freeze de ação) | `MELEE_STUN = 0.25s` | `Game.ts` / `Player.ts` |
@@ -43,9 +43,8 @@ anchor não é afetada pela visibilidade). Nos remotos o campo `weapon: "blast"`
 - **Dano autoritativo:** o stagger é um **cue client-trusted**; o **dano (SUPER_DAMAGE=3) é resolvido
   no servidor** (`kamehit` shield-first, HP empurrado via `hp`/`died`). Dois acertos matam — **não é
   insta-kill**. Durações de stun são clampadas no receptor (anti stun-lock).
-- **HUD "Channeling…":** overlay piscante de baixa opacidade (estilo Dota) abaixo da mira enquanto
-  canaliza — sinaliza a janela de comprometimento/vulnerabilidade. Some no instante que fica pronto
-  (ready) ou é cancelado. Complementa a barra de carga sob o slot 2 da hotbar (não duplica).
+- **Indicação de canal:** apenas a **barra de carga** sob o slot 2 da hotbar (`WeaponHotbar`). O
+  overlay de texto **"Channeling…" foi REMOVIDO** (rejeitado em playtest — poluía a tela).
 
 ## Onde está o código (mapa)
 | Peça | Arquivo | O quê |
@@ -59,16 +58,17 @@ anchor não é afetada pela visibilidade). Nos remotos o campo `weapon: "blast"`
 | Stun da vítima local (online) | `src/game/Game.ts` → `setKameHitHandler()` | knockback + flash + stun que interrompe nosso canal |
 | Stagger visual de remoto (atacante) | `src/game/Game.ts` → `onKameHit()` (ramo RemotePlayer) | `applyMeleeStagger` visual + `sendKameHit` (dano server-authoritative) |
 | Snapshot `weapon: "blast"` | `src/game/Game.ts` (mapeia `energyBlast → "blast"`) + `src/game/net/Multiplayer.ts` → `NetState.weapon` | remoto não mostra arma |
-| HUD "Channeling…" | `src/components/hud/ChannelingIndicator.tsx` + `.channel-flash` em `src/index.css` | overlay piscante; honra `prefers-reduced-motion` |
-| Barra de carga + rótulo do slot | `src/components/hud/WeaponHotbar.tsx` | "Energy Blast" + fill sob o slot 2 |
+| Barra de carga + rótulo do slot | `src/components/hud/WeaponHotbar.tsx` | "Energy Blast" + fill sob o slot 2 (overlay de texto "Channeling…" removido) |
 
 ## Limitações conhecidas (diferidas — ver [`../PENDENCIAS.md`](../PENDENCIAS.md))
 - O stagger PvP é **best-effort** sob latência (cue client-trusted + clamps no receptor; sem
   lag-comp). Dano e morte continuam autoritativos no servidor.
 
 ## Histórico
-- **2026-06-25** (rename + rebalance) — a antiga "tiro concentrado" virou **Energy Blast**: canal
-  cortado −50% (3.0 → 1.5s), passa a **não segurar nada** (mãos livres; `weapon: "blast"`), fica
-  **rápida quando idle** (×1.30) e só lenta ao canalizar, ganhou o **stun-on-hit** que migrou do
-  Lightsaber, e um HUD **"Channeling…"**. Dano segue server-authoritative (`SUPER_DAMAGE=3`). Ver
-  [`../balance-log.md`](../balance-log.md).
+- **2026-06-25** (rename + rebalance) — a antiga "tiro concentrado" virou **Energy Blast**: passa a
+  **não segurar nada** (mãos livres; `weapon: "blast"`), fica **rápida quando idle** (×1.30) e só
+  lenta ao canalizar, e ganhou o **stun-on-hit** que migrou do Lightsaber. Dano server-authoritative
+  (`SUPER_DAMAGE=3`).
+- **2026-06-25 (v2, playtest)** — canal **voltou pra 3.0s** (o −50% deixou a arma forte demais) e o
+  **overlay de texto "Channeling…" foi removido** (poluía a tela; ficou só a barra de carga do slot).
+  Ver [`../balance-log.md`](../balance-log.md).
