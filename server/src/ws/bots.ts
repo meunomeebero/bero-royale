@@ -137,6 +137,13 @@ const TARGET_SWITCH_HYSTERESIS = 1.5;
 // re-evaluating. Skill ranges 0..1 → commitT 0.8..1.6s (weaker bots are stickier).
 const COMMIT_MIN = 0.8, COMMIT_SPAN = 0.8; // commitT = COMMIT_MIN + (1-skill)*COMMIT_SPAN → 0.8..1.6s
 
+// ── Reaction latency (startle before the first offensive reaction) ────────────
+// A bot shot while CALM (threat was 0) enters a startle window of reactT seconds
+// before it may fire/retarget at the attacker. Defensive dodge (dash/jump juke)
+// un-gates sooner at min(reactT, DEFENSIVE_FLINCH) so the bot isn't catatonic.
+const REACT_MIN = 0.15, REACT_SPAN = 0.15; // reactT = REACT_MIN + (1-skill)*REACT_SPAN → 0.15..0.30s
+const DEFENSIVE_FLINCH = 0.12;             // defensive dash/jump un-gate at min(reactT, this)
+
 // ── HUNT center gravitation (owner-locked) ───────────────────────────────────
 // Idle bots drift to a jittered RING around origin (where the rare/strong items
 // — super/shield/rapid — spawn) instead of stacking on (0,0), so 10 bots ring
@@ -299,6 +306,9 @@ interface ServerBot {
   leadMul: number;    // cached aim-lead multiplier (derived)
   // ── Target commitment (anti-ping-pong) ──
   commitT: number;    // seconds remaining in the current target commitment (0 = free to repick)
+  // ── Reaction latency (startle before first offensive reaction) ────────────
+  reactT: number;          // >0 = still in the startle window (can't fire/retarget yet)
+  pendingTargetId: string | null; // attacker to commit to once reactT elapses
 }
 
 interface Target {
@@ -374,11 +384,18 @@ export class BotSim {
     if (room !== GAME_ROOM) return null;
     const b = this.bots.get(targetId);
     if (!b || !b.alive) return null;
+    // Capture BEFORE threat is mutated: if threat was 0 this is a fresh engagement.
+    const wasCalm = b.threat <= 0;
     // Taking fire spikes the dodge urgency so the bot reacts (jump / dash away).
     b.threat = THREAT_DECAY;
     // Remember the shooter so the per-tick retaliation snap re-engages them
     // instantly (overrides target stickiness while threatened).
     b.lastAttacker = byId;
+    // Fresh engagement: seed the startle window (first offensive reaction only).
+    if (wasCalm) {
+      b.reactT = REACT_MIN + (1 - b.skill) * REACT_SPAN; // 0.15–0.30s, skill-scaled
+      b.pendingTargetId = byId;                           // commit to attacker after the window
+    }
     // Shield charges (from shield/super pickups) soak the hit BEFORE health,
     // mirroring the player armor in RoomHub.damagePlayer. hub.addShield is
     // players-only, so bot shields live here and are consumed here.
@@ -526,6 +543,7 @@ export class BotSim {
       staggerOkAt: 0,
       skill: 0, accEff: 0, cadenceMul: 0, leadMul: 0,
       commitT: 0,
+      reactT: 0, pendingTargetId: null,
     });
     const b = this.bots.get(id)!;
     b.skill = (rand() + rand()) / 2; // center-biased: most mid, few sharp, few free
@@ -568,6 +586,8 @@ export class BotSim {
     b.fireLockT = 0;
     b.staggerOkAt = 0;
     b.commitT = 0;
+    b.reactT = 0;
+    b.pendingTargetId = null;
     this.deriveSkill(b); // re-derive caches; skill itself is PRESERVED (a person keeps their rep)
   }
 
@@ -786,6 +806,8 @@ export class BotSim {
 
       // Decay the "recently shot at" threat flag.
       if (b.threat > 0) b.threat = Math.max(0, b.threat - dt);
+      // Decay the startle window (reaction latency before first offensive reaction).
+      if (b.reactT > 0) b.reactT = Math.max(0, b.reactT - dt);
       // Decay the transient pickup buffs (rapid fire / move speed).
       if (b.rapidT > 0) b.rapidT = Math.max(0, b.rapidT - dt);
       if (b.speedT > 0) b.speedT = Math.max(0, b.speedT - dt);
@@ -866,7 +888,15 @@ export class BotSim {
         }
       }
 
-      const tgt = enemies.find((e) => e.id === b.targetId) ?? null;
+      // Reaction commit: once the startle elapses, turn to the attacker IF still valid.
+      if (b.reactT <= 0 && b.pendingTargetId) {
+        const pend = enemies.find((e) => e.id === b.pendingTargetId);
+        const inRange = pend && (pend.x - b.x) ** 2 + (pend.z - b.z) ** 2 <= (SHOOT_RANGE + ENGAGE_LEASH) ** 2;
+        if (inRange) { b.targetId = b.pendingTargetId; b.commitT = COMMIT_MIN + (1 - b.skill) * COMMIT_SPAN; }
+        b.pendingTargetId = null;
+      }
+
+      let tgt = enemies.find((e) => e.id === b.targetId) ?? null;
 
       // ── ENGAGER GATE ───────────────────────────────────────────────────────────
       // A bot is a full engager iff its target is a PLAYER and it's among that
@@ -995,6 +1025,7 @@ export class BotSim {
         b.shootCd -= dt;
         if (
           isEngager &&
+          b.reactT <= 0 &&
           b.shootCd <= 0 &&
           dist <= SHOOT_RANGE &&
           b.grounded &&
@@ -1013,8 +1044,10 @@ export class BotSim {
           if (b.health <= DASH_RETREAT_HP && rand() < DASH_DODGE_CHANCE) {
             // Low HP: lunge AWAY from the target to break the engagement.
             this.dashSafely(room, b, -ux, -uz);
-          } else if (b.threat > 0 && rand() < DASH_DODGE_CHANCE) {
+          } else if (b.threat > 0 && b.reactT <= DEFENSIVE_FLINCH && rand() < DASH_DODGE_CHANCE) {
             // Under fire: juke sideways (perpendicular) to dodge the next shot.
+            // Defensive flinch un-gates early (min(reactT, DEFENSIVE_FLINCH)) so the
+            // bot isn't catatonic; full offensive re-engage waits for reactT=0.
             this.dashSafely(room, b, -uz * b.strafeDir, ux * b.strafeDir);
           } else if (dist > DASH_GAP_DIST && rand() < DASH_DODGE_CHANCE) {
             // Big gap: dash toward the target to close it quickly.
@@ -1026,7 +1059,9 @@ export class BotSim {
         b.jumpCd -= dt;
         if (b.jumpCd <= 0 && b.grounded && b.stunT <= 0) {
           const urgent = b.threat > 0 || b.health <= DASH_RETREAT_HP;
-          if (urgent && rand() < JUMP_DODGE_CHANCE) {
+          if (urgent && b.reactT <= DEFENSIVE_FLINCH && rand() < JUMP_DODGE_CHANCE) {
+            // Defensive flinch: un-gate the bob at min(reactT, DEFENSIVE_FLINCH)
+            // so the bot reacts physically without firing back during startle.
             this.startJump(room, b); // bob to throw off the shooter's aim
           } else if (rand() < JUMP_IDLE_CHANCE) {
             this.startJump(room, b); // liveliness hop
@@ -1076,6 +1111,19 @@ export class BotSim {
         const dz = b.wanderZ - b.z;
         const d = Math.hypot(dx, dz);
         if (d > 0.6) { mvx = dx / d; mvz = dz / d; b.yaw = Math.atan2(dz, dx); }
+
+        // Targetless evasive steer: during the startle window, if we know who shot us,
+        // override the wander direction to move AWAY from the last attacker (steering
+        // only — no fire). This keeps the bot mobile and non-catatonic while startled.
+        if (b.reactT > 0 && b.lastAttacker) {
+          const atk = enemies.find((e) => e.id === b.lastAttacker);
+          if (atk) {
+            const adx = b.x - atk.x; // away from attacker
+            const adz = b.z - atk.z;
+            const alen = Math.hypot(adx, adz);
+            if (alen > 0.001) { mvx = adx / alen; mvz = adz / alen; b.yaw = Math.atan2(adz, adx); }
+          }
+        }
 
         // The odd idle hop keeps wandering bots from looking frozen.
         b.jumpCd -= dt;
