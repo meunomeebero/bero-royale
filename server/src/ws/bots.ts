@@ -101,6 +101,7 @@ export const SUPER_DAMAGE = 3;
  */
 const SUPER_REVEAL_MS = 120;
 const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
+const SUPER_HESITATE_MIN = 0.15, SUPER_HESITATE_SPAN = 0.35; // 0.15..0.50s, skill-scaled
 
 // ── Saber stagger (a player's melee hit on a server bot) — canonical, server-side ──
 // Mirrors the client saber stagger (src/game/Game.ts). Applied authoritatively by
@@ -292,6 +293,8 @@ interface ServerBot {
   kameCharging: boolean; // true while winding up the super (drives the client glow)
   kameChargeT: number; // wind-up progress 0→1 (seconds elapsed / SUPER_CHARGE)
   superTargetId: string | null; // the player committed to at charge start
+  superHesitateT: number; // skill-scaled pause before committing to the super (0 = none)
+  _superArmed: boolean; // true during the hesitation window (armed but not yet charging)
   // ── Item seeking + transient buffs (Slice 2) ──
   seekItemId: string | null; // the power-up this bot is currently walking toward (null = none)
   itemRepickCd: number; // when this hits 0 the bot re-evaluates which item to seek
@@ -459,6 +462,11 @@ export class BotSim {
     if (b.kameCharging) {
       this.abortSuper(b);
       b.superCd = Math.max(b.superCd, MELEE_SUPER_REARM);
+    } else {
+      // A saber stagger must also interrupt a hesitating (armed-but-not-charging) bot
+      // so the per-player super slot is never held while the bot is staggered.
+      b.superHesitateT = 0;
+      b._superArmed = false;
     }
     b.staggerOkAt =
       now + Math.max(MELEE_STUN_T, MELEE_FIRE_LOCK_T) * 1000 + MELEE_STAGGER_FREE_MS;
@@ -560,6 +568,8 @@ export class BotSim {
       kameCharging: false,
       kameChargeT: 0,
       superTargetId: null,
+      superHesitateT: 0,
+      _superArmed: false,
       seekItemId: null,
       itemRepickCd: 0,
       shield: 0,
@@ -605,6 +615,8 @@ export class BotSim {
     b.kameCharging = false;
     b.kameChargeT = 0;
     b.superTargetId = null;
+    b.superHesitateT = 0;
+    b._superArmed = false;
     b.seekItemId = null;
     b.itemRepickCd = 0;
     b.shield = 0;
@@ -854,6 +866,8 @@ export class BotSim {
       // Decay the saber stagger timers (freeze + fire-lock from a player's melee).
       if (b.stunT > 0) b.stunT = Math.max(0, b.stunT - dt);
       if (b.fireLockT > 0) b.fireLockT = Math.max(0, b.fireLockT - dt);
+      // Decay the super hesitation timer (paused while stunned by a saber).
+      if (b.stunT <= 0 && b.superHesitateT > 0) b.superHesitateT = Math.max(0, b.superHesitateT - dt);
 
       // ── CHARGE_SUPER: while winding up the telegraphed super, the bot COMMITS
       // (this short-circuits all normal combat below so a player gets a clean
@@ -1102,7 +1116,11 @@ export class BotSim {
 
         // ── SUPER entry gate ──
         // Begin a telegraphed mega only against a PLAYER, off-cooldown, in close
-        // range, grounded, and healthy enough to commit. From the NEXT tick the
+        // range, grounded, and healthy enough to commit. A two-step hesitation
+        // (skill-scaled pause) runs first: on the first eligible tick the bot ARMS
+        // (`_superArmed=true`) and starts a short timer; once the timer elapses it
+        // COMMITS (`kameCharging=true`) unconditionally — no re-roll that could hold
+        // the per-player super slot while telegraphing nothing. From commit the
         // CHARGE_SUPER branch above takes over (movement/fire suppressed) until the
         // wind-up completes (fire) or the target escapes (abort). The `maySuper`
         // gate enforces ONE charging super per player (the per-player super slot)
@@ -1116,9 +1134,23 @@ export class BotSim {
           dist <= SUPER_RANGE &&
           this.hub.isPlayer(room, tgt.id)
         ) {
-          b.kameCharging = true;
-          b.kameChargeT = 0;
-          b.superTargetId = tgt.id;
+          if (b.superHesitateT <= 0 && !b._superArmed) {
+            // First eligible tick: start the skill-scaled hesitation window.
+            b.superHesitateT = SUPER_HESITATE_MIN + (1 - b.skill) * SUPER_HESITATE_SPAN;
+            b._superArmed = true;
+          } else if (b.superHesitateT <= 0 && b._superArmed) {
+            // Hesitation elapsed: commit unconditionally (no re-roll).
+            b.kameCharging = true;
+            b.kameChargeT = 0;
+            b.superTargetId = tgt.id;
+            b._superArmed = false;
+          }
+          // (else: timer still ticking — keep waiting, nothing to do)
+        } else {
+          // Conditions no longer met: clear any in-progress hesitation immediately
+          // so the per-player super slot is never held while telegraphing nothing.
+          b.superHesitateT = 0;
+          b._superArmed = false;
         }
       } else {
         // ── HUNT (center-biased idle) ──
@@ -1329,12 +1361,14 @@ export class BotSim {
 
   /** Cancel a wind-up cleanly: no emit, no damage, short re-arm so a wasted tell
    *  isn't punished forever. The cleared flags ride the NEXT "s" so the client
-   *  drops the orb. */
+   *  drops the orb. Also clears any in-progress hesitation (slot-safety). */
   private abortSuper(b: ServerBot) {
     b.kameCharging = false;
     b.kameChargeT = 0;
     b.superTargetId = null;
     b.superCd = SUPER_REARM;
+    b.superHesitateT = 0;
+    b._superArmed = false;
   }
 
   /**
