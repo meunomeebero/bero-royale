@@ -49,6 +49,8 @@ const RETARGET_CD = 0.6; // re-pick nearest enemy this often
 const RESPAWN_MS = 5000;
 const WANDER_CD = 2.5;
 
+const MAX_TURN_RATE = 8; // rad/s yaw slew cap — a one-tick 180° snap reads as net-lag, not reflex
+
 // ── Vertical physics (mirrors the player feel in src/game/consts.ts) ─────────
 const GRAVITY = 18.0;
 const JUMP_VELOCITY = 6.0;
@@ -637,6 +639,16 @@ export class BotSim {
     return clampArena(proposed);
   }
 
+  /** Rotate b.yaw toward the heading (dx,dz), capped at MAX_TURN_RATE this tick. */
+  private faceToward(b: ServerBot, dx: number, dz: number, dt: number): void {
+    const want = Math.atan2(dz, dx);
+    let d = want - b.yaw;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    const max = MAX_TURN_RATE * dt;
+    b.yaw += Math.max(-max, Math.min(max, d));
+  }
+
   /** Build the broadcast snapshot for a bot (NetState shape the client expects). */
   private snapshot(b: ServerBot): Record<string, unknown> {
     // Report the FULL horizontal velocity (steering + active dash impulse) so the
@@ -954,7 +966,7 @@ export class BotSim {
         // Faint sideways wobble so the path isn't a dead-straight line.
         mvx = ux + -uz * b.strafeDir * 0.15;
         mvz = uz + ux * b.strafeDir * 0.15;
-        b.yaw = Math.atan2(dz, dx);
+        this.faceToward(b, dx, dz, dt);
 
         // Close a big gap to the item with a dash (reuse the safe-dash helper).
         b.dashCd -= dt;
@@ -972,7 +984,7 @@ export class BotSim {
         const dist = Math.hypot(dx, dz) || 1;
         const ux = dx / dist;
         const uz = dz / dist;
-        b.yaw = Math.atan2(dz, dx);
+        this.faceToward(b, dx, dz, dt);
 
         // Engagers press to ENGAGE_DIST; non-engagers (capped out by the pre-pass)
         // loosely orbit at the looser STANDOFF range so they form the back of the
