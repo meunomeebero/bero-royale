@@ -53,7 +53,9 @@
 - [x] **Fase 3 — gate de impacto no cliente (keystone do invariante).** 2026-06-25. `seq` plumbado ao cliente;
       tracer letal sinaliza chegada (`Bullets.onLethalArrive`); `Game.ts` `LethalGate` segura a morte do player
       local até a bala chegar (ou timeout → impacto sintetizado + morte ≥1 frame depois); `"hit"` local virou
-      presentation-only. `tsc`+eslint+build verdes. **Falta:** playtest do feel + review GPT-5.5 + commit/deploy gated.
+      presentation-only (servidor) / mantém `takeHit` no `?local`. `tsc`+eslint+build verdes; **review GPT-5.5
+      limpo (4 rodadas, 2 P1 corrigidos)**; commit `64559cb` em `main`; **deployado em prod** (bundle
+      `index-XMfMsiLb.js`, restart OK, site + API 200). **Falta:** playtest do feel in-game (morte coincidindo com a bala).
 - [ ] **Fase 5 — PvP throttle/loss** (`hit` letal não-dropável; `applyAt` PvP clampado; correlacionar `shot`↔`hit`).
 - [ ] Opção barata complementar: subir levemente a velocidade do tracer.
 - [ ] Telemetria de perda+latência antes de mexer em transporte/throttle (#2).
