@@ -647,6 +647,8 @@ export class BotSim {
     while (d < -Math.PI) d += 2 * Math.PI;
     const max = MAX_TURN_RATE * dt;
     b.yaw += Math.max(-max, Math.min(max, d));
+    if (b.yaw > Math.PI) b.yaw -= 2 * Math.PI;
+    else if (b.yaw < -Math.PI) b.yaw += 2 * Math.PI;
   }
 
   /** Build the broadcast snapshot for a bot (NetState shape the client expects). */
