@@ -384,7 +384,14 @@ export class BotSim {
     return out;
   }
 
-  /** Apply one point of damage to a bot (player→bot via {t:"hit"}, or bot→bot). */
+  /**
+   * Apply one point of damage to a bot (player→bot via {t:"hit"}, or bot→bot).
+   *
+   * Side-effect: also fans a `kill` event when the victim dies AND `byId`
+   * resolves to a tracked bot (bot→bot frag) — callers must NOT emit a second
+   * `kill` for bot victims. (A player killer is not in the bots map, so no
+   * server kill line is emitted; player kills are surfaced client-side.)
+   */
   damageBot(room: string, targetId: string, byId: string): HitResult | null {
     if (room !== GAME_ROOM) return null;
     const b = this.bots.get(targetId);
@@ -1634,9 +1641,9 @@ export class BotSim {
 
     if (res.died) {
       this.fanout(room, "died", { id: targetId, x: res.x, z: res.z, by: b.id, seq }, b.id);
-      // Bot→player kill: emit the feed line here. Bot→bot kill is handled inside
-      // damageBot (the killer bot increments its own stats and fans there), so we
-      // only emit when the victim was a real player.
+      // Bot→player kill: emit the feed line here. damageBot fans the kill event
+      // itself when the killer is a tracked bot — do NOT add a second emit here
+      // for bot victims. Only emit when the victim was a real player.
       if (this.hub.isPlayer(room, targetId)) {
         b.kills += 1;
         b.streak += 1;
