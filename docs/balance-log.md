@@ -66,6 +66,11 @@ deflexão + dano corpo-a-corpo, sem mais control gratuito.
 [`systems/weapons-weight-speed.md`](systems/weapons-weight-speed.md),
 [`systems/netcode-fidelity-golden-rule.md`](systems/netcode-fidelity-golden-rule.md).
 
+**🚀 Deploy:** em prod 2026-06-25 (commit `85da240`, bundle `index-BdGMMS7N.js`). Review MegaBrain
+limpo — GPT-5.5 Max + GLM 5.2 via OpenRouter, ambos **SHIP-AFTER-FIXES** (sem P1; fixes aplicados:
+guard `isAlive` no stagger, feixe do blast saindo do peito, opacidade do "Channeling…", renomes de
+clareza). 28 testes verdes. https://beroroyale.shardweb.app
+
 ---
 
 ## Sessão 2026-06-25 — peso das armas e nerf do kite do super
