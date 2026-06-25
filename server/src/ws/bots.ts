@@ -885,7 +885,7 @@ export class BotSim {
         }
       }
 
-      let tgt = enemies.find((e) => e.id === b.targetId) ?? null;
+      const tgt = enemies.find((e) => e.id === b.targetId) ?? null;
 
       // ── ENGAGER GATE ───────────────────────────────────────────────────────────
       // A bot is a full engager iff its target is a PLAYER and it's among that
