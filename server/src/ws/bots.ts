@@ -308,7 +308,6 @@ interface ServerBot {
   commitT: number;    // seconds remaining in the current target commitment (0 = free to repick)
   // ── Reaction latency (startle before first offensive reaction) ────────────
   reactT: number;          // >0 = still in the startle window (can't fire/retarget yet)
-  pendingTargetId: string | null; // attacker to commit to once reactT elapses
 }
 
 interface Target {
@@ -394,7 +393,6 @@ export class BotSim {
     // Fresh engagement: seed the startle window (first offensive reaction only).
     if (wasCalm) {
       b.reactT = REACT_MIN + (1 - b.skill) * REACT_SPAN; // 0.15–0.30s, skill-scaled
-      b.pendingTargetId = byId;                           // commit to attacker after the window
     }
     // Shield charges (from shield/super pickups) soak the hit BEFORE health,
     // mirroring the player armor in RoomHub.damagePlayer. hub.addShield is
@@ -543,7 +541,7 @@ export class BotSim {
       staggerOkAt: 0,
       skill: 0, accEff: 0, cadenceMul: 0, leadMul: 0,
       commitT: 0,
-      reactT: 0, pendingTargetId: null,
+      reactT: 0,
     });
     const b = this.bots.get(id)!;
     b.skill = (rand() + rand()) / 2; // center-biased: most mid, few sharp, few free
@@ -587,7 +585,6 @@ export class BotSim {
     b.staggerOkAt = 0;
     b.commitT = 0;
     b.reactT = 0;
-    b.pendingTargetId = null;
     this.deriveSkill(b); // re-derive caches; skill itself is PRESERVED (a person keeps their rep)
   }
 
@@ -881,19 +878,11 @@ export class BotSim {
         const atk = enemies.find((e) => e.id === b.lastAttacker);
         if (atk) {
           const ad2 = (atk.x - b.x) ** 2 + (atk.z - b.z) ** 2;
-          if (ad2 <= (SHOOT_RANGE + 2) * (SHOOT_RANGE + 2)) {
+          if (ad2 <= (SHOOT_RANGE + ENGAGE_LEASH) * (SHOOT_RANGE + ENGAGE_LEASH)) {
             b.targetId = atk.id;
             b.commitT = COMMIT_MIN + (1 - b.skill) * COMMIT_SPAN; // bind commit to the new id
           }
         }
-      }
-
-      // Reaction commit: once the startle elapses, turn to the attacker IF still valid.
-      if (b.reactT <= 0 && b.pendingTargetId) {
-        const pend = enemies.find((e) => e.id === b.pendingTargetId);
-        const inRange = pend && (pend.x - b.x) ** 2 + (pend.z - b.z) ** 2 <= (SHOOT_RANGE + ENGAGE_LEASH) ** 2;
-        if (inRange) { b.targetId = b.pendingTargetId; b.commitT = COMMIT_MIN + (1 - b.skill) * COMMIT_SPAN; }
-        b.pendingTargetId = null;
       }
 
       let tgt = enemies.find((e) => e.id === b.targetId) ?? null;
@@ -1619,7 +1608,7 @@ export class BotSim {
       id: b.id, name: b.name, animal: b.animal, x: b.x, z: b.z, yaw: b.yaw,
       health: b.health, alive: b.alive, skill: b.skill, accEff: b.accEff,
       cadenceMul: b.cadenceMul, leadMul: b.leadMul, targetId: b.targetId,
-      pendingTargetId: (b as any).pendingTargetId ?? null, commitT: (b as any).commitT ?? 0,
+      commitT: (b as any).commitT ?? 0,
       reactT: (b as any).reactT ?? 0, superHesitateT: (b as any).superHesitateT ?? 0,
       kameCharging: b.kameCharging, kills: (b as any).kills ?? 0, streak: (b as any).streak ?? 0,
     }));
