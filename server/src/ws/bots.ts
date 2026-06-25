@@ -135,8 +135,6 @@ const TARGET_SWITCH_HYSTERESIS = 1.5;
 // ── Target commitment (anti-ping-pong) ───────────────────────────────────────
 // After acquiring a NEW target id, a bot holds it for commitT seconds before
 // re-evaluating. Skill ranges 0..1 → commitT 0.8..1.6s (weaker bots are stickier).
-const PLAYER_PULL = 200;   // effective-distance pull for the one bot designated toward a lone UNTARGETED player
-                           // (large enough to win any arena geometry; a post-pass fixup handles retaliation edge cases)
 const COMMIT_MIN = 0.8, COMMIT_SPAN = 0.8; // commitT = COMMIT_MIN + (1-skill)*COMMIT_SPAN → 0.8..1.6s
 
 // ── HUNT center gravitation (owner-locked) ───────────────────────────────────
@@ -779,34 +777,6 @@ export class BotSim {
       }
     }
 
-    // ── PLAYER-ATTENTION FLOOR (anti-pacifism) ──────────────────────────────────
-    // Pure-equal targeting can leave a lone PASSIVE player with zero bots aimed at
-    // them ~29% of the time (a geometric property of nearest-neighbor). For each
-    // player currently targeted by NO bot, designate the single nearest non-committed
-    // alive bot to receive a PLAYER_PULL distance bias toward that player this tick.
-    const pullBotByPlayer = new Map<string, string>(); // playerId → the one bot id pulled toward it
-    if (players.length > 0) {
-      // Count how many bots solidly target each player (committed ≥ one more tick,
-      // so they won't switch away this tick). A bot expiring this tick is not counted
-      // (it may switch), so the pull fires proactively for that edge case too.
-      const targeters = new Map<string, number>();
-      for (const o of this.bots.values()) {
-        if (o.alive && o.commitT > dt && o.targetId && players.some((p) => p.id === o.targetId)) {
-          targeters.set(o.targetId, (targeters.get(o.targetId) ?? 0) + 1);
-        }
-      }
-      for (const p of players) {
-        if ((targeters.get(p.id) ?? 0) > 0) continue; // player already has solid attention
-        let bestId: string | null = null, bestD2 = Infinity;
-        for (const o of this.bots.values()) {
-          if (!o.alive || o.commitT > dt) continue; // don't yank a committed bot (≤dt = expires this tick)
-          const d2 = (o.x - p.x) ** 2 + (o.z - p.z) ** 2;
-          if (d2 < bestD2) { bestD2 = d2; bestId = o.id; }
-        }
-        if (bestId) pullBotByPlayer.set(p.id, bestId);
-      }
-    }
-
     for (const b of this.bots.values()) {
       if (!b.alive) {
         if (now - b.deadAt >= RESPAWN_MS) this.respawn(b, room);
@@ -853,27 +823,22 @@ export class BotSim {
         }
       }
 
-      // ── TARGET SELECTION (equal-by-distance, committed, player-attention floor) ──
+      // ── TARGET SELECTION (pure nearest-enemy, committed) ──────────────────────
       // Players and bots are identical "enemies"; nearest wins. commitT keeps a bot
       // on its current fight (no equidistant ping-pong); a vanished target force-breaks
-      // it. A neglected player gets a bounded PLAYER_PULL on one nearby bot.
+      // it. The post-pass below is the SOLE player-attention floor guarantee.
       b.retargetCd -= dt;
       if (b.commitT > 0) b.commitT = Math.max(0, b.commitT - dt);
       const curTgt = b.targetId ? enemies.find((e) => e.id === b.targetId) ?? null : null;
       const curInRange = !!curTgt &&
         (curTgt.x - b.x) ** 2 + (curTgt.z - b.z) ** 2 <= (SHOOT_RANGE + ENGAGE_LEASH) ** 2;
       const holdCommit = b.commitT > 0 && !!curTgt && curInRange; // null/out-of-range curTgt force-breaks
-      const pulledPlayerId = [...pullBotByPlayer.entries()].find(([, id]) => id === b.id)?.[0] ?? null;
 
       if (!holdCommit && (b.retargetCd <= 0 || !curTgt)) {
         b.retargetCd = RETARGET_CD;
         let best: Target | null = null, bestEff = Infinity;
         for (const e of enemies) {
-          let d = Math.hypot(e.x - b.x, e.z - b.z);
-          // A neglected player gets an effective-distance reduction so this bot
-          // prefers them; the pull value is large enough to win regardless of
-          // arena geometry (equivalent to "direct assignment" for the one pull bot).
-          if (pulledPlayerId === e.id) d -= PLAYER_PULL;
+          const d = Math.hypot(e.x - b.x, e.z - b.z);
           if (d < bestEff) { bestEff = d; best = e; }
         }
         const prev = b.targetId;
@@ -1188,31 +1153,46 @@ export class BotSim {
       this.fanout(room, "s", this.snapshot(b), b.id);
     }
 
-    // ── PLAYER-ATTENTION FIXUP (post-pass) ────────────────────────────────────
-    // The pre-pass can miss cases where a bot switched away from a player THIS
-    // tick (e.g. via retaliation). Re-check: any player with zero targeters after
-    // the selection loop gets the nearest free bot immediately assigned to them.
+    // ── PLAYER-ATTENTION FLOOR (post-pass — authoritative guarantee) ──────────
+    // This is the SOLE mechanism that ensures every player is targeted by at least
+    // one bot. Pure nearest-enemy selection (above) gives no such guarantee on its
+    // own; this pass runs once per tick AFTER all per-bot selection is done and
+    // assigns the nearest free bot to any neglected player. Effect lands next tick
+    // (~50 ms), which is imperceptible.
+    //
+    // "Free" bot = commitT <= 0 (strictly uncommitted — single consistent definition).
+    // STEAL-GUARD: skip a free bot that is the SOLE targeter of another player (to
+    // avoid leaving that player orphaned). When a bot IS reassigned away from
+    // player B, decrement B's live count immediately so B can be rescued in this
+    // same pass if needed. Counts are maintained live as assignments are made.
     if (players.length > 0) {
-      const solidTargeters = new Map<string, number>();
+      // Build live targeter counts (players only; updated as we reassign below).
+      const liveCount = new Map<string, number>();
       for (const b of this.bots.values()) {
         if (b.alive && b.targetId && players.some((p) => p.id === b.targetId)) {
-          solidTargeters.set(b.targetId, (solidTargeters.get(b.targetId) ?? 0) + 1);
+          liveCount.set(b.targetId, (liveCount.get(b.targetId) ?? 0) + 1);
         }
       }
       for (const p of players) {
-        if ((solidTargeters.get(p.id) ?? 0) > 0) continue;
+        if ((liveCount.get(p.id) ?? 0) > 0) continue; // already has a targeter
         let best: ServerBot | null = null, bestD2 = Infinity;
         for (const b of this.bots.values()) {
-          if (!b.alive || b.commitT > 0) continue;
+          if (!b.alive || b.commitT > 0) continue; // only strictly free bots
+          // STEAL-GUARD: don't take the sole guardian of another player.
+          if (b.targetId && players.some((pp) => pp.id === b.targetId)) {
+            if ((liveCount.get(b.targetId) ?? 0) <= 1) continue;
+          }
           const d2 = (b.x - p.x) ** 2 + (b.z - p.z) ** 2;
           if (d2 < bestD2) { bestD2 = d2; best = b; }
         }
         if (best) {
-          const prev = best.targetId;
-          best.targetId = p.id;
-          if (best.targetId !== prev) {
-            best.commitT = COMMIT_MIN + (1 - best.skill) * COMMIT_SPAN;
+          // Decrement the previous player's count so it can be rescued this pass.
+          if (best.targetId && players.some((pp) => pp.id === best!.targetId)) {
+            liveCount.set(best.targetId, (liveCount.get(best.targetId) ?? 1) - 1);
           }
+          best.targetId = p.id;
+          best.commitT = COMMIT_MIN + (1 - best.skill) * COMMIT_SPAN;
+          liveCount.set(p.id, 1);
         }
       }
     }
