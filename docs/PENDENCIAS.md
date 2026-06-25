@@ -56,6 +56,10 @@
       presentation-only (servidor) / mantém `takeHit` no `?local`. `tsc`+eslint+build verdes; **review GPT-5.5
       limpo (4 rodadas, 2 P1 corrigidos)**; commit `64559cb` em `main`; **deployado em prod** (bundle
       `index-XMfMsiLb.js`, restart OK, site + API 200). **Falta:** playtest do feel in-game (morte coincidindo com a bala).
-- [ ] **Fase 5 — PvP throttle/loss** (`hit` letal não-dropável; `applyAt` PvP clampado; correlacionar `shot`↔`hit`).
+- [x] **Fase 5 — PvP: `seq` na morte** (2026-06-25, server-only): `rooms.ts resolvePlayerHit` aplica o
+      `hit`/`kamehit` jogador→jogador **na hora** (sem re-agendar `dist/22` — o atirador já contou o travel ao
+      detectar a colisão local; re-agendar dobraria, P1 do Codex) + `seq` no `died` → a vítima cai na rede
+      bare-cue do gate (Fase 3). Throttle: não isenta `shot`/`hit` do bucket (a rede bare-cue cobre um shot
+      dropado). `combat-consts.ts` dedup. Testado (`server/test/pvp-hit-seq.test.ts`). **🎉 Invariante FECHADO p/ bot + PvP.**
 - [ ] Opção barata complementar: subir levemente a velocidade do tracer.
 - [ ] Telemetria de perda+latência antes de mexer em transporte/throttle (#2).

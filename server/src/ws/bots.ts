@@ -1,5 +1,11 @@
 import type { RoomHub } from "./rooms";
 import type { ServerMsg } from "./protocol";
+import {
+  BULLET_SPEED,
+  MIN_TRAVEL_MS,
+  SUPER_REVEAL_MS,
+  SUPER_DAMAGE,
+} from "./combat-consts";
 
 /**
  * Server-driven bots.
@@ -84,20 +90,8 @@ const SUPER_CHARGE_SPEED = 1.0; // capped move speed while charging (drifts, not
 const SUPER_REARM = 2.5; // short re-arm after an aborted (wasted) charge
 const SUPER_CD_MIN = 14; // cooldown floor after firing (gentler: supers ~half as frequent)
 const SUPER_CD_MAX = 22; // cooldown ceiling after firing (random in [MIN,MAX])
-/** Concentrated-super damage — soaked shield-first then HP, 3 of a 10-bar →
- *  ~4 unshielded hits to kill. Shared by the bot super (here) AND the player
- *  super (index.ts resolves a "kamehit" on a player with this same amount), so
- *  both paths use one shield-first model. Mirror of the client headline. */
-export const SUPER_DAMAGE = 3;
-/**
- * Fixed reveal delay for a super's damage. The kame beam is near-instant VISUALLY
- * (a beam, not a BULLET_SPEED point projectile), so its damage lands a short fixed
- * time after the beam/blast FX appears — NOT dist/BULLET_SPEED. Scheduled via the
- * impact-tick queue so the victim sees the beam before taking it. The dodge gate
- * still resolves at FIRE time (the locked dash/jump dodge promise). Phase 4 of
- * docs/systems/netcode-hit-sync-plan.md.
- */
-const SUPER_REVEAL_MS = 120;
+// SUPER_DAMAGE + SUPER_REVEAL_MS are imported from ./combat-consts (shared with the
+// PvP path in rooms.ts so both supers use one shield-first model + reveal delay).
 const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
 
 // ── Saber stagger (a player's melee hit on a server bot) — canonical, server-side ──
@@ -180,19 +174,8 @@ const MIN_COMBATANTS = 10;
 const MAX_BOTS = 5;
 
 const BULLET_COLOR = "#ff5e6c";
-/**
- * Visible-bullet travel speed. **MUST stay in sync with `BULLET_SPEED` in
- * `src/game/Bullets.ts`** — the server schedules damage to land `dist/BULLET_SPEED`
- * after the shot so it coincides with the tracer the client renders at that same
- * speed. Duplicated (not shared via a module) on purpose: the server (tsup) and
- * client (vite) builds don't share a source today. See netcode-hit-sync-plan.md.
- */
-const BULLET_SPEED = 22;
-/**
- * Floor on a scheduled hit's travel time so point-blank shots (dist→0) still show
- * a brief visible tracer before the damage lands — no close-range instant-death.
- */
-const MIN_TRAVEL_MS = 90;
+// BULLET_SPEED + MIN_TRAVEL_MS are imported from ./combat-consts (shared with the
+// PvP scheduler in rooms.ts).
 
 // Mirrors the client ANIMAL_NAMES (ModelLibrary) + BOT_NAMES so bots read as
 // real players with valid avatars.

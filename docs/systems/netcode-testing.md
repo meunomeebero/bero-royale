@@ -48,6 +48,8 @@ mensagens independentes que chegam juntas — não a perda de pacote isolada (UD
 - ✅ **Tier 2 — scheduler do servidor (damage-on-arrival).** `server/test/pending-hits.test.ts`
   testa `RoomHub.enqueueHit`/`drainPendingHits` com `now` injetado: resolve em/após `applyAt`, ordem
   de inserção, drena 1×, cap defensivo de 512, e a relação `applyAt = fireTime + max(MIN_TRAVEL, dist/22*1000)`.
+  `server/test/pvp-hit-seq.test.ts` testa o `resolvePlayerHit` da Fase 5 (dano PvP imediato + `seq` no `died`
+  letal, super, `seq` monotônico/único, não-mata-cadáver) — síncrono, sem timers.
 - ⏳ **Tier 3 — sim end-to-end com transporte lossy (DIFERIDO).** Liga o scheduler do servidor ao gate
   do cliente por um transporte simulado (SimScheduler + perda/jitter/HOL, ao estilo
   `.context/VibiNet/test/sim_network.ts`). Só vale quando a **telemetria de perda** mostrar regressão
@@ -77,6 +79,8 @@ mensagens independentes que chegam juntas — não a perda de pacote isolada (UD
 | `src/game/net/LethalImpactGate.ts` | **Gate puro** (state machine + efeitos injetados); extraído de `Game.ts` |
 | `src/game/net/LethalImpactGate.test.ts` | Unit + property do gate (Tier 1) |
 | `server/test/pending-hits.test.ts` | Scheduler damage-on-arrival do servidor (Tier 2) |
-| `server/src/ws/rooms.ts` | `RoomHub.enqueueHit`/`drainPendingHits` (sob teste) |
+| `server/test/pvp-hit-seq.test.ts` | `RoomHub.resolvePlayerHit` da Fase 5 (PvP — `seq` no `died`) (Tier 2) |
+| `server/src/ws/combat-consts.ts` | Consts de combate compartilhadas no server (BULLET_SPEED/MIN_TRAVEL_MS/…) |
+| `server/src/ws/rooms.ts` | `RoomHub.enqueueHit`/`drainPendingHits`/`resolvePlayerHit` (sob teste) |
 | `server/test/hit-sync-harness.mjs` | 🗂️ Legado: oráculo via socket real (precisa server vivo) — superseded pelos testes acima |
 | `.context/VibiNet/` | 🗂️ Referência (gitignored): `test/sim_network.ts` é o molde do Tier 3 |
