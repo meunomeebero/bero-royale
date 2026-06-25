@@ -200,14 +200,35 @@ const ANIMAL_NAMES = [
   "bear", "bunny", "cat", "chicken", "crocodile", "dog", "fox", "frog",
   "mouse", "panda", "piglet",
 ];
-const NAMES = [
-  "Lucca", "Mia", "Theo", "Nina", "Kai", "Zoe", "Bia", "Léo",
-  "Duda", "Caio", "Lara", "Vini", "Rafa", "Gabi", "Pedro", "Ana",
-  "Davi", "Sofia", "Igor", "Manu", "Tom", "Lia", "Bento", "Cléo",
-  "Noah", "Yuri", "Pipa", "Zeca", "Fefe", "Juju", "Mel", "Ravi",
-  "Dom", "Tina", "Vito", "Kira", "Bruno", "Nash", "Pixel",
-  "Turbo", "Ace", "Ghost", "Maya", "Enzo", "Cacá", "Tati", "Jota",
-];
+const PT_NOUN = ["destruidor", "mlk", "quebrada", "mundos", "lenda", "monstro", "treta", "capeta", "demonio", "bicho", "fera"];
+const PT_CONN = ["de", "do", "da", "das"];
+const ANIME = ["sasuke", "goku", "naruto", "itachi", "kakashi", "zoro", "luffy", "void", "ghost", "shadow", "reaper", "slayer", "dark", "neo", "kira"];
+const PRO = ["pro", "god", "king", "master", "op", "gg", "no1", "real"];
+const NUM3 = [420, 69, 777, 666, 1337, 7, 99, 13];
+const pick = <T,>(a: T[]): T => a[Math.floor(rand() * a.length)];
+const bigNum = () => Math.floor(rand() * 90000) + 100;      // 3–5 digits, NOT only round
+const num2 = () => String(Math.floor(rand() * 100)).padStart(2, "0");
+const maybeLeet = (s: string) =>
+  rand() < 0.3 ? s.replace(/[aeios]/g, (c) => (rand() < 0.6 ? ({ a: "4", e: "3", i: "1", o: "0", s: "5" } as Record<string, string>)[c] : c)) : s;
+
+/** A procedural gamer handle, distinct from every name in `taken`. Spawn-only. */
+function genHandle(taken: Set<string>): string {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const r = rand();
+    let name: string;
+    if (r < 0.35) name = pick(ANIME) + (rand() < 0.5 ? num2() : ""); // ~30–40% plain handles
+    else if (r < 0.5) name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${bigNum()}`;
+    else if (r < 0.65) name = `xX${pick(ANIME)}_${pick(PRO)}Xx`;
+    else if (r < 0.8) name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${num2()}`;
+    else if (r < 0.92) name = `${pick(ANIME)}${pick(NUM3)}`;
+    else name = `${pick(ANIME)}${pick(PRO)}${rand() < 0.5 ? num2() : ""}`;
+    name = maybeLeet(name);
+    const stem = name.replace(/[0-9]/g, "");
+    // Reject if the full name OR its digit-stripped stem already exists (no near-dupes).
+    if (!taken.has(name) && ![...taken].some((t) => t.replace(/[0-9]/g, "") === stem)) return name;
+  }
+  return `player_${Math.floor(rand() * 1e6)}`; // bounded final fallback (distinct by construction)
+}
 
 interface ServerBot {
   id: string;
@@ -454,10 +475,11 @@ export class BotSim {
 
   private spawnBot(room: string) {
     const id = `srvbot_${this.seq++}`;
-    const used = new Set([...this.bots.values()].map((b) => b.name));
-    const free = NAMES.filter((n) => !used.has(n));
-    const name = (free.length ? free : NAMES)[Math.floor(rand() * (free.length ? free.length : NAMES.length))];
-    const animal = ANIMAL_NAMES[Math.floor(rand() * ANIMAL_NAMES.length)];
+    const taken = new Set([...this.bots.values()].map((b) => b.name));
+    const name = genHandle(taken);
+    const usedAnimals = new Set([...this.bots.values()].map((b) => b.animal));
+    const freeAnimals = ANIMAL_NAMES.filter((a) => !usedAnimals.has(a));
+    const animal = pick(freeAnimals.length ? freeAnimals : ANIMAL_NAMES); // dedupe avatars in a 3–6 lobby
     const pos = this.pickFarSpawn(room);
     this.bots.set(id, {
       id, name, animal,
