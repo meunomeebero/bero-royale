@@ -190,6 +190,7 @@ const GAME_ROOM = "voxelcube-ffa";
 const MAX_BOTS = 6;
 
 const BULLET_COLOR = "#ff5e6c";
+const MISS_SPREAD_RAD = 0.18; // ≈10° max cosmetic miss deflection (random sign + magnitude)
 /**
  * Visible-bullet travel speed. **MUST stay in sync with `BULLET_SPEED` in
  * `src/game/Bullets.ts`** — the server schedules damage to land `dist/BULLET_SPEED`
@@ -1548,6 +1549,19 @@ export class BotSim {
     const seq = this.shotSeq++;
     // Accuracy decided NOW (deterministic); damage applied ON ARRIVAL.
     const hits = rand() <= b.accEff;
+    // DISPLAY-ONLY: deflect the cosmetic tracer dir on a miss so the shot
+    // visibly goes wide instead of phasing straight through the player.
+    // The `dir` object is mutated HERE (before building the fanout payload)
+    // and only affects the cosmetic tracer — the hit/damage path is untouched.
+    if (!hits) {
+      const angSpeed = Math.min(1, Math.hypot(tgt.vx, tgt.vz) / 8);
+      let aimErr = (1 - b.skill) * MISS_SPREAD_RAD * (0.5 + angSpeed);
+      aimErr = Math.min(aimErr, 1.5 * MISS_SPREAD_RAD); // clamp absurd deflection
+      const a = (rand() < 0.5 ? -1 : 1) * aimErr * (0.3 + rand() * 1.4); // random sign + magnitude
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const rx = dir.x * ca - dir.z * sa, rz = dir.x * sa + dir.z * ca;
+      dir.x = rx; dir.z = rz;
+    }
     const hitsPlayer = hits && this.hub.isPlayer(room, tgt.id);
     // Visual tracer. A shot that WILL hit a PLAYER carries `targetId` so that
     // victim's client anchors the tracer to this absolute origin and aims it AT
