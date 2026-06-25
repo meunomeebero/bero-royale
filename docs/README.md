@@ -14,7 +14,7 @@
 | [`systems/online-invisible-shots-diagnosis.md`](systems/online-invisible-shots-diagnosis.md) | 🔴 Bug online (diagnosticado) | tiros invisíveis, morte súbita, hitscan, tracer, dano vs visual, bot, throttle |
 | [`systems/netcode-hit-sync-plan.md`](systems/netcode-hit-sync-plan.md) | 🔴→🛠️ Arquitetura da correção (tiro↔dano) | tiros invisíveis, hit sync, damage-on-arrival, scheduler, applyAt, impact gate, shotSeq, beam-front, favor-the-victim |
 | [`systems/powerups-hp-shield.md`](systems/powerups-hp-shield.md) | Power-ups ↔ HP/escudo (autoridade) | powerup, putake, heal, cura, shield, escudo, super, HP, autoritativo, hp event, desync, morrer com escudo, cura some |
-| [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick |
+| [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick, skill, accEff, reactT, commitT, superHesitateT, kills, streak, genHandle, retaliation, player-attention-floor, yaw-slew, miss-spread |
 | [`systems/voxel-character-gen.md`](systems/voxel-character-gen.md) | Gerar personagens voxel via IA | personagem, character, voxel, gerar, IA, owl, coruja, OBJ, paleta, proporção, coerência, novo animal |
 
 > _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento/dash,
@@ -29,6 +29,7 @@
 | [`shardcloud.md`](shardcloud.md) | Deploy/ops na Shard Cloud (app Node) — runbook, config, DB. |
 | [`mp-sync-plan.md`](mp-sync-plan.md) | 🗂️ Histórico — plano de sync multiplayer (implementado; ver ARCHITECTURE.md). |
 | [`mp-wave2-plan.md`](mp-wave2-plan.md) | 🗂️ Histórico — plano da wave 2 (implementado). |
+| [`balance-log.md`](balance-log.md) | **Log de balanceamento** — histórico de nerfs/buffs/tuning com racional e números canônicos. |
 | [`PENDENCIAS.md`](PENDENCIAS.md) | **Backlog vivo / sprint** — pendências, gate de review, dívida técnica, bug urgente do online. |
 | [`sprints.md`](sprints.md) | 🗂️ Histórico superado — log de sprints sob o nome antigo "VoxelCube" (menciona Supabase, hoje é Node WS). |
 

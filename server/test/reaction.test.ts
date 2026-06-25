@@ -16,16 +16,19 @@ h.sim.damageBot(ROOM, b0.id as string, "P");
 const after = h.inspect().find((b) => b.id === b0.id)!;
 assert((after.reactT as number) > 0, "reactT not seeded on a fresh hit (wasCalm seed dead)");
 
-// during the ENTIRE startle window the bot must NOT fire at the player on ANY tick
+// during the ENTIRE startle window the bot must NOT fire at the player on ANY tick.
+// Stop one full tick before the window expires: on the boundary tick reactT can hit
+// 0 and firing becomes legal, so we exclude that last fractional tick from the guard.
+const DT = 0.05;
 let remaining = (after.reactT as number);
-while (remaining > 0) {
+while (remaining > DT) {
   h.fanned.length = 0;
   h.sim.tick(ROOM, 0.05);
   const firedAtP = h.fanned.some(
     (m) => m.event === "shot" && m.from === b0.id && m.payload?.targetId === "P"
   );
   assert(!firedAtP, "bot fired at attacker during startle window (no reaction delay)");
-  remaining -= 0.05;
+  remaining -= DT;
 }
 
 // the bot orients toward the attacker (via retaliation) — this is immediate, not delayed
