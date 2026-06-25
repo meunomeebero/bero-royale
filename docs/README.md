@@ -16,6 +16,7 @@
 | [`systems/powerups-hp-shield.md`](systems/powerups-hp-shield.md) | Power-ups ↔ HP/escudo (autoridade) | powerup, putake, heal, cura, shield, escudo, super, HP, autoritativo, hp event, desync, morrer com escudo, cura some |
 | [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick |
 | [`systems/voxel-character-gen.md`](systems/voxel-character-gen.md) | Gerar personagens voxel via IA | personagem, character, voxel, gerar, IA, owl, coruja, OBJ, paleta, proporção, coerência, novo animal |
+| [`systems/secret-characters-easter-egg.md`](systems/secret-characters-easter-egg.md) | Personagens secretos (easter egg do username) | easter egg, secret, owl, coruja, rabbi, rabino, _jew, bero, roster escondido, unlock, randomAnimalName |
 
 > _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento/dash,
 > super/kamehameha, power-ups, voz/WebRTC, HUD, leaderboard) em `docs/systems/`._

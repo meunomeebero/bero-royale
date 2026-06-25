@@ -26,6 +26,27 @@ export const ANIMAL_NAMES = [
   "mouse", "owl", "panda", "piglet", "rabbi",
 ] as const;
 
+// Secret roster: the owl + rabbi (rabino) are hidden everywhere — off the picker,
+// the random bot/showcase pool, and the MP fallback — until the username unlocks
+// them (see `unlocksSecretAnimals`). They still load so an unlocked picker can use
+// them and remotes can render an unlocked player's pick.
+export const SECRET_ANIMALS = ["owl", "rabbi"] as const;
+
+// The publicly selectable / randomly-spawnable roster (everything but the secrets).
+export const PUBLIC_ANIMALS = ANIMAL_NAMES.filter(
+  (n) => !(SECRET_ANIMALS as readonly string[]).includes(n),
+);
+
+/**
+ * Easter-egg gate for the secret animals: the username (trimmed, case-insensitive)
+ * is exactly "bero" OR ends with "_jew" (e.g. "john_jew"). Pure string rule, no
+ * Three.js dependency — shared by the picker reveal.
+ */
+export function unlocksSecretAnimals(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n === "bero" || n.endsWith("_jew");
+}
+
 export const COLLECTIBLE_NAMES = [
   "apple", "bamboo", "banana", "candy", "carrot", "cheese", "corn", "fish",
   "honey", "melon", "worm",
@@ -139,8 +160,10 @@ class ModelLibraryImpl {
     return { object, materials };
   }
 
+  /** Random PUBLIC animal — never a secret (owl/rabbi) so they stay hidden on
+   *  bots, the MP fallback, and the menu showcase until the easter egg unlocks. */
   randomAnimalName(rng: () => number = Math.random): string {
-    return ANIMAL_NAMES[Math.floor(rng() * ANIMAL_NAMES.length)];
+    return PUBLIC_ANIMALS[Math.floor(rng() * PUBLIC_ANIMALS.length)];
   }
 
   randomCollectibleName(rng: () => number = Math.random): string {

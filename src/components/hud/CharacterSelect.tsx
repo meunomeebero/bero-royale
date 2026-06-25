@@ -3,7 +3,13 @@ import { Check, Play, Signal, User, Users } from "lucide-react";
 import type { GameMode } from "@/game/Game";
 import { CharacterStage } from "@/game/CharacterStage";
 import { PlayerPreview } from "@/game/PlayerPreview";
-import { ModelLibrary, ANIMAL_NAMES } from "@/game/ModelLibrary";
+import {
+  ModelLibrary,
+  ANIMAL_NAMES,
+  PUBLIC_ANIMALS,
+  SECRET_ANIMALS,
+  unlocksSecretAnimals,
+} from "@/game/ModelLibrary";
 import {
   CharacterCard,
   CREAM,
@@ -26,6 +32,9 @@ const DISPLAY_NAMES: Record<string, string> = {
   mouse: "Rato",
   panda: "Panda",
   piglet: "Porquinho",
+  // Secret roster (revealed by the username easter egg).
+  owl: "Coruja",
+  rabbi: "Rabino",
 };
 
 const NAME_KEY = "voxelCube.username";
@@ -54,24 +63,52 @@ export const CharacterSelect = ({ mode, onBack, onStart }: CharacterSelectProps)
   selectedRef.current = selected;
   const nameRef = useRef(name);
   nameRef.current = name;
+  const stageRef = useRef<CharacterStage | null>(null);
 
-  // Mount the 3D stage once.
+  // Easter egg: the secret animals (owl + rabbi) only appear once the typed name
+  // matches. The roster recomputes live as you type.
+  const unlocked = unlocksSecretAnimals(name);
+  const roster: readonly string[] = unlocked ? ANIMAL_NAMES : PUBLIC_ANIMALS;
+  const rosterRef = useRef(roster);
+  rosterRef.current = roster;
+
+  // Mount the 3D stage once (with whatever roster is unlocked at mount).
   useEffect(() => {
-    let stage: CharacterStage | null = null;
     let cancelled = false;
     void ModelLibrary.preload().then(() => {
       if (cancelled || !stageHostRef.current) return;
-      stage = new CharacterStage(stageHostRef.current, [...ANIMAL_NAMES]);
+      const stage = new CharacterStage(stageHostRef.current, [...rosterRef.current]);
       stage.onSelect = (animal) => setSelected(animal);
       stage.onHover = (animal) => setHovered(animal);
       stage.setSelected(selectedRef.current);
       stage.start();
+      stageRef.current = stage;
     });
     return () => {
       cancelled = true;
-      stage?.dispose();
+      stageRef.current?.dispose();
+      stageRef.current = null;
     };
   }, []);
+
+  // Reveal / hide the secret animals in the live 3D roster when the lock flips.
+  useEffect(() => {
+    stageRef.current?.setRoster(unlocked ? [...ANIMAL_NAMES] : [...PUBLIC_ANIMALS]);
+  }, [unlocked]);
+
+  // Never leave a now-hidden secret animal selected (e.g. the name stopped
+  // matching) — fall back to the first public character.
+  useEffect(() => {
+    if (!unlocked && (SECRET_ANIMALS as readonly string[]).includes(selected)) {
+      setSelected(PUBLIC_ANIMALS[0]);
+    }
+  }, [unlocked, selected]);
+
+  // Keep the 3D stage's highlight in sync with React's selection (grid clicks,
+  // reveal/reset) — state is the single source of truth.
+  useEffect(() => {
+    stageRef.current?.setSelected(selected);
+  }, [selected]);
 
   // Esc → back
   useEffect(() => {
@@ -249,7 +286,7 @@ export const CharacterSelect = ({ mode, onBack, onStart }: CharacterSelectProps)
                 className="grid gap-2.5"
                 style={{ gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))" }}
               >
-                {ANIMAL_NAMES.map((animal) => {
+                {roster.map((animal) => {
                   const isSel = animal === selected;
                   return (
                     <CharacterCard
