@@ -256,6 +256,11 @@ interface ServerBot {
   stunT: number; // >0 = full-action freeze (no steer/fire/super), decays each tick
   fireLockT: number; // >0 = constant-fire lockout (no shots), outlives the stun
   staggerOkAt: number; // epoch ms; the next stagger is only honored at/after this (anti-spam)
+  // ── Per-bot identity (persistent skill → accuracy/cadence/aim-lead) ──
+  skill: number;      // 0..1, rolled once, PRESERVED across respawn (a person keeps their rep)
+  accEff: number;     // cached effective accuracy (derived from skill)
+  cadenceMul: number; // cached fire-cadence multiplier (derived)
+  leadMul: number;    // cached aim-lead multiplier (derived)
 }
 
 interface Target {
@@ -479,7 +484,11 @@ export class BotSim {
       stunT: 0,
       fireLockT: 0,
       staggerOkAt: 0,
+      skill: 0, accEff: 0, cadenceMul: 0, leadMul: 0,
     });
+    const b = this.bots.get(id)!;
+    b.skill = (rand() + rand()) / 2; // center-biased: most mid, few sharp, few free
+    this.deriveSkill(b);
   }
 
   private respawn(b: ServerBot, room: string) {
@@ -517,6 +526,7 @@ export class BotSim {
     b.stunT = 0;
     b.fireLockT = 0;
     b.staggerOkAt = 0;
+    this.deriveSkill(b); // re-derive caches; skill itself is PRESERVED (a person keeps their rep)
   }
 
   /** A spawn point far from every other combatant (players + other bots). */
@@ -956,7 +966,7 @@ export class BotSim {
         ) {
           // Rapid pickup ~halves the cadence while its buff is active.
           const rapidMult = b.rapidT > 0 ? 0.5 : 1;
-          b.shootCd = (SHOOT_CD_MIN + rand() * SHOOT_CD_RND) * rapidMult;
+          b.shootCd = (SHOOT_CD_MIN + rand() * SHOOT_CD_RND) * b.cadenceMul * rapidMult;
           this.fire(room, b, tgt);
         }
 
@@ -1245,8 +1255,8 @@ export class BotSim {
     const tid = b.superTargetId;
     if (!tid) return;
     const est = this.targetVel.get(tid);
-    const aimX = tpos.x + (est?.vx ?? 0) * LEAD_FACTOR;
-    const aimZ = tpos.z + (est?.vz ?? 0) * LEAD_FACTOR;
+    const aimX = tpos.x + (est?.vx ?? 0) * LEAD_FACTOR * b.leadMul;
+    const aimZ = tpos.z + (est?.vz ?? 0) * LEAD_FACTOR * b.leadMul;
     const ddx = aimX - b.x;
     const ddz = aimZ - b.z;
     const dlen = Math.hypot(ddx, ddz) || 1;
@@ -1397,15 +1407,15 @@ export class BotSim {
     // Lead the aim slightly toward where a MOVING target is heading — this is the
     // COSMETIC tracer direction for OBSERVERS. Bots are treated as stationary
     // (vx/vz=0) so this only bites on real players.
-    const aimX = tgt.x + tgt.vx * LEAD_FACTOR;
-    const aimZ = tgt.z + tgt.vz * LEAD_FACTOR;
+    const aimX = tgt.x + tgt.vx * LEAD_FACTOR * b.leadMul;
+    const aimZ = tgt.z + tgt.vz * LEAD_FACTOR * b.leadMul;
     const dx = aimX - b.x;
     const dz = aimZ - b.z;
     const leadDist = Math.hypot(dx, dz) || 1;
     const dir = { x: dx / leadDist, y: 0, z: dz / leadDist };
     const seq = this.shotSeq++;
     // Accuracy decided NOW (deterministic); damage applied ON ARRIVAL.
-    const hits = rand() <= ACCURACY;
+    const hits = rand() <= b.accEff;
     const hitsPlayer = hits && this.hub.isPlayer(room, tgt.id);
     // Visual tracer. A shot that WILL hit a PLAYER carries `targetId` so that
     // victim's client anchors the tracer to this absolute origin and aims it AT
@@ -1462,5 +1472,27 @@ export class BotSim {
         streak: 0,
       }, b.id);
     }
+  }
+
+  /** Recompute the cached feel values from b.skill. Variance spreads AROUND the
+   *  owner-locked means: E[accEff]=ACCURACY, E[cadenceMul]=E[leadMul]=1 at E[skill]=0.5.
+   *  No clamp — raw accEff range [0.21,0.39] is already valid at ACCURACY=0.3. */
+  private deriveSkill(b: ServerBot): void {
+    b.accEff = ACCURACY * (0.7 + 0.6 * b.skill);
+    b.cadenceMul = 1.25 - 0.5 * b.skill;
+    b.leadMul = 0.5 + b.skill;
+  }
+
+  /** TEST-ONLY read of internal bot state (no allocation in tick path). */
+  inspect(room: string): Record<string, unknown>[] {
+    if (room !== GAME_ROOM) return [];
+    return [...this.bots.values()].map((b) => ({
+      id: b.id, name: b.name, animal: b.animal, x: b.x, z: b.z, yaw: b.yaw,
+      health: b.health, alive: b.alive, skill: b.skill, accEff: b.accEff,
+      cadenceMul: b.cadenceMul, leadMul: b.leadMul, targetId: b.targetId,
+      pendingTargetId: (b as any).pendingTargetId ?? null, commitT: (b as any).commitT ?? 0,
+      reactT: (b as any).reactT ?? 0, superHesitateT: (b as any).superHesitateT ?? 0,
+      kameCharging: b.kameCharging, kills: (b as any).kills ?? 0, streak: (b as any).streak ?? 0,
+    }));
   }
 }
