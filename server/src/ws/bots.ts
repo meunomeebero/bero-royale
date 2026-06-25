@@ -1188,11 +1188,11 @@ export class BotSim {
         if (best) {
           // Decrement the previous player's count so it can be rescued this pass.
           if (best.targetId && players.some((pp) => pp.id === best!.targetId)) {
-            liveCount.set(best.targetId, (liveCount.get(best.targetId) ?? 1) - 1);
+            liveCount.set(best.targetId, (liveCount.get(best.targetId) ?? 0) - 1);
           }
           best.targetId = p.id;
           best.commitT = COMMIT_MIN + (1 - best.skill) * COMMIT_SPAN;
-          liveCount.set(p.id, 1);
+          liveCount.set(p.id, (liveCount.get(p.id) ?? 0) + 1);
         }
       }
     }
