@@ -248,11 +248,13 @@ export class PowerUpSim {
           const d2 = (p.x - pu.x) ** 2 + (p.z - pu.z) ** 2;
           if (d2 <= PICKUP_RADIUS_SQ) {
             this.powerups.delete(pu.id);
-            // Shield pickups accumulate server-side so authoritative damage soaks
-            // them shield-first (mirrors the client) — otherwise a server-side kill
-            // would ignore the player's shield.
+            // Power-ups that touch authoritative HP/shield MUST mutate server
+            // state (not just the client prediction) — otherwise the next "hp"
+            // sync reverts them. Shield/super accumulate shield; heal restores HP.
             if (pu.kind === "shield" || pu.kind === "super") {
               this.hub.addShield(room, p.id);
+            } else if (pu.kind === "heal") {
+              this.hub.healPlayer(room, p.id);
             }
             this.fanout(room, "putake", { id: pu.id, kind: pu.kind, by: p.id });
             break; // this power-up is gone; move to the next one

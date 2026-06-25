@@ -600,8 +600,7 @@ export class Player implements BulletTarget {
   serverKilled() {
     if (this.state !== "alive") return;
     this.health = 0;
-    this.shieldPoints = 0; // a death clears shield too (no leftover blue heart)
-    this.die();
+    this.die(); // die() clears shield (single death chokepoint)
   }
 
   setSmoke(smoke: SmokePuffs) {
@@ -665,6 +664,9 @@ export class Player implements BulletTarget {
 
   /** "shield" — gain one accumulating shield charge (BR armor), capped at MAX_SHIELD. */
   applyShield() {
+    // Mirror the server's addShield (!p.alive) guard: never arm a dead/corpse,
+    // so a late "putake" can't re-raise a shield pip after a predicted death.
+    if (this.state !== "alive") return;
     this.shieldPoints = Math.min(this.shieldPoints + 1, MAX_SHIELD);
   }
 
@@ -717,6 +719,10 @@ export class Player implements BulletTarget {
 
   private die() {
     this.state = "dead";
+    // Every death path clears shield here (the single chokepoint) so a locally
+    // predicted death can't leave a stale blue heart on the corpse — the bug
+    // where you "die but still have shield". serverKilled() also routes here.
+    this.shieldPoints = 0;
     this.deadTimer = 0;
     this.audio.playDeath(this.root.position, true);
     this.justDied = true;

@@ -368,6 +368,20 @@ export class RoomHub {
     this.syncOwnerHP(p);
   }
 
+  /**
+   * Restore a player to full health — on a "heal" pickup. Server-AUTHORITATIVE
+   * (mirrors addShield) so the "hp" echo carries the healed value: without this
+   * the heal was client-only and the very next damagePlayer synced the un-healed
+   * server health back, reverting the heal ("heal didn't stick" bug). Clamped to
+   * the server's flat MAX_HEALTH (no boss multiplier here — keep server the cap).
+   */
+  healPlayer(room: string, id: string): void {
+    const p = this.players.get(room)?.get(id);
+    if (!p || !p.alive) return;
+    p.health = MAX_HEALTH;
+    this.syncOwnerHP(p);
+  }
+
   /** Positions of alive players (with a last snapshot) — bot targeting input.
    *  `grounded` rides along so the bot super can let an airborne (jumped) target
    *  dodge the low horizontal beam (the server has no terrain model, so the
