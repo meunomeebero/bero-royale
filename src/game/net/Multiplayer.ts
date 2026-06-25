@@ -76,6 +76,11 @@ export interface DiedEvent {
   z: number;
   /** Who landed the kill (server-stamped). Lets the killer's client react. */
   by?: string;
+  /** Per-shot id correlating this death with its tracer (server). Present on
+   *  bot fire/super deaths; the victim's client holds the death until the
+   *  matching tracer visibly arrives (impact gate). See netcode-hit-sync-plan.md
+   *  (Phase 3). Absent on legacy/PvP deaths → released immediately. */
+  seq?: number;
 }
 
 /** Real-time chat message event. */
@@ -197,7 +202,12 @@ export class Multiplayer {
   private remote = new Map<string, NetState>();
   private presence = new Map<string, PresenceInfo>();
   private self: PresenceInfo;
-  private onHit?: (targetId: string, fromId: string, fromName: string) => void;
+  private onHit?: (
+    targetId: string,
+    fromId: string,
+    fromName: string,
+    seq?: number,
+  ) => void;
   private seed: number | null = null;
   private seedHandler?: (seed: number) => void;
   private onShot?: (e: ShotEvent) => void;
@@ -230,7 +240,9 @@ export class Multiplayer {
     return this.room.kind;
   }
 
-  setHitHandler(cb: (targetId: string, fromId: string, fromName: string) => void) {
+  setHitHandler(
+    cb: (targetId: string, fromId: string, fromName: string, seq?: number) => void,
+  ) {
     this.onHit = cb;
   }
 
@@ -384,9 +396,16 @@ export class Multiplayer {
         },
         hit: (payload) => {
           // Legacy broadcast "hit" path — still handled for observer flash tint
-          // even though damage is now server-authoritative via sendHit.
-          const p = payload as { target: string; from: string; fromName: string };
-          if (p && this.onHit) this.onHit(p.target, p.from, p.fromName);
+          // even though damage is now server-authoritative via sendHit. `seq`
+          // (present on bot fire/super) lets the victim's client correlate this
+          // damage with its tracer for the impact gate (Phase 3).
+          const p = payload as {
+            target: string;
+            from: string;
+            fromName: string;
+            seq?: number;
+          };
+          if (p && this.onHit) this.onHit(p.target, p.from, p.fromName, p.seq);
         },
         hp: (payload) => {
           // Authoritative HP+shield echo for OUR OWN player (the honest-HUD sync —

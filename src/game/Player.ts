@@ -699,6 +699,22 @@ export class Player implements BulletTarget {
   }
 
   /**
+   * Cosmetic hit reaction (flash + shake + squash + hit SFX) with NO HP change.
+   * Used for the LOCAL player's network "hit" cue in multiplayer: HP is owned by
+   * the server's authoritative "hp" echo and death by the gated "died", so the
+   * cue stays presentation-only and we never predict a death before the tracer
+   * visibly lands. See docs/systems/netcode-hit-sync-plan.md (Phase 3).
+   */
+  playHitReaction() {
+    if (this.state !== "alive") return;
+    this.audio.playHit(this.root.position, true);
+    this.hitFlashTimer = HIT_FLASH_DURATION;
+    this.shakeTimer = 0.25;
+    this.shakeAmount = 0.06;
+    this.targetScale.set(1.35, 0.7, 1.35);
+  }
+
+  /**
    * Apply `amount` points of damage: shield charges (BR armor) soak one point
    * each FIRST, then health. Dies when health hits 0. So a 10-damage super on a
    * player with 5 shield + full HP = 5 shield + 5 HP gone → 5 HP, alive.

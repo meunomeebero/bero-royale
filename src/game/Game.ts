@@ -111,6 +111,40 @@ function distPointSegXZ(
 const SHAKE_DURATION = 0.28;
 const SHAKE_MAGNITUDE = 0.5;
 
+// ── Client impact gate (Phase 3 — docs/systems/netcode-hit-sync-plan.md) ──────
+/** Tracer travel speed used to estimate a lethal bullet's arrival deadline.
+ *  **MUST stay in sync with `BULLET_SPEED` in Bullets.ts / server bots.ts.** */
+const LETHAL_TRACER_SPEED = 22;
+/** Margin (ms) added to a lethal tracer's expected travel before the gate stops
+ *  waiting for the visible bullet and synthesizes the impact (covers client-side
+ *  jitter or a dropped/terrain-blocked tracer). */
+const LETHAL_GATE_MARGIN_MS = 200;
+/** Hard ceiling (ms) on how long a death may be held regardless of computed eta —
+ *  bounds the "alive a little longer" window so a far/odd shot can't stall death. */
+const LETHAL_GATE_MAX_MS = 700;
+
+/**
+ * A held-back lethal death (Phase 3). Armed from a "shot" the server says WILL hit
+ * the local player; the death is released the instant the matching tracer visibly
+ * lands (`arrived`, via Bullets.onLethalArrive) once the authoritative "died" has
+ * also been seen (`diedSeen`) — so you never die from a bullet you didn't watch
+ * reach you. If the tracer never lands, the deadline synthesizes a visible impact
+ * and releases the death one frame later (never timeout→instant death).
+ */
+interface LethalGate {
+  by: string;
+  byName: string;
+  /** ms epoch — expected tracer arrival + margin; fallback if it never lands. */
+  deadlineAt: number;
+  /** The tracer visibly reached the local player. */
+  arrived: boolean;
+  /** The authoritative "died" for this shot arrived (confirms it IS lethal). */
+  diedSeen: boolean;
+  /** ms epoch the fallback impact was synthesized (0 = not yet). Death releases
+   *  the frame after this so the impact is always on-screen first. */
+  synthAt: number;
+}
+
 export type GameMode = "local" | "multiplayer" | "ambient";
 
 /** Voice transmission mode: push-to-talk (hold G) or always-on. */
@@ -236,6 +270,20 @@ export class Game {
   private recentHits = new Map<string, number>();
   /** Who last damaged the LOCAL player (name + epoch ms) — drives "X matou você". */
   private lastAttacker: { name: string; t: number } | null = null;
+
+  /** Held-back lethal deaths keyed by `${shooterId}:${seq}` — the client impact
+   *  gate (Phase 3). Independent per simultaneous shooter; MP only. */
+  private lethalGates = new Map<string, LethalGate>();
+
+  /** Safety net for a lethal death with NO live keyed gate (bot super has no
+   *  "shot"; PvP/legacy carry no seq; or a gate already timed out before its
+   *  correlated "hp=0"/"died" arrived). A WS callback only REQUESTS it; the impact
+   *  is synthesized later INSIDE a render frame and the death released a LATER
+   *  frame, so the impact always paints ≥1 frame before death — a bare cue can
+   *  never instant-kill with no visible cause (Phase 3 / codex P1). */
+  private bareDeathState: "none" | "requested" | "synthed" = "none";
+  /** ms epoch the bare-cue impact was synthesized (release the death after it). */
+  private bareDeathSynthAt = 0;
   /** Per-remote dedupe so a death gore burst fires exactly once (event OR fallback). */
   private deadFx = new Set<string>();
   /** Fired once the seed-gated world build is complete (Index drops the overlay). */
@@ -394,11 +442,26 @@ export class Game {
       //   - target names the LOCAL player → apply predicted damage for responsive
       //     feedback; the server independently enforces the same so a laggy/AFK
       //     victim still dies authoritatively (item 5).
-      this.mp.setHitHandler((targetId, _fromId, fromName) => {
+      this.mp.setHitHandler((targetId, fromId, fromName, seq) => {
         if (targetId === this.mp?.id) {
-          if (this.player.isAlive()) this.player.takeHit(new THREE.Vector3());
+          if (this.player.isAlive()) {
+            // LocalRoom (?local) has NO authoritative "hp" echo — the broadcast
+            // "hit" cue is the victim's only HP driver, so keep predicted damage
+            // there. On the real server HP is owned by the "hp" echo and death by
+            // the gated "died", so the cue stays presentation-only (flash/SFX
+            // only) — no predicted death before the tracer lands (Phase 3).
+            if (this.mp?.kind === "local") this.player.takeHit(new THREE.Vector3());
+            else this.player.playHitReaction();
+          }
           // Remember who shot us for the "X matou você" death feed.
           this.lastAttacker = { name: fromName || "Alguém", t: Date.now() };
+          // Carry the REAL shooter name into a pending gate: nameForOwner can't
+          // resolve server bots (they live in remotePlayers, not this.bots), so
+          // without this the gated death would credit "Alguém" (Phase 3 / codex).
+          if (seq != null && fromName) {
+            const g = this.lethalGates.get(this.lethalKey(fromId, seq));
+            if (g) g.byName = fromName;
+          }
         } else {
           this.remotePlayers.get(targetId)?.flashHit();
         }
@@ -409,7 +472,18 @@ export class Game {
       // This is what stops "I had full HP + shield and instantly died" — the bar
       // now reflects the damage the server actually applied (e.g. a 3-pt super).
       this.mp.setHpHandler((e) => {
-        this.player.setHealthShield(e.health, e.shield);
+        // Survivable damage (health > 0) reconciles the bar immediately.
+        if (e.health > 0) {
+          this.player.setHealthShield(e.health, e.shield);
+          return;
+        }
+        // Lethal echo (health <= 0). A live tracer-gated death drives it in sync
+        // with the visible bullet — don't apply now. With NO gate, never instant-
+        // kill on a bare "hp=0": it may have outrun a tracer whose gate expired,
+        // or a still-arriving "died". Synthesize the impact and die one frame later
+        // so the death always has an on-screen cause (Phase 3 / codex P1).
+        if (this.hasPendingLethalForMe()) return;
+        this.requestBareSelfDeath();
       });
       this.registerNetHandlers();
       this.mp.connect();
@@ -514,6 +588,22 @@ export class Game {
     this.kame.onHit = (target, dir, lethal, ownerId) =>
       this.onKameHit(target, dir, lethal, ownerId);
     this.bullets.registerTarget(this.player);
+    // Phase 3 impact gate: the local player is the arrival target for lethal
+    // tracers; when one visibly lands, release the matching held-back death so it
+    // coincides with the bullet the player actually saw. (No-op in local mode —
+    // lethal gates are only armed by the MP "shot" handler.)
+    this.bullets.setLethalSelfTarget(this.player);
+    this.bullets.setOnLethalArrive((shooterId, seq) => {
+      const key = this.lethalKey(shooterId, seq);
+      const g = this.lethalGates.get(key);
+      if (!g) return; // non-lethal targeted shot, or already released
+      g.arrived = true;
+      // A visible impact just happened (the tracer's removal puffed smoke at the
+      // contact point). If the authoritative death is confirmed, release it now,
+      // in sync with the bullet the player saw. Otherwise the hit was non-lethal
+      // → the gate expires harmlessly at its deadline (no death).
+      if (g.diedSeen) this.releaseLethalDeath(key);
+    });
     // Track who damages each fighter (bullets) for kill attribution: the local
     // player ("X matou você") and bots ("fulano matou ciclano" for bot-vs-bot).
     this.bullets.setOnDamage((target, ownerId) => {
@@ -560,12 +650,166 @@ export class Game {
     this.updateCamera();
   }
 
+  // ── Client impact gate (Phase 3) ──────────────────────────────────────────
+  // Holds a lethal death until the bullet that causes it is visibly on top of
+  // the player — the guarantee that you never die from a shot you didn't see.
+
+  private lethalKey(by: string, seq: number): string {
+    return by + ":" + seq;
+  }
+
+  /** True while any lethal death is being held (drives the "hp" echo deferral). */
+  private hasPendingLethalForMe(): boolean {
+    return this.lethalGates.size > 0;
+  }
+
+  /** Pre-arm a gate from a lethal "shot": deadline = expected tracer travel +
+   *  margin, capped. Preserves a diedSeen/arrived already set by an early cue. */
+  private armLethalGate(by: string, seq: number, origin: THREE.Vector3) {
+    const me = this.player.root.position;
+    const dist = Math.hypot(me.x - origin.x, me.z - origin.z);
+    const etaMs = Math.min(
+      LETHAL_GATE_MAX_MS,
+      (dist / LETHAL_TRACER_SPEED) * 1000 + LETHAL_GATE_MARGIN_MS,
+    );
+    const key = this.lethalKey(by, seq);
+    const prev = this.lethalGates.get(key);
+    this.lethalGates.set(key, {
+      by,
+      byName: this.nameForOwner(by) ?? "Alguém",
+      deadlineAt: Date.now() + etaMs,
+      arrived: prev?.arrived ?? false,
+      diedSeen: prev?.diedSeen ?? false,
+      synthAt: 0,
+    });
+    // A "died"/arrival that somehow beat the "shot" is already satisfied.
+    if (prev?.diedSeen && prev?.arrived) this.releaseLethalDeath(key);
+  }
+
+  /** Apply a held-back death now (in sync with the visible impact). */
+  private releaseLethalDeath(key: string) {
+    const g = this.lethalGates.get(key);
+    if (!g) return;
+    this.lethalGates.delete(key);
+    this.lastAttacker = { name: g.byName, t: Date.now() };
+    this.player.serverKilled(); // idempotent (no-op if already dead)
+    // Any other in-flight gates for this life are moot now — we're dead.
+    this.clearLethalGates();
+    this.bareDeathState = "none";
+  }
+
+  private clearLethalGates() {
+    if (this.lethalGates.size > 0) this.lethalGates.clear();
+  }
+
+  /** Request the bare-cue death safety net from a WS hp/died callback. The impact
+   *  is NOT synthesized here (that would paint and die on the same frame) — it is
+   *  synthesized later inside updateLethalGates so it paints first. Idempotent. */
+  private requestBareSelfDeath() {
+    if (this.bareDeathState === "none" && this.player.isAlive()) {
+      this.bareDeathState = "requested";
+    }
+  }
+
+  /** Resolve an authoritative self-death that carries a shot `seq`, ALWAYS via the
+   *  impact gate so a visible impact precedes death. Live gate → mark lethal and
+   *  release on tracer arrival (or its deadline). No live gate (the bot super has
+   *  no "shot"; or a bullet gate already timed out before a LATE "died" arrived) →
+   *  synthesize the impact now and release the death one frame later. Never
+   *  late/timeout → instant death, so the invariant holds even with a lost tracer. */
+  private gateSelfDeath(by: string, seq: number) {
+    if (!this.player.isAlive()) return;
+    const key = this.lethalKey(by, seq);
+    const g = this.lethalGates.get(key);
+    if (g) {
+      g.diedSeen = true;
+      if (g.arrived) this.releaseLethalDeath(key);
+      return; // else released on tracer arrival or the deadline (synth → death)
+    }
+    // No live gate (bot super has no "shot"; or a bullet gate already timed out) →
+    // the bare-cue safety net: impact (next frame) then death. lastAttacker was
+    // already set by the "hit" cue (sent just before "died"), so the feed credits
+    // the right killer.
+    this.requestBareSelfDeath();
+  }
+
+  /** Visible + audible impact at the player, used when a gated death times out
+   *  without the real tracer landing (dropped/blocked) — so the death STILL has
+   *  an on-screen cause before it is applied (Codex correction: never go straight
+   *  from timeout to death). */
+  private synthLethalImpact() {
+    const p = this.player.root.position;
+    this.player.playHitReaction();
+    this.smoke.spawnPuff(
+      new THREE.Vector3(p.x, p.y + 0.3, p.z),
+      new THREE.Vector3(0, 1, 0),
+      6,
+      "#ffffff",
+    );
+  }
+
+  /** Per-frame drain (MP only): release deaths whose tracer landed, and on a
+   *  passed deadline synthesize an impact then release the death one frame later. */
+  private updateLethalGates() {
+    // Bare-cue safety net (no keyed gate). Synthesize the impact DURING this frame
+    // so it paints via renderFrame, then release the death on a LATER frame — never
+    // in the same frame the impact first renders (codex P1).
+    if (this.bareDeathState !== "none") {
+      if (!this.player.isAlive()) {
+        this.bareDeathState = "none";
+      } else if (this.bareDeathState === "requested") {
+        this.synthLethalImpact();
+        this.bareDeathSynthAt = Date.now();
+        this.bareDeathState = "synthed";
+      } else if (Date.now() > this.bareDeathSynthAt) {
+        this.bareDeathState = "none";
+        this.player.serverKilled();
+        this.clearLethalGates();
+      }
+    }
+    if (this.lethalGates.size === 0) return;
+    // Player already dead by any cause (gate release, lava, …) → drop everything.
+    if (!this.player.isAlive()) {
+      this.clearLethalGates();
+      return;
+    }
+    const now = Date.now();
+    // Snapshot keys: releaseLethalDeath mutates the map mid-iteration.
+    for (const key of [...this.lethalGates.keys()]) {
+      const g = this.lethalGates.get(key);
+      if (!g) continue;
+      if (g.synthAt > 0) {
+        // Impact already shown last frame → release the death now (≥1 frame later).
+        if (now > g.synthAt) this.releaseLethalDeath(key);
+        continue;
+      }
+      if (now < g.deadlineAt) continue;
+      if (g.diedSeen) {
+        // Confirmed lethal but the tracer never visibly landed → show an impact,
+        // release death next frame.
+        this.synthLethalImpact();
+        g.synthAt = now;
+      } else {
+        // Non-lethal targeted shot (no "died" will come) → forget it.
+        this.lethalGates.delete(key);
+      }
+    }
+  }
+
   /** Register the instant-event + shot handlers on the multiplayer transport. */
   private registerNetHandlers() {
     if (!this.mp) return;
     this.mp.setShotHandler((e) => {
       let origin: THREE.Vector3;
       let dir: THREE.Vector3;
+      // A shot the server says WILL hit us, carrying a seq we can correlate with
+      // its damage. We only arm a gate while alive (a stray in-flight shot can't
+      // touch a corpse — damagePlayer null-guards the dead server-side too).
+      const lethalToMe =
+        e.targetId != null &&
+        e.targetId === this.mp?.id &&
+        e.seq != null &&
+        this.player.isAlive();
       if (e.targetId != null && e.targetId === this.mp?.id) {
         // LETHAL shot at ME (Phase 2): anchor the tracer to the shooter's
         // ABSOLUTE muzzle (not the interp-anchored remote avatar — that decouples
@@ -587,8 +831,22 @@ export class Game {
         origin = new THREE.Vector3(ox, e.origin.y, oz);
         dir = new THREE.Vector3(e.dir.x, e.dir.y, e.dir.z);
       }
+      // Phase 3: pre-arm the impact gate from the "shot" (which arrives before the
+      // scheduled "hit"/"died") so the death deadline tracks the tracer's actual
+      // expected travel, and tag the tracer so its arrival releases the death.
+      if (lethalToMe && e.seq != null) {
+        this.armLethalGate(e.id, e.seq, origin);
+      }
       // Record the shooter id so a saber parry can credit the reflected hit back.
-      this.bullets.spawnVisual(origin, dir, e.color, e.id);
+      this.bullets.spawnVisual(
+        origin,
+        dir,
+        e.color,
+        e.id,
+        lethalToMe && e.seq != null
+          ? { seq: e.seq, selfPos: this.player.root.position }
+          : undefined,
+      );
       this.audio.playShot(origin, false);
       // Muzzle flash + smoke puff at the remote's rendered muzzle (mirrors
       // Player.shoot which calls spawnFlash + spawnPuff at its own muzzle).
@@ -606,7 +864,15 @@ export class Game {
       // missed some "hit" cues (dropped under throttle) — otherwise we'd keep
       // playing while dead to everyone else. No-op if already dead/falling.
       if (e.id === this.mp?.id) {
+        // Phase 3: a death carrying a shot seq is ALWAYS routed through the impact
+        // gate (held until the tracer lands, or a synthesized impact precedes it).
+        // No seq (PvP/legacy human kill) → authoritative kill now.
+        if (e.seq != null && e.by) {
+          this.gateSelfDeath(e.by, e.seq);
+          return;
+        }
         this.player.serverKilled();
+        this.clearLethalGates();
         return;
       }
       // Spawn the gore where the opponent is actually RENDERED — the server's
@@ -2131,6 +2397,9 @@ export class Game {
         }
         this.dust.update(dt);
         this.bullets.update(dt);
+        // Release / time out any held-back lethal deaths (Phase 3 impact gate).
+        // bullets.update fires onLethalArrive above, so drain right after it.
+        this.updateLethalGates();
         this.smoke.update(dt);
         this.grassPoof.update(dt);
         this.fog.update(dt);

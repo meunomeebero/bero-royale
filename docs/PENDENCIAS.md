@@ -43,14 +43,17 @@
 - Desacoplamento: comunicação entre pacotes via abstrações (evitar dominó de dependências).
 - Dúvidas → consultar GLM 5.2 no console (`scripts/openrouter.mjs`) ou usar Workflow.
 
-## 🔴 URGENTE — modo online: "tiros invisíveis", lag e morte súbita
+## 🔴→🛠️ URGENTE — modo online: "tiros invisíveis", lag e morte súbita
 **✅ DIAGNOSTICADO 2026-06-24** (read-only, verificado) → [`systems/online-invisible-shots-diagnosis.md`](systems/online-invisible-shots-diagnosis.md).
-- **Causa raiz #1 (primária):** bots do servidor aplicam **dano hitscan instantâneo** em `fire()`
-  (`server/src/ws/bots.ts` ~L1347–1387) enquanto o **tracer visual viaja** (≈0.3–0.4 s). Você toma
-  dano/morre ANTES da bala chegar → "tiro invisível". Online é majoritariamente bot → acontece sempre.
+**🛠️ Arquitetura da correção (faseada) → [`systems/netcode-hit-sync-plan.md`](systems/netcode-hit-sync-plan.md).**
+- **Causa raiz #1 (primária):** bots do servidor aplicavam **dano hitscan instantâneo** em `fire()`
+  enquanto o **tracer visual viaja** (≈0.3–0.4 s) → "tiro invisível". Online é majoritariamente bot.
 - **Causa raiz #2 (rara):** token-bucket (80/s) pode dropar tracers sob fogo irreal (`index.ts` L144).
-- [ ] **CORREÇÃO recomendada (pendente de aprovação — muda feel de combate + é deploy de prod):**
-      sincronizar o dano do bot com a chegada do tracer (enfileirar hit com `applyAt=now+dist/22*1000`,
-      resolver no `tick`). Implementar + review (GPT-5.5/GLM) + validar feel ANTES de ir ao ar.
+- [x] **Fases 0–2 + 4 (server damage-on-arrival + apresentação direcionada + super beam-front).** No código (commits `66686cd`/`727c7e8`/`5ab6509`).
+- [x] **Fase 3 — gate de impacto no cliente (keystone do invariante).** 2026-06-25. `seq` plumbado ao cliente;
+      tracer letal sinaliza chegada (`Bullets.onLethalArrive`); `Game.ts` `LethalGate` segura a morte do player
+      local até a bala chegar (ou timeout → impacto sintetizado + morte ≥1 frame depois); `"hit"` local virou
+      presentation-only. `tsc`+eslint+build verdes. **Falta:** playtest do feel + review GPT-5.5 + commit/deploy gated.
+- [ ] **Fase 5 — PvP throttle/loss** (`hit` letal não-dropável; `applyAt` PvP clampado; correlacionar `shot`↔`hit`).
 - [ ] Opção barata complementar: subir levemente a velocidade do tracer.
 - [ ] Telemetria de perda+latência antes de mexer em transporte/throttle (#2).
