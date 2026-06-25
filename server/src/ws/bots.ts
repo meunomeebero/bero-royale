@@ -216,18 +216,32 @@ function genHandle(taken: Set<string>): string {
   for (let attempt = 0; attempt < 10; attempt++) {
     const r = rand();
     let name: string;
-    if (r < 0.35) name = pick(ANIME) + (rand() < 0.5 ? num2() : ""); // ~30–40% plain handles
-    else if (r < 0.5) name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${bigNum()}`;
-    else if (r < 0.65) name = `xX${pick(ANIME)}_${pick(PRO)}Xx`;
-    else if (r < 0.8) name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${num2()}`;
-    else if (r < 0.92) name = `${pick(ANIME)}${pick(NUM3)}`;
-    else name = `${pick(ANIME)}${pick(PRO)}${rand() < 0.5 ? num2() : ""}`;
-    name = maybeLeet(name);
+    let skipLeet = false;
+    if (r < 0.35) {
+      // PLAIN: bare single word, no number, no leet — ~35% weight with leet skipped
+      // yields genuinely-plain handles in the ~30–40% target band.
+      name = rand() < 0.5 ? pick(ANIME) : pick(PT_NOUN);
+      skipLeet = true;
+    } else if (r < 0.5) {
+      name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${bigNum()}`;
+    } else if (r < 0.65) {
+      name = `xX${pick(ANIME)}_${pick(PRO)}Xx`;
+    } else if (r < 0.8) {
+      name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${num2()}`;
+    } else if (r < 0.92) {
+      name = `${pick(ANIME)}${pick(NUM3)}`;
+    } else {
+      name = `${pick(ANIME)}${pick(PRO)}${rand() < 0.5 ? num2() : ""}`;
+    }
+    if (!skipLeet) name = maybeLeet(name);
     const stem = name.replace(/[0-9]/g, "");
     // Reject if the full name OR its digit-stripped stem already exists (no near-dupes).
     if (!taken.has(name) && ![...taken].some((t) => t.replace(/[0-9]/g, "") === stem)) return name;
   }
-  return `player_${Math.floor(rand() * 1e6)}`; // bounded final fallback (distinct by construction)
+  // Bounded final fallback: guaranteed distinct via a counter so taken is never matched.
+  let fbIdx = Math.floor(rand() * 1e6);
+  while (taken.has(`player_${fbIdx}`)) fbIdx = (fbIdx + 1) % 1e6;
+  return `player_${fbIdx}`;
 }
 
 interface ServerBot {

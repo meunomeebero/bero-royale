@@ -14,7 +14,8 @@ assert(new Set(stems).size === stems.length, `near-duplicate stems: ${names.join
 const animals = bots.map((b) => b.animal as string);
 assert(new Set(animals).size === animals.length, "duplicate animals in small lobby");
 
-// (c) style variance over a big sample: some plain (no digit), some with numbers
+// (c) style variance over a big sample: genuinely-plain handles (single word, no digit,
+// no xX/Xx wrap, no underscore) should land in the ~30–40% spec band.
 let plain = 0, total = 5000;
 const seen = new Set<string>();
 // drive variety by repeated independent generation via fresh harnesses
@@ -23,9 +24,13 @@ for (let i = 0; i < total; i++) {
   g.sim.tick("voxelcube-ffa", 0.05);
   const nm = (g.inspect()[0]?.name as string) ?? "";
   seen.add(nm);
-  if (!/[0-9]/.test(nm)) plain++;
+  // Genuinely plain: no digit, no underscore, no xX/Xx wrap (case-insensitive prefix/suffix)
+  const isPlain = !/[0-9]/.test(nm) && !nm.includes("_") && !/^xX/i.test(nm) && !/Xx$/i.test(nm);
+  if (isPlain) plain++;
 }
-assert(plain / total > 0.15 && plain / total < 0.6, `plain-handle ratio off: ${(plain / total).toFixed(2)}`);
+const plainRatio = plain / total;
+// Bracket the ~30–40% spec intent with margin to avoid flaky failures over 5 000 samples.
+assert(plainRatio > 0.25 && plainRatio < 0.48, `plain-handle ratio off: ${plainRatio.toFixed(2)} (want 0.25–0.48)`);
 assert(seen.size > 100, `generator not varied: only ${seen.size} distinct first-bot names`);
 
 done();
