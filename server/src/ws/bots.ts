@@ -311,6 +311,9 @@ interface ServerBot {
   commitT: number;    // seconds remaining in the current target commitment (0 = free to repick)
   // ── Reaction latency (startle before first offensive reaction) ────────────
   reactT: number;          // >0 = still in the startle window (can't fire/retarget yet)
+  // ── Kill feed tracking ──
+  kills: number;  // lifetime frag count (PRESERVED across respawn — a person keeps their rep)
+  streak: number; // current kill streak since last death (RESET on death, cosmetic only)
 }
 
 interface Target {
@@ -370,7 +373,7 @@ export class BotSim {
           id: b.id,
           name: b.name,
           animal: b.animal,
-          kills: 0,
+          kills: b.kills,
           aliveSince: 0,
           alive: b.alive,
           present: true,
@@ -408,6 +411,21 @@ export class BotSim {
     if (b.health <= 0) {
       b.alive = false;
       b.deadAt = Date.now();
+      b.streak = 0; // victim streak resets on death
+      // Bot→bot kill: emit the kill feed line here (resolveShot skips it for bot targets).
+      // If the killer is also a bot, increment its stats and fan the feed.
+      const killer = this.bots.get(byId);
+      if (killer) {
+        killer.kills += 1;
+        killer.streak += 1;
+        this.fanout(room, "kill", {
+          id: `srvk_${this.killSeq++}`,
+          killer: killer.name,
+          victim: b.name,
+          // Cap at 2 so bot-vs-bot farming never trips the client's >=3 rampage banner.
+          streak: Math.min(killer.streak, 2),
+        }, killer.id);
+      }
       return { died: true, x: b.x, z: b.z, byId, victimName: b.name };
     }
     return { died: false, x: b.x, z: b.z, byId, victimName: b.name };
@@ -448,6 +466,7 @@ export class BotSim {
     b.health = 0;
     b.alive = false;
     b.deadAt = Date.now();
+    b.streak = 0; // victim streak resets on death (player killer surfaced client-side)
     return { died: true, x: b.x, z: b.z, byId: "", victimName: b.name };
   }
 
@@ -545,6 +564,7 @@ export class BotSim {
       skill: 0, accEff: 0, cadenceMul: 0, leadMul: 0,
       commitT: 0,
       reactT: 0,
+      kills: 0, streak: 0,
     });
     const b = this.bots.get(id)!;
     b.skill = (rand() + rand()) / 2; // center-biased: most mid, few sharp, few free
@@ -588,6 +608,7 @@ export class BotSim {
     b.staggerOkAt = 0;
     b.commitT = 0;
     b.reactT = 0;
+    b.streak = 0; // reset on each death; kills is PRESERVED (lifetime frags survive)
     this.deriveSkill(b); // re-derive caches; skill itself is PRESERVED (a person keeps their rep)
   }
 
@@ -1450,11 +1471,15 @@ export class BotSim {
 
     if (res.died) {
       this.fanout(room, "died", { id: tid, x: res.x, z: res.z, by: b.id, seq }, b.id);
+      // Super only targets players (see fireSuper guard), so always emit the feed line.
+      b.kills += 1;
+      b.streak += 1;
+      // Streak capped at 2 so bot farming never trips the client's >=3 rampage banner.
       this.fanout(room, "kill", {
         id: `srvk_${this.killSeq++}`,
         killer: b.name,
         victim: res.victimName,
-        streak: 0,
+        streak: Math.min(b.streak, 2),
       }, b.id);
     }
   }
@@ -1609,14 +1634,20 @@ export class BotSim {
 
     if (res.died) {
       this.fanout(room, "died", { id: targetId, x: res.x, z: res.z, by: b.id, seq }, b.id);
-      // Bots are the killer here → the SERVER owns this feed line (player-killers
-      // are surfaced client-side). Everyone sees it.
-      this.fanout(room, "kill", {
-        id: `srvk_${this.killSeq++}`,
-        killer: b.name,
-        victim: res.victimName,
-        streak: 0,
-      }, b.id);
+      // Bot→player kill: emit the feed line here. Bot→bot kill is handled inside
+      // damageBot (the killer bot increments its own stats and fans there), so we
+      // only emit when the victim was a real player.
+      if (this.hub.isPlayer(room, targetId)) {
+        b.kills += 1;
+        b.streak += 1;
+        // Streak capped at 2 so bot farming never trips the client's >=3 rampage banner.
+        this.fanout(room, "kill", {
+          id: `srvk_${this.killSeq++}`,
+          killer: b.name,
+          victim: res.victimName,
+          streak: Math.min(b.streak, 2),
+        }, b.id);
+      }
     }
   }
 
