@@ -314,6 +314,7 @@ interface ServerBot {
   commitT: number;    // seconds remaining in the current target commitment (0 = free to repick)
   // ── Reaction latency (startle before first offensive reaction) ────────────
   reactT: number;          // >0 = still in the startle window (can't fire/retarget yet)
+  defensiveReactT: number; // >0 = suppress defensive dash/jump (min(reactT, DEFENSIVE_FLINCH))
   // ── Kill feed tracking ──
   kills: number;  // lifetime frag count (PRESERVED across respawn — a person keeps their rep)
   streak: number; // current kill streak since last death (RESET on death, cosmetic only)
@@ -409,6 +410,7 @@ export class BotSim {
     // Fresh engagement: seed the startle window (first offensive reaction only).
     if (wasCalm) {
       b.reactT = REACT_MIN + (1 - b.skill) * REACT_SPAN; // 0.15–0.30s, skill-scaled
+      b.defensiveReactT = Math.min(b.reactT, DEFENSIVE_FLINCH); // 120ms cap for dodge un-gate
     }
     // Shield charges (from shield/super pickups) soak the hit BEFORE health,
     // mirroring the player armor in RoomHub.damagePlayer. hub.addShield is
@@ -422,6 +424,9 @@ export class BotSim {
       b.alive = false;
       b.deadAt = Date.now();
       b.streak = 0; // victim streak resets on death
+      // Clear super/hesitation state so a corpse never reports stale charging=true.
+      b.kameCharging = false; b.kameChargeT = 0; b.superTargetId = null;
+      b.superHesitateT = 0; b._superArmed = false;
       // Bot→bot kill: emit the kill feed line here (resolveShot skips it for bot targets).
       // If the killer is also a bot, increment its stats and fan the feed.
       const killer = this.bots.get(byId);
@@ -482,6 +487,9 @@ export class BotSim {
     b.alive = false;
     b.deadAt = Date.now();
     b.streak = 0; // victim streak resets on death (player killer surfaced client-side)
+    // Clear super/hesitation state so a corpse never reports stale charging=true.
+    b.kameCharging = false; b.kameChargeT = 0; b.superTargetId = null;
+    b.superHesitateT = 0; b._superArmed = false;
     return { died: true, x: b.x, z: b.z, byId: "", victimName: b.name };
   }
 
@@ -581,6 +589,7 @@ export class BotSim {
       skill: 0, accEff: 0, cadenceMul: 0, leadMul: 0,
       commitT: 0,
       reactT: 0,
+      defensiveReactT: 0,
       kills: 0, streak: 0,
     });
     const b = this.bots.get(id)!;
@@ -627,6 +636,7 @@ export class BotSim {
     b.staggerOkAt = 0;
     b.commitT = 0;
     b.reactT = 0;
+    b.defensiveReactT = 0;
     b.streak = 0; // reset on each death; kills is PRESERVED (lifetime frags survive)
     this.deriveSkill(b); // re-derive caches; skill itself is PRESERVED (a person keeps their rep)
   }
@@ -860,6 +870,8 @@ export class BotSim {
       if (b.threat > 0) b.threat = Math.max(0, b.threat - dt);
       // Decay the startle window (reaction latency before first offensive reaction).
       if (b.reactT > 0) b.reactT = Math.max(0, b.reactT - dt);
+      // Decay the defensive-dodge suppression timer (un-gates dash/jump before full reactT).
+      if (b.defensiveReactT > 0) b.defensiveReactT = Math.max(0, b.defensiveReactT - dt);
       // Decay the transient pickup buffs (rapid fire / move speed).
       if (b.rapidT > 0) b.rapidT = Math.max(0, b.rapidT - dt);
       if (b.speedT > 0) b.speedT = Math.max(0, b.speedT - dt);
@@ -1090,10 +1102,10 @@ export class BotSim {
           if (b.health <= DASH_RETREAT_HP && rand() < DASH_DODGE_CHANCE) {
             // Low HP: lunge AWAY from the target to break the engagement.
             this.dashSafely(room, b, -ux, -uz);
-          } else if (b.threat > 0 && b.reactT <= DEFENSIVE_FLINCH && rand() < DASH_DODGE_CHANCE) {
+          } else if (b.threat > 0 && b.defensiveReactT <= 0 && rand() < DASH_DODGE_CHANCE) {
             // Under fire: juke sideways (perpendicular) to dodge the next shot.
-            // Defensive flinch un-gates early (min(reactT, DEFENSIVE_FLINCH)) so the
-            // bot isn't catatonic; full offensive re-engage waits for reactT=0.
+            // Defensive flinch un-gates after min(reactT, DEFENSIVE_FLINCH) seconds so
+            // the bot isn't catatonic; full offensive re-engage waits for reactT=0.
             this.dashSafely(room, b, -uz * b.strafeDir, ux * b.strafeDir);
           } else if (dist > DASH_GAP_DIST && rand() < DASH_DODGE_CHANCE) {
             // Big gap: dash toward the target to close it quickly.
@@ -1105,8 +1117,8 @@ export class BotSim {
         b.jumpCd -= dt;
         if (b.jumpCd <= 0 && b.grounded && b.stunT <= 0) {
           const urgent = b.threat > 0 || b.health <= DASH_RETREAT_HP;
-          if (urgent && b.reactT <= DEFENSIVE_FLINCH && rand() < JUMP_DODGE_CHANCE) {
-            // Defensive flinch: un-gate the bob at min(reactT, DEFENSIVE_FLINCH)
+          if (urgent && b.defensiveReactT <= 0 && rand() < JUMP_DODGE_CHANCE) {
+            // Defensive flinch: un-gate the bob after min(reactT, DEFENSIVE_FLINCH)
             // so the bot reacts physically without firing back during startle.
             this.startJump(room, b); // bob to throw off the shooter's aim
           } else if (rand() < JUMP_IDLE_CHANCE) {
