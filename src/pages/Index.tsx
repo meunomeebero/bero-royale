@@ -26,6 +26,7 @@ import { StatsBar } from "@/components/hud/StatsBar";
 import { Crosshair } from "@/components/hud/Crosshair";
 import { Leaderboard } from "@/components/hud/Leaderboard";
 import { VoiceSettingsModal } from "@/components/hud/VoiceSettingsModal";
+import { SettingsScreen } from "@/components/hud/SettingsScreen";
 import { ChatPanel, type ChatMessage } from "@/components/hud/ChatPanel";
 import { PlayersList } from "@/components/hud/PlayersList";
 import { PingBadge } from "@/components/hud/PingBadge";
@@ -88,6 +89,14 @@ const Index = () => {
   // Admin view: the "bero" account can see which online users are bots vs real.
   const isBero = (settings?.username ?? "").trim().toLowerCase() === "bero";
   const [paused, setPaused] = useState(false);
+  // Full in-game settings overlay (opened from the pause menu). Mirrored into a
+  // ref so the window keydown handler (set up once) can read it without stale
+  // closure capture.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpenRef = useRef(false);
+  // Chat focus also silences game input; mirrored to a ref so the settings
+  // effect can OR the two reasons without re-running on chat focus changes.
+  const chatFocusedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<GameStats>(INITIAL_STATS);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
@@ -120,6 +129,14 @@ const Index = () => {
       window.removeEventListener("orientationchange", update);
     };
   }, []);
+
+  // Keep the keydown-handler ref in sync, and silence game input (WASD/aim/fire)
+  // while the in-game settings overlay is open so slider arrow-keys + clicks
+  // never leak into the match. Respects chat focus too (shared input flag).
+  useEffect(() => {
+    settingsOpenRef.current = settingsOpen;
+    gameRef.current?.setInputEnabled(!settingsOpen && !chatFocusedRef.current);
+  }, [settingsOpen]);
 
   // Mobile: request fullscreen on the first touch so the browser chrome hides.
   // Works on Android/iPad; iOS Safari iPhone ignores it (no Fullscreen API there
@@ -213,6 +230,15 @@ const Index = () => {
         onKey = (e: KeyboardEvent) => {
           // Don't intercept Esc/P while the player is typing in the chat input.
           if (document.activeElement?.tagName === "INPUT") return;
+          // While the settings overlay is open, Esc closes it (back to pause)
+          // and P is swallowed — never toggle the underlying pause state.
+          if (settingsOpenRef.current) {
+            if (e.code === "Escape") {
+              e.preventDefault();
+              setSettingsOpen(false);
+            }
+            return;
+          }
           if (e.code === "Escape" || e.code === "KeyP") {
             e.preventDefault();
             setPaused(game!.togglePause());
@@ -242,10 +268,16 @@ const Index = () => {
   }, []);
 
   const handleTogglePause = () => {
+    // The settings overlay owns the paused state — close it first (never let a
+    // stray pause-button tap unpause the game while settings sits on top).
+    if (settingsOpen) return;
     const game = gameRef.current;
     if (!game) return;
     setPaused(game.togglePause());
   };
+
+  // Stable so SettingsScreen's Esc-key effect doesn't re-subscribe each render.
+  const handleSettingsBack = useCallback(() => setSettingsOpen(false), []);
 
   const handleChatSend = useCallback(
     (text: string) => {
@@ -261,8 +293,12 @@ const Index = () => {
     [settings?.username],
   );
 
+  // Two independent reasons to silence game input — chat focus and the settings
+  // overlay — share ONE InputManager flag, so each must respect the other or a
+  // blur/close can re-enable keys while the other still wants them off.
   const handleChatFocusChange = useCallback((focused: boolean) => {
-    gameRef.current?.setInputEnabled(!focused);
+    chatFocusedRef.current = focused;
+    gameRef.current?.setInputEnabled(!focused && !settingsOpenRef.current);
   }, []);
 
   const handleSelectSlot = useCallback((slot: number) => {
@@ -560,8 +596,8 @@ const Index = () => {
         </div>
       )}
 
-      {/* Pause overlay */}
-      {paused && (
+      {/* Pause overlay (hidden while the settings overlay is on top) */}
+      {paused && !settingsOpen && (
         <div
           className="absolute inset-0 z-50 flex items-center justify-center"
           style={{ background: "rgba(36,16,25,0.6)" }}
@@ -595,6 +631,16 @@ const Index = () => {
               <GamePanel radius={8}>
                 <button
                   type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="hud-text flex h-11 items-center gap-2 px-6 text-sm font-bold transition-opacity hover:opacity-80"
+                >
+                  <Settings className="w-4 h-4" strokeWidth={2.5} />
+                  Configurações
+                </button>
+              </GamePanel>
+              <GamePanel radius={8}>
+                <button
+                  type="button"
                   onClick={() => navigate("/")}
                   className="hud-text flex h-11 items-center gap-2 px-6 text-sm font-bold transition-opacity hover:opacity-80"
                 >
@@ -604,6 +650,31 @@ const Index = () => {
               </GamePanel>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* In-game settings (opened from the pause menu). Reuses the menu Settings
+          screen in `inGame` mode (no audio-device section / mic prompt). Every
+          control applies LIVE to the running game — the VHS slider previews on
+          the still-rendered frame behind this overlay. */}
+      {settingsOpen && (
+        <div
+          className="absolute inset-0 z-[55] flex items-center justify-center px-3"
+          style={{ background: "rgba(36,16,25,0.78)" }}
+          // Click the dark margin to dismiss (matches VoiceSettingsModal); the
+          // panel itself is a child, so its clicks don't bubble to here.
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSettingsOpen(false);
+          }}
+        >
+          <SettingsScreen
+            inGame
+            onBack={handleSettingsBack}
+            onSfxMutedChange={(muted) => gameRef.current?.setSfxMuted(muted)}
+            onPixelFilterChange={(on) => gameRef.current?.setPixelFilter(on)}
+            onVhsLevelChange={(level) => gameRef.current?.setVhsLevel(level)}
+            onAimSensitivityChange={(s) => gameRef.current?.setAimSensitivity(s)}
+          />
         </div>
       )}
 

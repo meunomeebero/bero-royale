@@ -63,6 +63,13 @@ interface SettingsScreenProps {
   onVhsLevelChange?: (level: number) => void;
   /** Apply the cursor/aim sensitivity multiplier (persists; next match). */
   onAimSensitivityChange?: (sensitivity: number) => void;
+  /**
+   * Opened over a live match (pause overlay) rather than the menu. Hides the
+   * audio-DEVICE section so opening it never triggers a mic-permission prompt
+   * or grabs the mic mid-game (which would fight an active voice stream). The
+   * audio toggles + Vídeo + Controles stay — those are the mid-match tweaks.
+   */
+  inGame?: boolean;
 }
 
 function sinkIdSupported(): boolean {
@@ -112,6 +119,7 @@ export const SettingsScreen = ({
   onPixelFilterChange,
   onVhsLevelChange,
   onAimSensitivityChange,
+  inGame = false,
 }: SettingsScreenProps) => {
   const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
@@ -160,8 +168,10 @@ export const SettingsScreen = ({
   }, []);
 
   // Request mic once to unlock device labels, then enumerate + watch for
-  // hot-plugged headsets.
+  // hot-plugged headsets. Skipped in-game: the device section is hidden there,
+  // so we must NOT prompt for the mic or grab it mid-match.
   useEffect(() => {
+    if (inGame) return;
     let cancelled = false;
     let permissionStream: MediaStream | null = null;
 
@@ -195,12 +205,15 @@ export const SettingsScreen = ({
         onDeviceChange,
       );
     };
-  }, [refreshDevices]);
+  }, [refreshDevices, inGame]);
 
   // Esc → back.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onBack();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onBack();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -354,7 +367,8 @@ export const SettingsScreen = ({
           />
         </section>
 
-        {/* ── Dispositivos ── */}
+        {/* ── Dispositivos ── (menu only — hidden in-game to avoid a mic prompt) */}
+        {!inGame && (
         <section className="flex flex-col gap-3">
           <RibbonStrip icon={Mic} accent={HUD.honey} className="self-start">
             <span
@@ -452,6 +466,7 @@ export const SettingsScreen = ({
             </span>
           </button>
         </section>
+        )}
 
         {/* ── Vídeo ── */}
         <section className="flex flex-col gap-2.5">
@@ -521,16 +536,20 @@ export const SettingsScreen = ({
           />
         </section>
 
-        {/* Footnote: ground the voice radius in gameplay. */}
-        <p
-          className="hud-text flex items-center gap-2 text-[11px] leading-snug"
-          style={{ color: INK_TEXT }}
-        >
-          <span className="shrink-0">
-            <IconWell icon={Radio} accent={HUD.rose} size={22} />
-          </span>
-          Só te ouve quem estiver dentro do teu raio vermelho.
-        </p>
+        {/* Footnote: ground the voice radius in gameplay. Menu only — in-game
+            the device/voice section is hidden, so this would dangle (and it's
+            irrelevant in local single-player, which has no proximity voice). */}
+        {!inGame && (
+          <p
+            className="hud-text flex items-center gap-2 text-[11px] leading-snug"
+            style={{ color: INK_TEXT }}
+          >
+            <span className="shrink-0">
+              <IconWell icon={Radio} accent={HUD.rose} size={22} />
+            </span>
+            Só te ouve quem estiver dentro do teu raio vermelho.
+          </p>
+        )}
       </ScreenShell>
     </div>
   );
