@@ -18,7 +18,7 @@ import type { ChatEvent } from "./net/Multiplayer";
 import { LethalImpactGate } from "./net/LethalImpactGate";
 import type { BulletTarget, BulletOwner } from "./Bullets";
 import { VoiceChat } from "./net/VoiceChat";
-import { submitScore, fetchTop, type LeaderRow } from "./net/LeaderboardClient";
+import { fetchTop, type LeaderRow } from "./net/LeaderboardClient";
 import { RemotePlayer } from "./RemotePlayer";
 import { SmokePuffs } from "./SmokePuffs";
 import { FogPatches } from "./FogPatches";
@@ -2425,19 +2425,9 @@ export class Game {
           if (this.wasPlayerAliveLastFrame && !aliveNow) this.restartRun();
         } else if (this.mp) {
           if (this.wasPlayerAliveLastFrame && !aliveNow) {
-            // Persist this finished life as one run; the server ranks/keeps each
-            // player's BEST run = most kills before dying.
-            submitScore({
-              username: this.username,
-              aliveSeconds: Math.max(
-                0,
-                Math.round((Date.now() - this.playerAliveSince) / 1000),
-              ),
-              kills: this.kills,
-              endedAt: Date.now(),
-            });
-            // The run ENDS at death → reset the live kill count to 0 so the
-            // online leaderboard (ranked by current-run kills) resets the run.
+            // The server writes the run on death (server-authoritative scoring).
+            // Reset the live kill count to 0 so the online leaderboard (ranked by
+            // current-run kills) resets the run.
             this.kills = 0;
             this.mp.updateSelf({ alive: false, kills: 0 });
             // Re-pull persisted records shortly after submitting so the player
