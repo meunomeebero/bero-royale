@@ -2,6 +2,7 @@ import Index from "./pages/Index";
 import Menu from "./pages/Menu";
 import NotFound from "./pages/NotFound";
 import HudLab from "./pages/HudLab";
+import Editor from "./pages/Editor";
 
 export const routers = [
     {
@@ -19,6 +20,12 @@ export const routers = [
       path: "/hudlab",
       name: 'hudlab',
       element: <HudLab />,
+    },
+    /* Secret password-gated map editor (unlinked) — place/delete/save decor. */
+    {
+      path: "/editor",
+      name: 'editor',
+      element: <Editor />,
     },
     /* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */
     {

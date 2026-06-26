@@ -265,6 +265,21 @@ export class Platform {
     };
   }
 
+  /**
+   * World XZ → containing cell `(ix,iz)`, clamped to the grid (inverse of
+   * {@link cellCenter}). Used by the editor to turn a ground-raycast hit into a
+   * cell; clamping keeps an off-edge ray from yielding an out-of-range cell.
+   */
+  cellAtWorld(x: number, z: number): { ix: number; iz: number } {
+    const gridHalf = PLATFORM_GRID / 2;
+    const ix = Math.floor(x / BLOCK_SIZE + gridHalf);
+    const iz = Math.floor(z / BLOCK_SIZE + gridHalf);
+    return {
+      ix: Math.max(0, Math.min(PLATFORM_GRID - 1, ix)),
+      iz: Math.max(0, Math.min(PLATFORM_GRID - 1, iz)),
+    };
+  }
+
   /** True if `(ix,iz)` is a valid integer cell inside the grid. */
   cellInBounds(ix: number, iz: number): boolean {
     return (

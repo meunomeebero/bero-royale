@@ -284,29 +284,41 @@ export class Decor {
   // ---- Addressable place / delete (editor) ------------------------------
 
   /**
-   * Place `asset` at cell `(ix,iz)`. Returns the new entry, or `null` if the cell
-   * fails any gate: out of bounds, a hill (height ≠ 0), too near the edge, or
-   * already occupied. Same constraints the scatter obeyed.
+   * Non-mutating placement test: `true` iff `placeAt(asset,ix,iz)` would succeed
+   * (known asset, in bounds, grass, flat/height-0, ≥`EDGE_MARGIN` from the edge,
+   * cell free). The editor calls this to tint the placement ghost green/red
+   * WITHOUT building a prop, so `placeAt` simply enforces it before mutating.
    */
-  placeAt(asset: EnvProp, ix: number, iz: number): DecorEntry | null {
-    const spec = PROP_FOR_ASSET[asset];
-    if (!spec) return null;
-    if (!this.platform.cellInBounds(ix, iz)) return null;
-    if (this.cellToId.has(cellKey(ix, iz))) return null;
-    if (this.platform.cellHeight(ix, iz) !== 0) return null;
+  canPlaceAt(asset: EnvProp, ix: number, iz: number): boolean {
+    if (!PROP_FOR_ASSET[asset]) return false;
+    if (!this.platform.cellInBounds(ix, iz)) return false;
+    if (this.cellToId.has(cellKey(ix, iz))) return false;
+    if (this.platform.cellHeight(ix, iz) !== 0) return false;
 
     const c = this.platform.cellCenter(ix, iz);
     const bounds = this.platform.getBounds();
     // All in-bounds cells are grass, but keep the explicit gate for symmetry.
-    if (!this.platform.isOnGrass(c.x, c.z)) return null;
+    if (!this.platform.isOnGrass(c.x, c.z)) return false;
     if (
       c.x < bounds.minX + EDGE_MARGIN ||
       c.x > bounds.maxX - EDGE_MARGIN ||
       c.z < bounds.minZ + EDGE_MARGIN ||
       c.z > bounds.maxZ - EDGE_MARGIN
     ) {
-      return null;
+      return false;
     }
+    return true;
+  }
+
+  /**
+   * Place `asset` at cell `(ix,iz)`. Returns the new entry, or `null` if the cell
+   * fails any gate (see {@link canPlaceAt}): out of bounds, a hill (height ≠ 0),
+   * too near the edge, or already occupied. Same constraints the scatter obeyed.
+   */
+  placeAt(asset: EnvProp, ix: number, iz: number): DecorEntry | null {
+    const spec = PROP_FOR_ASSET[asset];
+    if (!spec) return null;
+    if (!this.canPlaceAt(asset, ix, iz)) return null;
 
     const entry = makeDecorEntry(asset, ix, iz);
     this.instantiate(entry, spec, {
