@@ -201,8 +201,10 @@ export class Decor {
       const height = spec.height * (0.85 + rand() * 0.3);
       const yaw = rand() * Math.PI * 2;
       const shadowRadius = spec.shadow > 0 ? spec.shadow * (0.9 + rand() * 0.3) : 0;
-      // Scattered props are addressable too: place them at their containing cell
-      // so the editor can later select/delete a procedurally-placed prop.
+      // Scattered props get an entry/id so they render through the same `instantiate`
+      // path, but they are NOT cell-indexed (see instantiateAtWorld: `cellToId` is set
+      // only on the data/editor path). The seeded scatter is render-only — only an
+      // authored (data) map is editable/serializable.
       const entry = makeDecorEntry(spec.name as EnvProp, ...this.worldToCell(x, z));
       this.instantiateAtWorld(entry, spec, { height, yaw, shadowRadius }, x, z, rand);
       placed++;
