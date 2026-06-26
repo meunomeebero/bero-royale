@@ -6,27 +6,24 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { Pass } from "three/examples/jsm/postprocessing/Pass.js";
 import {
   PIXEL_SIZE,
-  PIXEL_NORMAL_EDGE,
-  PIXEL_DEPTH_EDGE,
   POSTERIZE_LEVELS,
   POSTERIZE_SATURATION,
 } from "./consts";
 
 /**
- * Map the VHS-filter "level" slider (0..1) onto the retro stack's tunables by
- * lerping from a near-clean endpoint (level 0) to the shipped look (level 1, the
- * `consts.ts` values). The filter is never fully OFF here — that is the separate
- * "Modo desenho" toggle (Game rebuilds/destroys the whole PostFX). At level 0 the
- * pass still runs but with neutral params (1px blocks, no outline, fine banding).
+ * Map the VHS-filter "level" slider (0..1) onto the PIXELATION + POSTERIZE knobs
+ * by lerping from a near-clean endpoint (level 0) to the shipped look (level 1).
+ * The cartoon OUTLINE is NOT a post-process here — it's an inverted-hull shell on
+ * the geometry (see Outline.ts), so the RenderPixelatedPass edges stay OFF (they
+ * barely fire under the orthographic camera anyway). The filter is never fully
+ * OFF here — that is the separate "Modo desenho" toggle (Game rebuilds PostFX).
  */
 function paramsForLevel(level: number) {
   const t = Math.max(0, Math.min(1, level));
   const lerp = (clean: number, full: number) => clean + (full - clean) * t;
   return {
-    // RenderPixelatedPass: chunkier + stronger ink toward level 1.
+    // RenderPixelatedPass block size: chunkier toward level 1 (1px = full-res).
     pixelSize: lerp(1, PIXEL_SIZE),
-    normalEdge: lerp(0, PIXEL_NORMAL_EDGE),
-    depthEdge: lerp(0, PIXEL_DEPTH_EDGE),
     // Posterize: MORE bands (=subtler) toward 0, flatter cartoon bands toward 1.
     levels: lerp(32, POSTERIZE_LEVELS),
     saturation: lerp(1, POSTERIZE_SATURATION),
@@ -101,9 +98,11 @@ export class PostFX {
     level = 1,
   ) {
     const p = paramsForLevel(level);
+    // Edges OFF — the cartoon outline is an inverted-hull shell (Outline.ts),
+    // not a post-process edge (which barely fires under the ortho camera).
     this.pixelPass = new RenderPixelatedPass(p.pixelSize, scene, camera, {
-      normalEdgeStrength: p.normalEdge,
-      depthEdgeStrength: p.depthEdge,
+      normalEdgeStrength: 0,
+      depthEdgeStrength: 0,
     });
     this.posterizePass = new ShaderPass(PosterizeShader);
     this.posterizePass.uniforms.levels.value = p.levels;
@@ -115,12 +114,10 @@ export class PostFX {
     this.composer.setSize(width, height);
   }
 
-  /** Live-retune the retro stack to a 0..1 intensity (no rebuild needed). */
+  /** Live-retune the pixelation + posterize to a 0..1 VHS intensity (no rebuild). */
   setLevel(level: number) {
     const p = paramsForLevel(level);
     this.pixelPass.setPixelSize(p.pixelSize);
-    this.pixelPass.normalEdgeStrength = p.normalEdge;
-    this.pixelPass.depthEdgeStrength = p.depthEdge;
     this.posterizePass.uniforms.levels.value = p.levels;
     this.posterizePass.uniforms.saturation.value = p.saturation;
   }

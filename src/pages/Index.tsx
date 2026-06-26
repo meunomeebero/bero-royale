@@ -673,6 +673,7 @@ const Index = () => {
             onSfxMutedChange={(muted) => gameRef.current?.setSfxMuted(muted)}
             onPixelFilterChange={(on) => gameRef.current?.setPixelFilter(on)}
             onVhsLevelChange={(level) => gameRef.current?.setVhsLevel(level)}
+            onOutlineLevelChange={(level) => gameRef.current?.setCelOutline(level)}
             onAimSensitivityChange={(s) => gameRef.current?.setAimSensitivity(s)}
           />
         </div>

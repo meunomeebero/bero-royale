@@ -6,6 +6,7 @@ import {
   Mic,
   MousePointer2,
   Music2,
+  PenLine,
   Radio,
   Volume2,
 } from "lucide-react";
@@ -14,6 +15,8 @@ import {
   AIM_SENSITIVITY_KEY,
   AIM_SENSITIVITY_MAX,
   AIM_SENSITIVITY_MIN,
+  OUTLINE_LEVEL_DEFAULT,
+  OUTLINE_LEVEL_KEY,
   PIXEL_FILTER_KEY,
   SFX_MUTED_KEY,
   VHS_LEVEL_DEFAULT,
@@ -61,6 +64,8 @@ interface SettingsScreenProps {
   onPixelFilterChange?: (on: boolean) => void;
   /** Apply the VHS/retro filter intensity (0..1) live to the ambient scene. */
   onVhsLevelChange?: (level: number) => void;
+  /** Apply the cel-shading outline (black contour) strength (0..1) live. */
+  onOutlineLevelChange?: (level: number) => void;
   /** Apply the cursor/aim sensitivity multiplier (persists; next match). */
   onAimSensitivityChange?: (sensitivity: number) => void;
   /**
@@ -118,6 +123,7 @@ export const SettingsScreen = ({
   onSfxMutedChange,
   onPixelFilterChange,
   onVhsLevelChange,
+  onOutlineLevelChange,
   onAimSensitivityChange,
   inGame = false,
 }: SettingsScreenProps) => {
@@ -141,9 +147,12 @@ export const SettingsScreen = ({
       return true;
     }
   });
-  // VHS/retro filter intensity (0..1) + cursor sensitivity multiplier.
+  // VHS/retro filter intensity (0..1) + cel outline + cursor sensitivity.
   const [vhsLevel, setVhsLevel] = useState<number>(() =>
     readNumber(VHS_LEVEL_KEY, VHS_LEVEL_DEFAULT, 0, 1),
+  );
+  const [outlineLevel, setOutlineLevel] = useState<number>(() =>
+    readNumber(OUTLINE_LEVEL_KEY, OUTLINE_LEVEL_DEFAULT, 0, 1),
   );
   const [sensitivity, setSensitivity] = useState<number>(() =>
     readNumber(
@@ -261,6 +270,12 @@ export const SettingsScreen = ({
     setVhsLevel(level);
     writeNumber(VHS_LEVEL_KEY, level);
     onVhsLevelChange?.(level);
+  };
+
+  const handleOutlineLevel = (level: number) => {
+    setOutlineLevel(level);
+    writeNumber(OUTLINE_LEVEL_KEY, level);
+    onOutlineLevelChange?.(level);
   };
 
   const handleSensitivity = (s: number) => {
@@ -499,11 +514,23 @@ export const SettingsScreen = ({
             title="Intensidade do filtro VHS"
             desc={
               pixelOn
-                ? "Quão forte é o visual retrô (pixel, contorno, cores)"
+                ? "Quão forte é o pixelado retrô + cores chapadas"
                 : "Liga o «Modo desenho» para ver o efeito"
             }
             icon={Film}
             accent={HUD.honey}
+            format={(v) => `${Math.round(v * 100)}%`}
+          />
+          <SliderRow
+            value={outlineLevel}
+            min={0}
+            max={1}
+            step={0.05}
+            onValueChange={handleOutlineLevel}
+            title="Contorno cartoon (cel shading)"
+            desc="A linha preta em volta dos personagens e objetos (0 = sem)"
+            icon={PenLine}
+            accent={HUD.rose}
             format={(v) => `${Math.round(v * 100)}%`}
           />
         </section>

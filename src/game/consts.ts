@@ -50,15 +50,21 @@ export const AIM_SENSITIVITY_DEFAULT = 1;
  */
 export const VHS_LEVEL_KEY = "cozykiller:settings:vhsLevel";
 export const VHS_LEVEL_DEFAULT = 1;
+/**
+ * Cel-shading outline (the black cartoon contour) intensity 0..1 — drives the
+ * inverted-hull shell thickness (see Outline.ts), INDEPENDENT of the camera /
+ * pixelation. Unlike the VHS filter it does NOT need "Modo desenho" on; it's
+ * geometry, not post-processing. Persisted; read by Game → setOutlineThickness.
+ */
+export const OUTLINE_LEVEL_KEY = "cozykiller:settings:celOutline";
+export const OUTLINE_LEVEL_DEFAULT = 0.6;
+/** Outline thickness at level 1, in WORLD units (orthographic ≈ constant px). */
+export const OUTLINE_THICKNESS_MAX = 0.04;
 
 // ── "Modo desenho" post-processing tuning (PostFX.ts) ───────────────────────
 // Softened in two ~20% steps from the first pass (4 / 0.4 / 0.4 / 6 / 1.15).
 /** Pixel block size for RenderPixelatedPass (device px) — bigger = chunkier. */
 export const PIXEL_SIZE = 2.4;
-/** Ink-outline strength from surface-normal discontinuities. */
-export const PIXEL_NORMAL_EDGE = 0.26;
-/** Ink-outline strength from depth discontinuities. */
-export const PIXEL_DEPTH_EDGE = 0.26;
 /** Cartoon color banding: flat levels per channel (more = subtler banding). */
 export const POSTERIZE_LEVELS = 9;
 /** Saturation punch applied before banding (1 = unchanged). */

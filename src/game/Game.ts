@@ -36,10 +36,14 @@ import {
   AIM_SENSITIVITY_MIN,
   HEARING_RADIUS,
   NET_TICK_HZ,
+  OUTLINE_LEVEL_DEFAULT,
+  OUTLINE_LEVEL_KEY,
+  OUTLINE_THICKNESS_MAX,
   PIXEL_FILTER_KEY,
   VHS_LEVEL_DEFAULT,
   VHS_LEVEL_KEY,
 } from "./consts";
+import { setOutlineThickness } from "./Outline";
 
 const INITIAL_BOTS = 3;
 const NEW_BOT_EVERY_SECONDS = 60;
@@ -185,6 +189,13 @@ export class Game {
   private pixelFilter = pixelFilterEnabled();
   /** VHS/retro-filter intensity 0..1 (persisted in LS); only used while ON. */
   private vhsLevel = readNumberSetting(VHS_LEVEL_KEY, VHS_LEVEL_DEFAULT, 0, 1);
+  /** Cel-shading outline (black contour) strength 0..1; only used while ON. */
+  private celOutline = readNumberSetting(
+    OUTLINE_LEVEL_KEY,
+    OUTLINE_LEVEL_DEFAULT,
+    0,
+    1,
+  );
 
   private input: InputManager;
   private audio: AudioEngine;
@@ -398,6 +409,9 @@ export class Game {
         AIM_SENSITIVITY_MAX,
       ),
     );
+    // Cartoon-outline thickness is a global shell uniform (Outline.ts) — apply
+    // the persisted level before any entity renders.
+    setOutlineThickness(this.celOutline * OUTLINE_THICKNESS_MAX);
     this.dust = new DustParticles();
     this.bullets = new Bullets();
     this.smoke = new SmokePuffs();
@@ -2272,6 +2286,13 @@ export class Game {
   setVhsLevel(level: number) {
     this.vhsLevel = Math.max(0, Math.min(1, level));
     this.postfx?.setLevel(this.vhsLevel);
+  }
+
+  /** Live cel-shading outline strength (0..1) — persisted by the Settings UI.
+   *  Drives the inverted-hull shell thickness (Outline.ts), a global uniform. */
+  setCelOutline(level: number) {
+    this.celOutline = Math.max(0, Math.min(1, level));
+    setOutlineThickness(this.celOutline * OUTLINE_THICKNESS_MAX);
   }
 
   /** Live cursor/aim sensitivity multiplier — persisted by the Settings UI. */

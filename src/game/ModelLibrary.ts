@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
+import { addOutline } from "./Outline";
 
 /**
  * Loads the MagicaVoxel asset pack (OBJ + MTL + 256x1 palette PNG) and serves
@@ -136,8 +137,17 @@ class ModelLibraryImpl {
     return outer;
   }
 
-  /** Clone a template, rescale to `targetHeight`, and clone its materials. */
-  create(category: Category, name: string, targetHeight: number): ModelInstance {
+  /**
+   * Clone a template, rescale to `targetHeight`, and clone its materials.
+   * When `outline` is true, add a black inverted-hull cartoon outline (entities
+   * + solid props opt in; the terrain stays clean).
+   */
+  create(
+    category: Category,
+    name: string,
+    targetHeight: number,
+    outline = false,
+  ): ModelInstance {
     const tmpl = this.templates.get(`${category}/${name}`);
     if (!tmpl) throw new Error(`ModelLibrary: missing ${category}/${name}`);
     const object = tmpl.clone(true);
@@ -157,6 +167,7 @@ class ModelLibraryImpl {
       }
     });
     object.scale.multiplyScalar(targetHeight); // template height = 1
+    if (outline) addOutline(object); // after material clone, so shells aren't re-cloned
     return { object, materials };
   }
 

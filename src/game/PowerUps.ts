@@ -108,7 +108,7 @@ export class PowerUps {
     const root = new THREE.Group();
     root.position.copy(eject ? eject.from : new THREE.Vector3(x, y, z));
 
-    const model = ModelLibrary.create("collectibles", def.model, 0.6).object;
+    const model = ModelLibrary.create("collectibles", def.model, 0.6, true).object;
     root.add(model);
 
     // Glowing ring under the pickup, in the kind color (cf. Game.makeVoiceRing).
@@ -258,6 +258,7 @@ function disposeObject(obj: THREE.Object3D) {
   obj.traverse((child) => {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if (mesh.userData.isOutline) return; // shared cel-outline geo + material — never dispose
     mesh.geometry?.dispose();
     const m = mesh.material;
     if (Array.isArray(m)) m.forEach((mm) => mm.dispose());

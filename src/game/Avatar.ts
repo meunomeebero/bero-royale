@@ -28,11 +28,18 @@ export class Avatar {
   readonly animalName: string;
   private facing: THREE.Group;
   private materials: THREE.MeshLambertMaterial[];
+  /** Cel-outline shells — hidden in lockstep with the body's opacity (the shared
+   *  black material can't fade per-instance, so we toggle visibility instead). */
+  private shells: THREE.Mesh[] = [];
 
   constructor(animalName: string, height = AVATAR_HEIGHT, footY = 0) {
     this.animalName = animalName;
-    const inst = ModelLibrary.create("animals", animalName, height);
+    const inst = ModelLibrary.create("animals", animalName, height, true);
     this.materials = inst.materials;
+    inst.object.traverse((c) => {
+      const m = c as THREE.Mesh;
+      if (m.isMesh && m.userData.isOutline) this.shells.push(m);
+    });
 
     inst.object.position.y = footY; // drop feet to the rig's ground reference
     this.facing = new THREE.Group();
@@ -69,10 +76,14 @@ export class Avatar {
       m.color.copy(WHITE);
       m.emissive.setRGB(0, 0, 0);
     }
+    for (const s of this.shells) s.visible = true;
   }
 
   setOpacity(o: number) {
     for (const m of this.materials) m.opacity = o;
+    // Hide the outline as the body fades (death/respawn blink) so it never
+    // lingers as a solid black silhouette with no body inside.
+    for (const s of this.shells) s.visible = o > 0.01;
   }
 
   /**

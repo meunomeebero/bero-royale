@@ -64,7 +64,7 @@ class Crate implements BulletTarget {
     this.position = this.root.position;
 
     const name = BOX_MODELS[Math.floor(Math.random() * BOX_MODELS.length)];
-    const inst = ModelLibrary.create("env", name, CRATE_HEIGHT);
+    const inst = ModelLibrary.create("env", name, CRATE_HEIGHT, true);
     this.model = inst.object;
     this.model.position.y = -HALF; // feet on the ground
     this.mats = inst.materials;
@@ -132,6 +132,7 @@ class Crate implements BulletTarget {
     this.model.traverse((child) => {
       const mesh = child as THREE.Mesh;
       if (!mesh.isMesh) return;
+      if (mesh.userData.isOutline) return; // shared cel-outline geo + material — never dispose
       mesh.geometry?.dispose();
       const mat = mesh.material;
       if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());

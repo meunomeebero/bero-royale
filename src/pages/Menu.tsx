@@ -288,6 +288,9 @@ const Menu = () => {
             onVhsLevelChange={(level) =>
               ambientGameRef.current?.setVhsLevel(level)
             }
+            onOutlineLevelChange={(level) =>
+              ambientGameRef.current?.setCelOutline(level)
+            }
             onAimSensitivityChange={(s) =>
               ambientGameRef.current?.setAimSensitivity(s)
             }

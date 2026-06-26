@@ -238,7 +238,14 @@ export class Decor {
     z: number,
     rand?: () => number,
   ) {
-    const { object } = ModelLibrary.create(spec.cat, spec.name, params.height);
+    // Outline only solid props (trees) — keeps the dense grass/flower scatter
+    // clean and cheap (no extra draw per tuft).
+    const { object } = ModelLibrary.create(
+      spec.cat,
+      spec.name,
+      params.height,
+      spec.radius > 0,
+    );
     const baseY = this.platform.surfaceY(x, z);
     object.position.set(x, baseY, z);
     object.rotation.y = params.yaw;
@@ -429,6 +436,7 @@ function disposeObject(obj: THREE.Object3D) {
   obj.traverse((child) => {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if (mesh.userData.isOutline) return; // shared cel-outline material — never dispose
     const mat = mesh.material;
     if (Array.isArray(mat)) {
       for (const m of mat) m.dispose();
