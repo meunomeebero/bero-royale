@@ -197,6 +197,7 @@ export function attachWebSocket(server: Server): RoomHub {
             if (typeof target === "string" && hub.botSim.hasBot(ws.room, target)) {
               const res = hub.botSim.killBot(ws.room, target);
               if (res?.died) {
+                hub.creditKill(ws.room, ws.id, target); // player kamehameha killed a bot
                 hub.fanout(ws.room, {
                   t: "broadcast",
                   event: "died",
@@ -267,6 +268,7 @@ export function attachWebSocket(server: Server): RoomHub {
           // synchronously as before (the "died" needs no seq).
           const result = hub.applyHit(ws.room, m.target, ws.id);
           if (result?.died) {
+            hub.creditKill(ws.room, ws.id, m.target); // player shot killed a bot
             const diedMsg: ServerMsg = {
               t: "broadcast",
               event: "died",

@@ -3,6 +3,8 @@ import type { Member, NetSnapshot, ServerMsg, Sock } from "./protocol";
 import { BotSim, type HitResult } from "./bots";
 import { PowerUpSim } from "./powerups";
 import { SUPER_DAMAGE } from "./combat-consts";
+import { insertRun } from "../db";
+import { sanitizeUsername, clamp } from "../leaderboard";
 
 /**
  * In-memory presence registry + fan-out helper.
@@ -76,6 +78,10 @@ export interface Player {
    * just-killed player. Irrelevant (and reset) while alive.
    */
   acked: boolean;
+  /** Kills credited to this player in the CURRENT life (server-resolved; reset on death). */
+  kills: number;
+  /** Epoch ms this player's run/session started (for aliveSeconds at finalize). */
+  lifeStart: number;
 }
 
 /**
@@ -170,6 +176,8 @@ export class RoomHub {
         graceUntil: Infinity,
         lastSeen: Date.now(),
         acked: false,
+        kills: 0,
+        lifeStart: Date.now(),
       });
     }
   }
@@ -285,9 +293,34 @@ export class RoomHub {
       p.alive = false;
       p.deadAt = Date.now();
       p.acked = false; // not acknowledged until the victim broadcasts alive=false
+      this.creditKill(room, byId, targetId); // credit the killer iff it's a live player (PvP)
+      this.finalizeRun(p); // persist the victim's just-ended run, reset its tally
       return { died: true, x: p.lastS?.x ?? 0, z: p.lastS?.z ?? 0, byId, victimName };
     }
     return { died: false, x: p.lastS?.x ?? 0, z: p.lastS?.z ?? 0, byId, victimName };
+  }
+
+  /** Credit one server-RESOLVED kill to a live player (no client claim is ever trusted).
+   *  No-op if the killer is a bot, dead, gone, or the victim itself. */
+  creditKill(room: string, killerId: string, victimId: string): void {
+    if (killerId === victimId) return;
+    const k = this.players.get(room)?.get(killerId);
+    if (k && k.alive) k.kills += 1;
+  }
+
+  /** Persist a player's just-ended life as a leaderboard run. Server-authoritative:
+   *  kills come from the server tally, time from the server clock — never the client.
+   *  Fire-and-forget (DB errors are swallowed; the game never blocks on persistence). */
+  private finalizeRun(p: Player): void {
+    if (p.kills <= 0) {
+      p.kills = 0;
+      return;
+    } // only real participants land on the board
+    const username = sanitizeUsername(p.meta?.["name"]);
+    const aliveSeconds = clamp(Math.floor((Date.now() - p.lifeStart) / 1000), 0, 86400);
+    const kills = clamp(Math.floor(p.kills), 0, 10000); // corruption guard, NOT anti-forgery
+    p.kills = 0; // reset for the next life (best-run upsert keeps the max)
+    void insertRun({ username, aliveSeconds, kills, endedAt: new Date() }).catch(() => {});
   }
 
   /**

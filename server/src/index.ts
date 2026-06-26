@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { PORT } from "./env";
 import { migrate } from "./db";
-import { getLeaderboardHandler, postScoreHandler } from "./leaderboard";
+import { getLeaderboardHandler } from "./leaderboard";
 import { getTurnCredentials } from "./turn";
 import { attachWebSocket } from "./ws/index";
 import { spaStatic } from "./static";
@@ -47,20 +47,49 @@ process.on("unhandledRejection", (e) =>
 // Also doubles as a cheap RTT probe for the client's ping read-out.
 let onlineCount = (): number => 0;
 
+// Per-IP token bucket for sensitive GETs (e.g. /api/turn). Refills steadily; a
+// burst beyond capacity gets a 429. Conservative caps so real users never hit it.
+const ipBuckets = new Map<string, { tokens: number; last: number }>();
+const RL_CAP = 20,
+  RL_REFILL_PER_SEC = 1; // 20 burst, +1/s sustained
+function rateLimitOk(ip: string): boolean {
+  const now = Date.now();
+  let b = ipBuckets.get(ip);
+  if (!b) {
+    b = { tokens: RL_CAP, last: now };
+    ipBuckets.set(ip, b);
+  }
+  b.tokens = Math.min(RL_CAP, b.tokens + ((now - b.last) / 1000) * RL_REFILL_PER_SEC);
+  b.last = now;
+  if (ipBuckets.size > 10000) {
+    // bound memory: drop the oldest-ish on overflow
+    for (const k of ipBuckets.keys()) {
+      ipBuckets.delete(k);
+      if (ipBuckets.size <= 8000) break;
+    }
+  }
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
+function clientIp(request: Request): string {
+  const xff = request.headers.get("x-forwarded-for"); // Shard Cloud edge sets this
+  return (xff ? xff.split(",")[0].trim() : "") || "unknown";
+}
+
 const app = new Elysia({ adapter: node() })
   .get("/health", () => "ok")
   .get("/api/online", () => ({ count: onlineCount() }))
   .get("/api/leaderboard", ({ query }) =>
     getLeaderboardHandler(query as Record<string, string | undefined>),
   )
-  .get("/api/turn", () => getTurnCredentials())
-  .post("/api/score", async ({ body, set }) => {
-    const r = await postScoreHandler(body);
-    if (!r.ok) {
-      set.status = r.kind === "db" ? 503 : 400;
-      return { error: r.error };
+  .get("/api/turn", ({ request, set }) => {
+    const ip = clientIp(request);
+    if (!rateLimitOk(ip)) {
+      set.status = 429;
+      return { error: "rate limited" };
     }
-    return r.row;
+    return getTurnCredentials();
   })
   .use(spaStatic(join(process.cwd(), "public")));
 
