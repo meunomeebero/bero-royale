@@ -57,12 +57,13 @@ da próxima partida). Os setters (`Game.setVhsLevel` / `setAimSensitivity` / `se
   por profundidade do `RenderPixelatedPass` quase não dispara (testado: nem a 3× saturava). O casco
   invertido é independente de câmera/resolução e dá um traço **sólido e nítido**.
 - **Escopo:** **personagens** (`Avatar`: player, bots, remotes, preview) + **props sólidos**
-  (crates, pickups, decor com `radius > 0`) + **TODO bloco de terreno** (via
-  `Platform.addTileLayer` → `makeInstancedOutline`, um `InstancedMesh`-casco paralelo). O scatter
-  de grama (tufos) continua sem contorno.
-- **Terreno (instancing):** o shader trata `#ifdef USE_INSTANCING` aplicando o `instanceMatrix`
-  (senão todos os blocos colapsariam num só). Tops coplanares adjacentes mostram uma grade fina
-  (cada casco sobe um tico acima do vizinho); degraus/bordas/silhuetas ficam com traço cheio.
+  (crates, pickups, decor com `radius > 0`) + **só os blocos de terreno ELEVADOS** — os topos de
+  morro (`baseY > 0`) que ficam "fora da terra" e servem de obstáculo pra pular. O chão plano
+  (`baseY = 0`) e os under-layers de penhasco (`baseY < 0`) **não** levam contorno; o scatter de
+  grama também não.
+- **Terreno (instancing):** `Platform.addTileLayer` só adiciona o `makeInstancedOutline(inst)`
+  quando `baseY > 0`. O shader trata `#ifdef USE_INSTANCING` aplicando o `instanceMatrix` (senão
+  todos os blocos colapsariam num só). Cada bloco elevado leva o traço; o chão fica limpo.
 - **Faixa / default:** `0%`–`100%`, default `20%`. Espessura em **unidades de mundo** (ortho ≈ px
   de tela constante), `OUTLINE_LEVEL_*` + `OUTLINE_THICKNESS_MAX` em `consts.ts`.
 - **Independente do "Modo desenho":** é geometria, não PostFX — funciona com o filtro on **ou** off.

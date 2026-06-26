@@ -182,10 +182,11 @@ export class Platform {
     });
     inst.instanceMatrix.needsUpdate = true;
     this.group.add(inst);
-    // Cel-shading: a parallel black inverted-hull shell so every terrain block
-    // carries the cartoon outline (shows at steps/edges; flat coplanar tops stay
-    // clean since adjacent shells occlude each other).
-    this.group.add(makeInstancedOutline(inst));
+    // Cel-shading: outline only RAISED tiles — the hill tops (baseY > 0) that
+    // stick up out of the flat earth and act as jump-over obstacles. The flat
+    // ground (baseY = 0) and the cliff under-layers (baseY < 0) stay clean, so
+    // only blocks "outside the earth" (plus trees/props/entities) get the line.
+    if (baseY > 0) this.group.add(makeInstancedOutline(inst));
   }
 
   private buildSurfaceMeshes() {
