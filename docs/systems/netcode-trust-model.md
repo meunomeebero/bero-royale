@@ -28,6 +28,28 @@ Tipos client→servidor aceitos: `join`, `track`, `broadcast`, `hit`, `leave`, `
 - Anti-cheat (validação de swing, rewind/lag-comp, parry com shot-id) está **DIFERIDO** por decisão
   do projeto (ver `docs/PERFORMANCE.md` + [[netcode-responsiveness-decision]] na memória).
 
+## Gate de impacto no cliente (favor-the-victim — Fase 3)
+A morte do **player local** por tiro de bot é **adiada no cliente** até a bala que a causa estar
+visivelmente em cima dele (`docs/systems/netcode-hit-sync-plan.md`). O `"shot"` letal (server diz
+`targetId===eu`, com `seq`) pré-arma uma `LethalGate{shooterId,seq}` em `Game.ts`; o `"died"`(seq)
+marca a morte mas **só a aplica** quando o tracer chega (`Bullets.onLethalArrive`) **ou** num deadline
+atrelado ao travel esperado (aí sintetiza um impacto visível e mata 1 frame depois — nunca timeout→morte
+direta). Implicações p/ a autoridade:
+- O `"hit"` do player local virou **presentation-only** (flash/SFX) no servidor real: HP é exclusividade do
+  `"hp"` echo e a morte do `"died"` gateado — **não há mais morte prevista** (mata o furo "morri com HP cheio").
+  No transporte `?local` (LocalRoom, sem `"hp"` echo) o `"hit"` **mantém `takeHit` previsto** (é o único
+  driver de HP do alvo lá).
+- O `"hp"` echo **letal** (`health≤0`) é segurado enquanto a porta está pendente; o **não-letal** (`>0`)
+  reconcilia na hora.
+- **Nenhum cue letal "pelado" mata instantâneo:** um `"hp=0"`/`"died"` sem porta viva (super do bot, PvP,
+  ou porta expirada) passa por uma **rede de segurança** que sintetiza o impacto num frame e solta a morte
+  no frame seguinte (nunca morte sem causa visível).
+- **PvP humano-vs-humano (Fase 5, server-only):** o `hit`/`kamehit` de um jogador em outro jogador aplica
+  dano **na hora** (`rooms.ts resolvePlayerHit`) — NÃO se re-agenda `dist/22` porque o atirador só envia `hit`
+  depois que a bala dele já colidiu localmente, então o travel já está contado (re-agendar dobraria). O que
+  muda é que o `died` carrega `seq`, então a vítima cai na rede de segurança bare-cue acima (impacto antes da
+  morte) em vez de morrer instantâneo. Vítima-bot continua sem `seq` (não tem gate de cliente).
+
 ## Fluxo de dano PvP (por que "tiros invisíveis" acontecem)
 Balas de remotos chegam como `shot` → `spawnVisual` (NÃO-damaging) no cliente do alvo. O dano é
 detectado no cliente do ATIRADOR (o alvo é um `BulletTarget` remoto lá) que envia `hit`. O servidor

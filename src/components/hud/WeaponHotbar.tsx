@@ -6,18 +6,18 @@ import { GamePanel, HUD, INK, IconWell } from "./primitives";
 
 /**
  * Minecraft-style weapon hotbar (bottom-center) — 3 slots replacing the old
- * fire-mode toggle: 1 = constant shot, 2 = concentrated super, 3 = melee saber.
+ * fire-mode toggle: 1 = Pistol, 2 = Energy Blast, 3 = Lightsaber.
  * The active slot lifts + lights its accent ring. Desktop shows the 1/2/3 key
  * hint; both desktop (click) and mobile (tap) select a slot. A charge bar fills
- * under slot 2 while the super winds up. Boss override (slot = -1) lights none.
+ * under slot 2 while the energy blast channels. Boss override (slot = -1) lights none.
  *
  * Memoized on the active slot + (quantized) charge so it only re-renders on a
  * real change, never per frame.
  */
 const SLOTS: { icon: LucideIcon; accent: string; label: string }[] = [
-  { icon: Crosshair, accent: HUD.rose, label: "Tiro constante" },
-  { icon: Zap, accent: HUD.terracotta, label: "Tiro concentrado" },
-  { icon: Sword, accent: HUD.honey, label: "Sabre de luz" },
+  { icon: Crosshair, accent: HUD.rose, label: "Pistol" },
+  { icon: Zap, accent: HUD.terracotta, label: "Energy Blast" },
+  { icon: Sword, accent: HUD.honey, label: "Lightsaber" },
 ];
 
 const WeaponHotbarImpl = ({

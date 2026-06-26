@@ -31,4 +31,6 @@ de game dev (sem alocação no hot path, etc.).
 ## Build / verificação
 - Cliente: `corepack pnpm exec tsc --noEmit -p tsconfig.json` + `corepack pnpm exec eslint .` + `pnpm build:prod`.
 - Servidor: `corepack pnpm -C server exec tsc --noEmit` + `pnpm build:server`.
+- Testes: `pnpm test` (Vitest determinístico — netcode/lógica pura). Toda mudança de netcode segue
+  o checklist de [`docs/systems/netcode-testing.md`](docs/systems/netcode-testing.md).
 - Deploy: ver [`docs/shardcloud.md`](docs/shardcloud.md) (não fazer deploy sem o gate de review combinado).

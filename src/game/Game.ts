@@ -15,6 +15,7 @@ import { PowerUps, POWERUP_KINDS } from "./PowerUps";
 import { Crates } from "./Crates";
 import { Multiplayer } from "./net/Multiplayer";
 import type { ChatEvent } from "./net/Multiplayer";
+import { LethalImpactGate } from "./net/LethalImpactGate";
 import type { BulletTarget, BulletOwner } from "./Bullets";
 import { VoiceChat } from "./net/VoiceChat";
 import { submitScore, fetchTop, type LeaderRow } from "./net/LeaderboardClient";
@@ -69,7 +70,9 @@ const MELEE_ARC_DOT = 0.0; // forward hemisphere (was -0.15; too wide at 2× ran
 const MELEE_SWEEP_RADIUS = 0.6; // point-to-blade-segment hit thickness
 const MELEE_KNOCKBACK = 16; // push impulse applied to a hit target
 const MELEE_DT_CLAMP = 0.1; // skip collision/parry on bigger frame steps (tab resume)
-// Saber stagger applied to a hit target.
+// Lightsaber HIT: knockback + a brief white blink (NO stun) — impact feel only.
+const SABER_IMPACT_FLASH = 0.6; // seconds the hit target pulses white (no fire-lock)
+// Energy-blast stagger applied to a hit target (the stun moved off the saber).
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
 // Victim-side clamps for a RECEIVED stagger (meleehit is a blindly-relayed
@@ -110,6 +113,9 @@ function distPointSegXZ(
 // Subtle screen shake on taking damage
 const SHAKE_DURATION = 0.28;
 const SHAKE_MAGNITUDE = 0.5;
+
+// The Phase 3 client impact gate (constants + state machine) lives in its own
+// pure, unit-tested module: ./net/LethalImpactGate.ts.
 
 export type GameMode = "local" | "multiplayer" | "ambient";
 
@@ -236,6 +242,21 @@ export class Game {
   private recentHits = new Map<string, number>();
   /** Who last damaged the LOCAL player (name + epoch ms) — drives "X matou você". */
   private lastAttacker: { name: string; t: number } | null = null;
+
+  /** The Phase 3 client impact gate — a pure state machine (see LethalImpactGate.ts)
+   *  fed the wire events, with every side-effect + the clock injected here. Inert
+   *  until armed by an MP lethal "shot"; tick() is a cheap no-op otherwise. */
+  private readonly gate = new LethalImpactGate({
+    now: () => Date.now(),
+    isAlive: () => this.player.isAlive(),
+    selfPos: () => this.player.root.position,
+    killSelf: () => this.player.serverKilled(),
+    playImpact: () => this.synthLethalImpactFx(),
+    nameForOwner: (id) => this.nameForOwner(id),
+    creditKiller: (name, t) => {
+      this.lastAttacker = { name, t };
+    },
+  });
   /** Per-remote dedupe so a death gore burst fires exactly once (event OR fallback). */
   private deadFx = new Set<string>();
   /** Fired once the seed-gated world build is complete (Index drops the overlay). */
@@ -394,11 +415,23 @@ export class Game {
       //   - target names the LOCAL player → apply predicted damage for responsive
       //     feedback; the server independently enforces the same so a laggy/AFK
       //     victim still dies authoritatively (item 5).
-      this.mp.setHitHandler((targetId, _fromId, fromName) => {
+      this.mp.setHitHandler((targetId, fromId, fromName, seq) => {
         if (targetId === this.mp?.id) {
-          if (this.player.isAlive()) this.player.takeHit(new THREE.Vector3());
+          if (this.player.isAlive()) {
+            // LocalRoom (?local) has NO authoritative "hp" echo — the broadcast
+            // "hit" cue is the victim's only HP driver, so keep predicted damage
+            // there. On the real server HP is owned by the "hp" echo and death by
+            // the gated "died", so the cue stays presentation-only (flash/SFX
+            // only) — no predicted death before the tracer lands (Phase 3).
+            if (this.mp?.kind === "local") this.player.takeHit(new THREE.Vector3());
+            else this.player.playHitReaction();
+          }
           // Remember who shot us for the "X matou você" death feed.
           this.lastAttacker = { name: fromName || "Alguém", t: Date.now() };
+          // Carry the REAL shooter name into a pending gate: nameForOwner can't
+          // resolve server bots (they live in remotePlayers, not this.bots), so
+          // without this the gated death would credit "Alguém" (Phase 3 / codex).
+          if (seq != null && fromName) this.gate.setShooterName(fromId, seq, fromName);
         } else {
           this.remotePlayers.get(targetId)?.flashHit();
         }
@@ -409,7 +442,18 @@ export class Game {
       // This is what stops "I had full HP + shield and instantly died" — the bar
       // now reflects the damage the server actually applied (e.g. a 3-pt super).
       this.mp.setHpHandler((e) => {
-        this.player.setHealthShield(e.health, e.shield);
+        // Survivable damage (health > 0) reconciles the bar immediately.
+        if (e.health > 0) {
+          this.player.setHealthShield(e.health, e.shield);
+          return;
+        }
+        // Lethal echo (health <= 0). A live tracer-gated death drives it in sync
+        // with the visible bullet — don't apply now. With NO gate, never instant-
+        // kill on a bare "hp=0": it may have outrun a tracer whose gate expired,
+        // or a still-arriving "died". Synthesize the impact and die one frame later
+        // so the death always has an on-screen cause (Phase 3 / codex P1).
+        if (this.gate.hasPending()) return;
+        this.gate.requestBareDeath();
       });
       this.registerNetHandlers();
       this.mp.connect();
@@ -514,6 +558,12 @@ export class Game {
     this.kame.onHit = (target, dir, lethal, ownerId) =>
       this.onKameHit(target, dir, lethal, ownerId);
     this.bullets.registerTarget(this.player);
+    // Phase 3 impact gate: the local player is the arrival target for lethal
+    // tracers; when one visibly lands, release the matching held-back death so it
+    // coincides with the bullet the player actually saw. (No-op in local mode —
+    // lethal gates are only armed by the MP "shot" handler.)
+    this.bullets.setLethalSelfTarget(this.player);
+    this.bullets.setOnLethalArrive((shooterId, seq) => this.gate.onArrive(shooterId, seq));
     // Track who damages each fighter (bullets) for kill attribution: the local
     // player ("X matou você") and bots ("fulano matou ciclano" for bot-vs-bot).
     this.bullets.setOnDamage((target, ownerId) => {
@@ -560,12 +610,35 @@ export class Game {
     this.updateCamera();
   }
 
+  /** The `playImpact` effect for the impact gate: a visible + audible impact at
+   *  the player (flash/shake/SFX + white puff). The gate calls this when a held
+   *  death times out without the real tracer landing, so the death STILL has an
+   *  on-screen cause before it is applied. */
+  private synthLethalImpactFx() {
+    const p = this.player.root.position;
+    this.player.playHitReaction();
+    this.smoke.spawnPuff(
+      new THREE.Vector3(p.x, p.y + 0.3, p.z),
+      new THREE.Vector3(0, 1, 0),
+      6,
+      "#ffffff",
+    );
+  }
+
   /** Register the instant-event + shot handlers on the multiplayer transport. */
   private registerNetHandlers() {
     if (!this.mp) return;
     this.mp.setShotHandler((e) => {
       let origin: THREE.Vector3;
       let dir: THREE.Vector3;
+      // A shot the server says WILL hit us, carrying a seq we can correlate with
+      // its damage. We only arm a gate while alive (a stray in-flight shot can't
+      // touch a corpse — damagePlayer null-guards the dead server-side too).
+      const lethalToMe =
+        e.targetId != null &&
+        e.targetId === this.mp?.id &&
+        e.seq != null &&
+        this.player.isAlive();
       if (e.targetId != null && e.targetId === this.mp?.id) {
         // LETHAL shot at ME (Phase 2): anchor the tracer to the shooter's
         // ABSOLUTE muzzle (not the interp-anchored remote avatar — that decouples
@@ -587,13 +660,32 @@ export class Game {
         origin = new THREE.Vector3(ox, e.origin.y, oz);
         dir = new THREE.Vector3(e.dir.x, e.dir.y, e.dir.z);
       }
+      // Phase 3: pre-arm the impact gate from the "shot" (which arrives before the
+      // scheduled "hit"/"died") so the death deadline tracks the tracer's actual
+      // expected travel, and tag the tracer so its arrival releases the death.
+      if (lethalToMe && e.seq != null) {
+        this.gate.arm(e.id, e.seq, origin);
+      }
       // Record the shooter id so a saber parry can credit the reflected hit back.
-      this.bullets.spawnVisual(origin, dir, e.color, e.id);
+      this.bullets.spawnVisual(
+        origin,
+        dir,
+        e.color,
+        e.id,
+        lethalToMe && e.seq != null
+          ? { seq: e.seq, selfPos: this.player.root.position }
+          : undefined,
+      );
       this.audio.playShot(origin, false);
       // Muzzle flash + smoke puff at the remote's rendered muzzle (mirrors
       // Player.shoot which calls spawnFlash + spawnPuff at its own muzzle).
       this.smoke.spawnFlash(origin, dir);
       this.smoke.spawnPuff(origin, dir, 6, "#cccccc");
+      // Gun kick on the firing remote (mirrors Player.shoot recoil) + infer that it
+      // holds the gun (so legacy peers without the snapshot weapon field show right).
+      const shooterRp = this.remotePlayers.get(e.id);
+      shooterRp?.setWeapon("gun");
+      shooterRp?.triggerGunRecoil();
     });
     this.mp.setDashHandler((e) => {
       this.remotePlayers.get(e.id)?.triggerDash(e.dir);
@@ -606,7 +698,15 @@ export class Game {
       // missed some "hit" cues (dropped under throttle) — otherwise we'd keep
       // playing while dead to everyone else. No-op if already dead/falling.
       if (e.id === this.mp?.id) {
+        // Phase 3: a death carrying a shot seq is ALWAYS routed through the impact
+        // gate (held until the tracer lands, or a synthesized impact precedes it).
+        // No seq (PvP/legacy human kill) → authoritative kill now.
+        if (e.seq != null && e.by) {
+          this.gate.onDied(e.by, e.seq);
+          return;
+        }
         this.player.serverKilled();
+        this.gate.clear();
         return;
       }
       // Spawn the gore where the opponent is actually RENDERED — the server's
@@ -636,6 +736,10 @@ export class Game {
       // back (and never re-target the caster as if it were the parrier's own).
       this.kame.fire(origin, dir, false, "player", true, e.id);
       this.audio.playShot(origin, false);
+      // The super fires from the gun → kick the remote's gun + infer gun-held (so
+      // legacy peers without the snapshot weapon field don't get stuck showing the saber).
+      rp?.setWeapon("gun");
+      rp?.triggerGunRecoil();
     });
     // We got hit by someone's kamehameha. Damage + death are now SERVER-authoritative
     // (the server resolves the "kamehit" shield-first via SUPER_DAMAGE and pushes the
@@ -649,16 +753,28 @@ export class Game {
       const hitPos = this.player.root.position.clone();
       this.kame.impactAt(hitPos);
       this.audio.playShot(hitPos, false);
+      // 2026 rebalance: the energy blast STAGGERS its victim — knockback + white
+      // flash + a stun that INTERRUPTS our own channel and briefly locks fire.
+      // (kamehit is only sent for the lethal energy blast, so this is always it;
+      // the damage stays server-authoritative — this is the client-trusted cue.)
+      // Guard alive: a kamehit arriving just after we died (net-order race) must not
+      // knock back / stagger a corpse (applyMeleeStagger self-guards, but knockback
+      // does not — and a dead player shouldn't move).
+      if (this.player.isAlive()) {
+        this.player.applyKnockback(new THREE.Vector3(e.dir.x, 0, e.dir.z), MELEE_KNOCKBACK);
+        this.player.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      }
     });
-    // Remote saber swing → the white smoke-cube puff (matches the local end-of-
-    // swing look; remotes aren't blade-animated, so it fires at the event).
+    // Remote saber swing → play the FULL 180° blade arc on that remote (the SAME
+    // animation + blue light trail its owner sees locally — netcode fidelity). The
+    // end-of-swing white smoke puff is spawned when the swing completes (polled via
+    // consumeSwingEnd in the reconcile loop) so it lands at the blade tip.
     this.mp.setMeleeHandler((e) => {
-      const rp = this.remotePlayers.get(e.id);
-      const pos = rp
-        ? rp.getPosition()
-        : new THREE.Vector3(e.origin.x, e.origin.y, e.origin.z);
-      this.kame.smokeBurst(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), 0.6, 9);
+      this.remotePlayers.get(e.id)?.triggerSwing(e.dir.x, e.dir.z);
     });
+    // LEGACY (remove once the old bundle fully drains from prod): the new lightsaber
+    // no longer sends `meleehit` (its stun moved to the energy blast), but a LEGACY
+    // peer's saber still does — so we keep this handler to apply that incoming stun.
     // We got clubbed by a remote staff → small knockback (damage arrives via the
     // server "hit" path). Best-effort: the server may re-assert our position.
     this.mp.setMeleeHitHandler((e) => {
@@ -690,11 +806,43 @@ export class Game {
     // their parry an actual shield (otherwise our bullet would still hit them).
     // The reflected damage to us already arrived via that parrier's "hit".
     this.mp.setParryHandler((e) => {
-      if (e.from !== this.mp?.id) return; // only the parried shooter acts
       const rp = this.remotePlayers.get(e.id); // the parrying player
       const p = rp ? rp.getPosition() : null;
       if (!p) return;
-      this.bullets.cancelOwnedNear("player", p.x, p.z, PARRY_CANCEL_RADIUS);
+      // The parrying player's OWN client already reflected the bullet locally
+      // (bullets.reflectInArc) — nothing to mirror for them.
+      if (e.id === this.mp?.id) return;
+
+      // Cancel the forward shot near the parrier and find where the reflection flies
+      // back TO (the shooter). Fidelity golden rule: EVERY client that was rendering
+      // the forward tracer must see it stop and bounce back, not just the shooter.
+      let cancelled = false;
+      let dest: THREE.Vector3 | null = null;
+      if (e.from === this.mp?.id) {
+        // We are the parried shooter: our forward bullet is a real owned bullet.
+        cancelled = this.bullets.cancelOwnedNear("player", p.x, p.z, PARRY_CANCEL_RADIUS);
+        dest = this.player.root.position;
+      } else {
+        // Pure observer: cancel the VISUAL tracer we render for that shooter, and
+        // bounce it back toward the shooter's avatar.
+        cancelled = this.bullets.cancelVisualByShooterNear(e.from, p.x, p.z, PARRY_CANCEL_RADIUS);
+        dest = this.remotePlayers.get(e.from)?.getPosition() ?? null;
+      }
+      // Only show the reflected bullet if a forward shot was actually cancelled — a
+      // duplicate / stale / forged parry that cancels nothing must not spawn a
+      // phantom. The real reflected damage arrives via the parrier's "hit"; this is
+      // pure presentation (saber-blue so it reads as a reflected/energised shot).
+      if (!cancelled || !dest) return;
+      const dx = dest.x - p.x;
+      const dz = dest.z - p.z;
+      if (dx * dx + dz * dz > 1e-4) {
+        this.bullets.spawnVisual(
+          new THREE.Vector3(p.x, p.y, p.z),
+          new THREE.Vector3(dx, 0, dz),
+          "#49d6ff",
+          e.id,
+        );
+      }
     });
     // Relayed kill-feed events from other players → surface to React. Skip events
     // where WE are the victim: we self-report our own death locally (below) with
@@ -1015,8 +1163,11 @@ export class Game {
       this.meleeHitIds.add(bot.id);
       this.meleeImpactFx(bot.root.position, push);
       for (let i = 0; i < MELEE_DAMAGE && bot.isAlive(); i++) bot.takeHit(push);
+      // 2026 rebalance v2: the lightsaber knocks back + blinks the target + impact
+      // smoke (the satisfying hit feel) but NO stun — it never locks fire or
+      // interrupts a shot/energy-blast channel. That control lives on the energy blast.
       bot.knockback(push, MELEE_KNOCKBACK);
-      bot.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      bot.flash(SABER_IMPACT_FLASH);
     }
     for (const rp of this.remotePlayers.values()) {
       if (!rp.isAlive() || this.meleeHitIds.has(rp.id)) continue;
@@ -1025,21 +1176,15 @@ export class Game {
       if (!push) continue;
       this.meleeHitIds.add(rp.id);
       this.meleeImpactFx(p, push);
-      // INSTANT client juice on the target WE hit: white flash + backward hop +
-      // impact dust (the server resolves the actual stun/damage; the "hit"/
-      // "meleehit" echoes are NOT sent back to us, so without this the attacker
-      // sees no reaction on a server bot / remote player).
-      rp.applyMeleeStagger(push.x, push.z);
+      // 2026 rebalance v2: instant client juice on the opponent WE hit — a backward
+      // hop + white blink + impact smoke (the satisfying saber feel). This is the
+      // SAME visual as before. Crucially, NO stun is sent (no `meleehit`), so the
+      // victim's shots / energy-blast channel are never interrupted — the lightsaber
+      // is impact-without-control now; the stun lives on the energy blast.
+      rp.applyStaggerVisual(push.x, push.z);
       const gy = this.platform.surfaceY(p.x, p.z);
       this.dust.spawnBurst(new THREE.Vector3(p.x, gy + 0.05, p.z), 8);
       for (let i = 0; i < MELEE_DAMAGE; i++) this.mp?.sendHit(rp.id);
-      this.mp?.sendMeleeHit(
-        rp.id,
-        { x: push.x, y: 0, z: push.z },
-        MELEE_STUN * 1000,
-        MELEE_FIRE_LOCK * 1000,
-        true,
-      );
     }
     // The saber also smashes loot crates (server-authoritative: takeHit() flashes
     // + relays sendHit, the server tracks crate HP + broadcasts the burst).
@@ -1087,6 +1232,12 @@ export class Game {
       for (let i = 0; i < dmg && this.player.isAlive(); i++) {
         this.player.takeHit(dir);
       }
+      // Energy blast staggers the player (offline / local-bot supers): knockback +
+      // flash + stun that interrupts our channel.
+      if (lethal && this.player.isAlive()) {
+        this.player.applyKnockback(dir, MELEE_KNOCKBACK);
+        this.player.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      }
       return;
     }
     // Attribute the kill so bot-vs-bot mega kills show in the feed.
@@ -1097,13 +1248,20 @@ export class Game {
       for (let i = 0; i < dmg && target.isAlive(); i++) {
         target.takeHit(dir);
       }
+      // Energy blast staggers a SURVIVING bot (knockback + flash + stun + interrupt).
+      if (lethal && target.isAlive()) {
+        target.knockback(dir, MELEE_KNOCKBACK);
+        target.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      }
       if (!target.isAlive()) this.kameKillFx(target.position.x, target.position.z);
     } else if (target instanceof RemotePlayer) {
       this.recentHits.set(target.id, Date.now());
       if (lethal) {
-        // Concentrated super: one kamehit event. The SERVER resolves it shield-first
-        // for SUPER_DAMAGE (3) and pushes the victim's real HP back — no client-side
-        // damage here, so the two supers (player + bot) share one authoritative model.
+        // Energy blast: attacker-side impact cue (the victim hops back + flashes;
+        // the victim's OWN client applies the real stun via setKameHitHandler), then
+        // the authoritative damage via kamehit (server resolves SUPER_DAMAGE=3
+        // shield-first and pushes the victim's real HP back).
+        target.applyStaggerVisual(dir.x, dir.z);
         this.mp?.sendKameHit(target.id, { x: dir.x, y: dir.y, z: dir.z });
       } else {
         for (let i = 0; i < BOSS_SHOT_DAMAGE; i++) this.mp?.sendHit(target.id);
@@ -1445,7 +1603,7 @@ export class Game {
         ping: this.mp?.getPing() ?? null,
           talking: this.lastTalking,
           voiceMode: this.voiceMode,
-          fireMode: "constant",
+          fireMode: "pistol",
           weaponSlot: 0,
           chargeProgress: 0,
           respawnIn: 0,
@@ -1661,7 +1819,7 @@ export class Game {
   }
   /** Current fire mode for the HUD toggle. */
   getFireMode(): FireMode {
-    return this.player?.getFireMode() ?? "constant";
+    return this.player?.getFireMode() ?? "pistol";
   }
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1748,6 +1906,15 @@ export class Game {
         state: this.player.getState(),
         charging: chg.charging,
         chargeT: chg.t,
+        // Held weapon → remotes render the SAME item (fidelity golden rule):
+        // lightsaber → "saber"; energy blast → "blast" (channels bare-handed); the
+        // pistol + boss read as "gun". (Legacy clients ignore the unknown "blast".)
+        weapon:
+          this.player.getFireMode() === "lightsaber"
+            ? "saber"
+            : this.player.getFireMode() === "energyBlast"
+              ? "blast"
+              : "gun",
       });
     }
 
@@ -1804,6 +1971,10 @@ export class Game {
         rp.snap();
         this.remotePlayers.set(id, rp);
         this.scene.add(rp.root);
+        // The saber trail is world-space (absolute rib coords, frustumCulled off),
+        // so its mesh lives at the SCENE root — NOT parented to rp.root (which
+        // translates). Removed + disposed with the remote below.
+        this.scene.add(rp.saberTrail.mesh);
         this.bullets.registerTarget(rp);
         this.kame.registerTarget(rp);
         this.remoteRecvSeq.set(id, st.recvSeq ?? 0);
@@ -1836,6 +2007,12 @@ export class Game {
         }
         rp.setPresent(present);
       }
+      // Held weapon (fidelity): render the SAME item the owner holds. Only apply
+      // the explicit snapshot field when PRESENT — legacy peers omit it and instead
+      // have their weapon inferred from events (melee→saber, shot/super→gun). Forcing
+      // "gun" here every frame would clobber that inference and cancel a legacy
+      // peer's swing mid-animation. MUST run before rp.update() (saber visibility).
+      if (st.weapon) rp.setWeapon(st.weapon);
       // Kill attribution: a remote we hit recently just died (alive flip is now
       // server-authoritative — the server overwrites alive on relayed "s").
       const prevAlive = this.remoteAlivePrev.get(id) ?? true;
@@ -1883,6 +2060,12 @@ export class Game {
       }
       const gy = this.platform.surfaceY(rp.root.position.x, rp.root.position.z);
       rp.update(dt, gy);
+
+      // End-of-swing white smoke-cube puff at the remote blade tip — consumed AFTER
+      // update() (which sets the tip THIS frame), so it lands in lockstep with the
+      // swing completing, matching the local same-frame end-of-swing smoke.
+      const swingTip = rp.consumeSwingEnd();
+      if (swingTip) this.kame.smokeBurst(swingTip, 0.6, 9);
 
       // ── Remote particle hooks: consume one-shot flags set by RemotePlayer ──
       // Spawn after update() so rp.getPosition() reflects this frame's position.
@@ -1960,6 +2143,7 @@ export class Game {
       for (const [id, rp] of this.remotePlayers) {
         if (!presence.has(id)) {
           this.scene.remove(rp.root);
+          this.scene.remove(rp.saberTrail.mesh); // world-space trail (added above)
           this.bullets.unregisterTarget(rp);
           this.kame.unregisterTarget(rp);
           this.kame.clearCharge(id);
@@ -2131,6 +2315,9 @@ export class Game {
         }
         this.dust.update(dt);
         this.bullets.update(dt);
+        // Release / time out any held-back lethal deaths (Phase 3 impact gate).
+        // bullets.update fires onLethalArrive above, so drain right after it.
+        this.gate.tick();
         this.smoke.update(dt);
         this.grassPoof.update(dt);
         this.fog.update(dt);
@@ -2354,7 +2541,10 @@ export class Game {
     this.player?.dispose();
     this.clearBots();
     this.featured?.dispose();
-    for (const rp of this.remotePlayers.values()) rp.dispose();
+    for (const rp of this.remotePlayers.values()) {
+      this.scene.remove(rp.saberTrail.mesh); // world-space trail lives on the scene
+      rp.dispose();
+    }
     this.remotePlayers.clear();
     this.voice?.dispose();
     if (this.voiceRing) {
@@ -2391,7 +2581,7 @@ export interface GameStats {
   talking: boolean;
   voiceMode: VoiceMode;
   fireMode: FireMode;
-  /** Active hotbar weapon slot: 0=constant, 1=concentrated, 2=staff; -1 in boss. */
+  /** Active hotbar weapon slot: 0=pistol, 1=energyBlast, 2=lightsaber; -1 in boss. */
   weaponSlot: number;
   /** 0→1 concentrated-shot charge progress (drives the HUD toggle fill). */
   chargeProgress: number;

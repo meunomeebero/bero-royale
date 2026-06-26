@@ -79,6 +79,21 @@ export class CharacterStage {
     this.camera.position.set(0, 0, 40);
     this.camera.lookAt(0, 0, 0);
 
+    this.buildCells(animals);
+    this.layout();
+
+    const el = this.renderer.domElement;
+    el.style.touchAction = "none";
+    el.addEventListener("pointermove", this.onPointerMove);
+    el.addEventListener("pointerdown", this.onPointerDown);
+    el.addEventListener("pointerleave", this.onPointerLeave);
+
+    this.resizeObs = new ResizeObserver(() => this.onResize());
+    this.resizeObs.observe(container);
+  }
+
+  /** Build a cell (avatar + lift/scale group) for every animal. */
+  private buildCells(animals: string[]) {
     animals.forEach((animal, index) => {
       const avatar = new Avatar(animal, CELL_H, -CELL_H / 2); // center at root y=0
       avatar.faceYaw(FACE_CAMERA_YAW - 0.42); // 3/4 hero angle toward camera
@@ -100,17 +115,25 @@ export class CharacterStage {
         lift: 0,
       });
     });
+  }
 
+  /**
+   * Swap the roster in place (the secret-animal easter-egg reveal). Tears down the
+   * current avatars and rebuilds for `animals`, keeping the GL context alive so
+   * there's no canvas flicker. Restores the prior selection if it survives.
+   */
+  setRoster(animals: string[]) {
+    const prevSelected = this.getSelected();
+    for (const cell of this.cells) {
+      this.scene.remove(cell.root);
+      cell.avatar.dispose();
+    }
+    this.cells = [];
+    this.hovered = -1;
+    this.selected = -1;
+    this.buildCells(animals);
     this.layout();
-
-    const el = this.renderer.domElement;
-    el.style.touchAction = "none";
-    el.addEventListener("pointermove", this.onPointerMove);
-    el.addEventListener("pointerdown", this.onPointerDown);
-    el.addEventListener("pointerleave", this.onPointerLeave);
-
-    this.resizeObs = new ResizeObserver(() => this.onResize());
-    this.resizeObs.observe(container);
+    if (prevSelected) this.setSelected(prevSelected);
   }
 
   /** Columns chosen from available width (phones get 3 so the grid isn't a

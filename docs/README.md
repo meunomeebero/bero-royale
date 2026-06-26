@@ -9,13 +9,18 @@
 ## Sistemas / domínios (`docs/systems/` — docs pequenos, 1 propósito, com keywords)
 | Doc | Domínio | Keywords |
 |---|---|---|
-| [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo (slot 3) | sabre, saber, melee, swing, parry, reflect, stun, stagger, knockback |
+| [`systems/netcode-fidelity-golden-rule.md`](systems/netcode-fidelity-golden-rule.md) | 🥇 **Regra de ouro:** fidelidade 100% no online | fidelidade, golden rule, regra de ouro, espelhar, 100%, sabre invisível, o que me matou, parry visível, presentation |
+| [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo — Lightsaber (slot 3) | lightsaber, sabre, saber, melee, swing, parry, reflect, deflect, impact spark, dano puro |
+| [`systems/weapons-energy-blast.md`](systems/weapons-energy-blast.md) | Energy Blast — super canalizado (slot 2) | energy blast, super, kamehameha, canalizar, channel, channeling, stun, stagger, fire-lock, bare-handed, knockback |
+| [`systems/weapons-weight-speed.md`](systems/weapons-weight-speed.md) | Peso das armas → velocidade | peso, weight, arma, velocidade, speed, movimento, balance, pistol, energy blast, lightsaber, leve, pesada |
 | [`systems/netcode-trust-model.md`](systems/netcode-trust-model.md) | Autoridade de rede | netcode, online, servidor, autoritativo, broadcast, hit, parry, tiros invisíveis, interpolação |
 | [`systems/online-invisible-shots-diagnosis.md`](systems/online-invisible-shots-diagnosis.md) | 🔴 Bug online (diagnosticado) | tiros invisíveis, morte súbita, hitscan, tracer, dano vs visual, bot, throttle |
 | [`systems/netcode-hit-sync-plan.md`](systems/netcode-hit-sync-plan.md) | 🔴→🛠️ Arquitetura da correção (tiro↔dano) | tiros invisíveis, hit sync, damage-on-arrival, scheduler, applyAt, impact gate, shotSeq, beam-front, favor-the-victim |
+| [`systems/netcode-testing.md`](systems/netcode-testing.md) | Testes determinísticos de netcode (harness + invariantes) | teste, vitest, fast-check, property test, determinístico, simulação, fault injection, invariante, regressão, LethalImpactGate, VibiNet |
 | [`systems/powerups-hp-shield.md`](systems/powerups-hp-shield.md) | Power-ups ↔ HP/escudo (autoridade) | powerup, putake, heal, cura, shield, escudo, super, HP, autoritativo, hp event, desync, morrer com escudo, cura some |
 | [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick, skill, accEff, reactT, commitT, superHesitateT, kills, streak, genHandle, retaliation, player-attention-floor, yaw-slew, miss-spread |
 | [`systems/voxel-character-gen.md`](systems/voxel-character-gen.md) | Gerar personagens voxel via IA | personagem, character, voxel, gerar, IA, owl, coruja, OBJ, paleta, proporção, coerência, novo animal |
+| [`systems/secret-characters-easter-egg.md`](systems/secret-characters-easter-egg.md) | Personagens secretos (easter egg do username) | easter egg, secret, owl, coruja, rabbi, rabino, _jew, bero, roster escondido, unlock, randomAnimalName |
 
 > _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento/dash,
 > super/kamehameha, power-ups, voz/WebRTC, HUD, leaderboard) em `docs/systems/`._
@@ -29,7 +34,7 @@
 | [`shardcloud.md`](shardcloud.md) | Deploy/ops na Shard Cloud (app Node) — runbook, config, DB. |
 | [`mp-sync-plan.md`](mp-sync-plan.md) | 🗂️ Histórico — plano de sync multiplayer (implementado; ver ARCHITECTURE.md). |
 | [`mp-wave2-plan.md`](mp-wave2-plan.md) | 🗂️ Histórico — plano da wave 2 (implementado). |
-| [`balance-log.md`](balance-log.md) | **Log de balanceamento** — histórico de nerfs/buffs/tuning com racional e números canônicos. |
+| [`balance-log.md`](balance-log.md) | **Log de balanceamento** — sessões de balance (nerf/buff/tuning), raciocínio e histórico. Números canônicos ficam nos docs de sistema. |
 | [`PENDENCIAS.md`](PENDENCIAS.md) | **Backlog vivo / sprint** — pendências, gate de review, dívida técnica, bug urgente do online. |
 | [`sprints.md`](sprints.md) | 🗂️ Histórico superado — log de sprints sob o nome antigo "VoxelCube" (menciona Supabase, hoje é Node WS). |
 

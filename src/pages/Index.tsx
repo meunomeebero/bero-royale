@@ -53,7 +53,7 @@ const INITIAL_STATS: GameStats = {
   ping: null,
   talking: false,
   voiceMode: "ptt",
-  fireMode: "constant",
+  fireMode: "pistol",
   weaponSlot: 0,
   chargeProgress: 0,
   respawnIn: 0,
@@ -502,7 +502,7 @@ const Index = () => {
               no boosts are active. */}
           <BoostBar boosts={stats.boosts} isMobile={isMobile} />
           <div className="flex items-end gap-2.5">
-            {/* Minecraft-style weapon hotbar: 1 constant · 2 concentrated · 3 staff.
+            {/* Minecraft-style weapon hotbar: 1 Pistol · 2 Energy Blast · 3 Lightsaber.
                 Keys 1/2/3 or click/tap a slot. (BOSS, the "bero" double-tap-Tab
                 override, lights no slot.) */}
             <WeaponHotbar

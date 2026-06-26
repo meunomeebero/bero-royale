@@ -18,11 +18,19 @@ import {
   DASH_STRETCH_DURATION,
   SQUASH_LERP,
 } from "./consts";
+import {
+  MELEE_SWING_DUR,
+  SABER_REST_YAW,
+  SWING_WINDUP_END_T,
+  BASE_SABER_MOUNT,
+  sampleSaberYaw,
+  saberMountX,
+} from "./saberKinematics";
 
 const PLAYER_SIZE = 0.5;
 const ACCEL = 28;
 
-const SHOOT_COOLDOWN = 0.12;
+const SHOOT_COOLDOWN = 0.11; // pistol: ~9 shots/s (a little above the old 0.12; +20% was too much)
 
 const MAX_HEALTH = 10;
 const RESPAWN_DELAY = 5.0; // seconds
@@ -37,16 +45,33 @@ const DASH_MAX_CAP = 6; // hard cap including TEMPORARY bonus bars from dash pic
 const DASH_RECHARGE = 3.0; // seconds to refill one BASE charge (9s for all 3)
 const DASH_IMPULSE = 36.0; // strong forward launch (~9 tiles)
 
-// ── Fire modes (Tab toggles) ────────────────────────────────────────────────
-// "constant"     — hold the shoot button to autofire normal shots (comfortable).
-// "concentrated" — hold 5s to charge the super shot; release when ready to fire.
-// "boss"         — hidden easter egg (name "bero", double-tap Tab): 3× HP, 10×
+// ── Fire modes / weapons (Tab toggles / hotbar 1·2·3) ───────────────────────
+// "pistol"      — Weapon 1: hold to autofire normal shots (fast + high rate of fire).
+// "energyBlast" — Weapon 2: hold to CHANNEL the super shot; release when ready to fire.
+// "lightsaber"  — Weapon 3: heavy melee; high damage + deflects shots if timed right.
+// "boss"        — hidden easter egg (name "bero", double-tap Tab): 3× HP, 10×
 //                  size, rapid-fire mega beams at half damage.
-export type FireMode = "constant" | "concentrated" | "boss" | "staff";
+export type FireMode = "pistol" | "energyBlast" | "boss" | "lightsaber";
 
 /** Hotbar weapon slots (Minecraft-style): index → FireMode. "boss" is a separate
  *  override (the "bero" easter egg), NOT a slot. */
-const SLOT_MODES: FireMode[] = ["constant", "concentrated", "staff"];
+const SLOT_MODES: FireMode[] = ["pistol", "energyBlast", "lightsaber"];
+
+// ── Weapon "weight" → movement-speed multiplier while that weapon is active ──
+// Balance: the pistol is the fast run-and-gun weapon (+30%). The energy blast matches
+// it WHILE IDLE (+30%) and only slows once channeling begins (SUPER_LOADED_SPEED_MULT
+// below). The lightsaber is heavy (−10%). Multiplies with the "speed" power-up.
+// Affects sustained run speed only — dash impulse is unchanged. "boss" stays neutral.
+const WEAPON_SPEED_MULT: Record<FireMode, number> = {
+  pistol: 1.3,
+  energyBlast: 1.3, // fast as the pistol when NOT channeling; slows only mid-channel
+  lightsaber: 0.9,
+  boss: 1.0,
+};
+
+// While CHANNELING the energy blast (kameState charging/ready), the player slows to
+// this (−20%) — the channel-and-kite nerf. Idle energy-blast speed is the pistol's.
+const SUPER_LOADED_SPEED_MULT = 0.8;
 
 /**
  * Per-frame snapshot of an in-progress saber swing. Emitted by Player every
@@ -74,56 +99,21 @@ export interface MeleeSample {
 }
 
 // ── Melee saber (hotbar slot 3) — swing timing; damage/range live in Game ──
+// The swing KINEMATICS (sampleSaberYaw, saberMountX, MELEE_SWING_DUR, SABER_REST_YAW,
+// SWING_WINDUP_END_T, BASE_SABER_MOUNT, …) live in ./saberKinematics so the local
+// player and the networked RemotePlayer sweep the IDENTICAL arc (netcode fidelity —
+// see docs/systems/netcode-fidelity-golden-rule.md). Only the LOCAL-only input
+// timing / parry-window / stagger numbers stay here.
 const MELEE_COOLDOWN = 0.55; // seconds between swings while held (was 0.45; offsets 2× range + parry)
-const MELEE_SWING_DUR = 0.4; // full swing: wind-up + 180° strike + recovery
-// Baseball-bat swing on the pivot's local Y. Rest = blade perpendicular (out to
-// the side, ~90° to forward). Wind-up pulls 45° counter-clockwise, then the
-// strike sweeps 180° clockwise; the remainder eases back to rest.
-const SABER_REST_YAW = -Math.PI / 2; // perpendicular rest pose
-const SABER_WINDUP_YAW = SABER_REST_YAW - Math.PI / 4; // 45° CCW wind-up peak
-const SABER_STRIKE_YAW = SABER_WINDUP_YAW + Math.PI; // full 180° CW strike, ends at the follow-through
-const SWING_WINDUP_END_T = 0.18; // short wind-up; the strike owns the rest of the swing
-// (No in-swing "recovery": the strike runs all the way to t=1 and HOLDS at the
-//  follow-through; the gentle settle in update() eases the blade back to rest after
-//  the swing — otherwise the blade snapped back mid-swing and the 180° looked cut.)
 // Parry window (fraction of the swing) — when the blade can reflect projectiles.
 const SWING_PARRY_START_T = 0.2;
 const SWING_PARRY_END_T = 0.75;
-// Saber stagger taken BY the local player from a remote saber hit.
+// Stagger taken BY the local player from an ENERGY-BLAST hit. (2026 rebalance: the
+// stun moved OFF the lightsaber — which no longer stuns — ONTO the energy blast.)
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
-const SABER_HOP = 3.4; // small upward "pulinho" on a saber hit (< JUMP_VELOCITY 6)
-// Floating-saber mount: rest distance in front of the body, and the clearance
-// radius the swept blade must keep from the body center (body half-width 0.25 +
-// margin for the voxel avatar overhang). During the backward wind-up the mount
-// is pushed out to CLEAR_R/|sin(yaw)| so the blade never touches the cube.
-const BASE_SABER_MOUNT = 0.5;
-const SABER_CLEAR_R = 0.55;
-const SABER_MAX_MOUNT = 1.1;
-
-function easeOutCubic(x: number): number {
-  return 1 - Math.pow(1 - x, 3);
-}
-function easeInOutCubic(x: number): number {
-  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-}
-/**
- * Pivot yaw over a normalized swing t∈[0,1]: a snappy 45° wind-up (rest→windup,
- * easeOut), a powered 180° strike (windup→strike end, easeInOut), then an
- * easeInOut recovery back to the rest pose. Shared by the local player and (later)
- * remote saber rendering so both clients see the identical arc.
- */
-function sampleSaberYaw(t: number): number {
-  if (t < SWING_WINDUP_END_T) {
-    const u = easeOutCubic(t / SWING_WINDUP_END_T);
-    return SABER_REST_YAW + (SABER_WINDUP_YAW - SABER_REST_YAW) * u; // rest → wind-up
-  }
-  // Strike: the full 180° sweep over the rest of the swing, ending HELD at the
-  // follow-through. The return to rest is the gentle settle in update(), not here.
-  const u = easeInOutCubic((t - SWING_WINDUP_END_T) / (1 - SWING_WINDUP_END_T));
-  return SABER_WINDUP_YAW + (SABER_STRIKE_YAW - SABER_WINDUP_YAW) * u;
-}
-const KAME_CHARGE = 3.0; // seconds to hold before the concentrated shot is ready (recharge cadence)
+const STAGGER_HOP = 3.4; // small upward "pulinho" on a stagger (< JUMP_VELOCITY 6)
+const KAME_CHARGE = 3.0; // channel time to ready the energy blast (back to 3.0 — 1.5 was too strong)
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
 const BOSS_CADENCE = 0.18; // seconds between boss mega beams (≈ constant fire feel)
@@ -164,7 +154,7 @@ export class Player implements BulletTarget {
   private shootTimer = 0;
 
   // Fire mode + charged-special state.
-  private fireMode: FireMode = "constant";
+  private fireMode: FireMode = "pistol";
   private bossUnlocked = false; // true only for the "bero" easter egg
   private lastTabMs = 0; // for double-tap-Tab detection
   private kameState: "idle" | "charging" | "ready" = "idle";
@@ -412,7 +402,7 @@ export class Player implements BulletTarget {
     this.bossUnlocked = on;
   }
 
-  /** Tab cycles the 3 hotbar slots (constant → concentrated → staff → …); from
+  /** Tab cycles the 3 hotbar slots (pistol → energyBlast → lightsaber → …); from
    *  the boss override it drops back to the first slot. */
   toggleFireMode() {
     const i = SLOT_MODES.indexOf(this.fireMode);
@@ -481,7 +471,7 @@ export class Player implements BulletTarget {
     // hit reads as a stagger (the horizontal push rides applyKnockback's dashVel).
     this.staggerFlashT = Math.max(this.staggerFlashT, fireLockSeconds);
     if (this.grounded) {
-      this.velocity.y = SABER_HOP;
+      this.velocity.y = STAGGER_HOP;
       this.grounded = false;
     }
     if (interruptCharge) this.cancelKameCharge();
@@ -497,9 +487,12 @@ export class Player implements BulletTarget {
     this.swingElapsed = 0;
     this.staffPivot.rotation.y = SABER_REST_YAW;
     this.staff.position.x = BASE_SABER_MOUNT;
-    // Swap the held item: energy saber for melee, gun for every shooting mode.
-    this.staff.visible = mode === "staff";
-    this.gun.visible = mode !== "staff";
+    // Held item: lightsaber for melee, gun for the pistol + boss, NOTHING for the
+    // energy blast (it channels bare-handed). The gun's barrel-tip anchor still
+    // provides the beam's muzzle origin even while the gun mesh is hidden (the
+    // transform is unaffected by visibility).
+    this.staff.visible = mode === "lightsaber";
+    this.gun.visible = mode === "pistol" || mode === "boss";
     if ((mode === "boss") !== wasBoss) this.applyBossState(mode === "boss");
   }
 
@@ -567,9 +560,18 @@ export class Player implements BulletTarget {
   }
 
   private fireKame(lethal: boolean) {
-    const muzzle = new THREE.Vector3();
-    this.gunBarrelTip.getWorldPosition(muzzle);
     const dir = this.getAimDirection(this.tmpDir).clone();
+    const muzzle = new THREE.Vector3();
+    if (this.fireMode === "energyBlast") {
+      // Bare-handed channel: emit from the chest, slightly forward along aim, so the
+      // beam doesn't appear to leave a floating muzzle where the hidden gun would be.
+      // (Matches the charge orb anchored at the body center.)
+      muzzle.copy(this.root.position);
+      muzzle.y += 0.3;
+      muzzle.addScaledVector(dir, 0.4);
+    } else {
+      this.gunBarrelTip.getWorldPosition(muzzle); // pistol + boss hold the gun
+    }
     this.onKame?.(muzzle.clone(), dir, lethal);
     this.audio.playShot(this.root.position, true);
     this.gunRecoil = 0.14;
@@ -696,6 +698,22 @@ export class Player implements BulletTarget {
     if (this.state !== "alive") return false;
     this.audio.playHit(this.root.position, true);
     return this.applyDamage(1);
+  }
+
+  /**
+   * Cosmetic hit reaction (flash + shake + squash + hit SFX) with NO HP change.
+   * Used for the LOCAL player's network "hit" cue in multiplayer: HP is owned by
+   * the server's authoritative "hp" echo and death by the gated "died", so the
+   * cue stays presentation-only and we never predict a death before the tracer
+   * visibly lands. See docs/systems/netcode-hit-sync-plan.md (Phase 3).
+   */
+  playHitReaction() {
+    if (this.state !== "alive") return;
+    this.audio.playHit(this.root.position, true);
+    this.hitFlashTimer = HIT_FLASH_DURATION;
+    this.shakeTimer = 0.25;
+    this.shakeAmount = 0.06;
+    this.targetScale.set(1.35, 0.7, 1.35);
   }
 
   /**
@@ -870,9 +888,17 @@ export class Player implements BulletTarget {
     if (this.staggerFlashT > 0) this.staggerFlashT = Math.max(0, this.staggerFlashT - dt);
     const stunned = this.stunTimer > 0;
 
-    // Movement. The "speed" power-up multiplies the top speed ×1.6 while active.
+    // Movement. The "speed" power-up multiplies the top speed ×1.6 while active; the
+    // active weapon's weight then scales it. The energy blast is pistol-fast while
+    // idle and only slows (−20%) once CHANNELING begins — nerfs the channel-and-flee
+    // kite (see docs/systems/weapons-weight-speed.md).
     const move = this.input.getMoveVector();
-    const effSpeed = MOVE_SPEED * (this.speedTimer > 0 ? 1.6 : 1);
+    const superLoaded =
+      this.fireMode === "energyBlast" && this.kameState !== "idle";
+    const weaponWeight = superLoaded
+      ? SUPER_LOADED_SPEED_MULT
+      : WEAPON_SPEED_MULT[this.fireMode];
+    const effSpeed = MOVE_SPEED * (this.speedTimer > 0 ? 1.6 : 1) * weaponWeight;
     const targetVx = stunned ? 0 : move.x * effSpeed;
     const targetVz = stunned ? 0 : move.z * effSpeed;
     const lerpAmt = 1 - Math.exp(-ACCEL * dt);
@@ -923,7 +949,7 @@ export class Player implements BulletTarget {
     if (this.input.consumeTab()) {
       const now = performance.now();
       if (this.bossUnlocked && now - this.lastTabMs < DOUBLE_TAB_MS) {
-        this.setFireMode(this.fireMode === "boss" ? "constant" : "boss");
+        this.setFireMode(this.fireMode === "boss" ? "pistol" : "boss");
       } else {
         this.toggleFireMode();
       }
@@ -934,10 +960,10 @@ export class Player implements BulletTarget {
     if (slot !== null) this.setWeaponSlot(slot);
 
     // Shooting. The MODE decides what holding does:
-    //  • constant     → hold to autofire normal shots (comfortable).
-    //  • concentrated → hold 5s to charge; release once ready (glow) to fire the
-    //    super shot (insta-kill). Releasing before ready cancels.
-    //  • boss         → hold to RAPID-FIRE mega beams (half damage, no insta-kill).
+    //  • pistol      → hold to autofire normal shots (fast + high rate of fire).
+    //  • energyBlast → hold to channel; release once ready (glow) to fire the super
+    //    shot (significant damage + stun). Releasing before ready cancels.
+    //  • boss        → hold to RAPID-FIRE mega beams (half damage, no insta-kill).
     this.shootTimer -= dt;
     this.input.consumeShoot(); // drain the one-shot press (modes use the hold state)
     // While stunned, no weapon acts (but an already-committed swing finishes its
@@ -945,21 +971,21 @@ export class Player implements BulletTarget {
     const held = !stunned && this.input.isShootHeld();
     if (this.fireMode === "boss") {
       if (this.kameState !== "idle") this.kameState = "idle";
-      // Boss rapid-beam is "constant-like" fire → also held off by the saber lock.
+      // Boss rapid-beam is "pistol-like" fire → also held off by the stagger lock.
       if (held && this.shootTimer <= 0 && this.fireLockTimer <= 0) {
         this.fireKame(false); // mega beam, non-lethal (2 hits to kill)
         this.shootTimer = BOSS_CADENCE;
       }
-    } else if (this.fireMode === "staff") {
+    } else if (this.fireMode === "lightsaber") {
       if (this.kameState !== "idle") this.kameState = "idle";
       // Don't restart a swing while one is mid-flight (keeps swingId stable).
       if (held && this.shootTimer <= 0 && this.swingTimer <= 0) {
         this.swingStaff();
         this.shootTimer = MELEE_COOLDOWN;
       }
-    } else if (this.fireMode === "constant") {
+    } else if (this.fireMode === "pistol") {
       if (this.kameState !== "idle") this.kameState = "idle"; // safety
-      if (held && this.fireLockTimer <= 0) this.tryPistol(); // saber locks constant fire ~1s
+      if (held && this.fireLockTimer <= 0) this.tryPistol(); // stagger locks pistol fire
     } else if (this.kameState === "idle") {
       if (held) {
         this.kameState = "charging";
@@ -976,7 +1002,7 @@ export class Player implements BulletTarget {
         }
       }
     } else if (!held) {
-      this.fireKame(true); // ready → fire the insta-kill super shot on release
+      this.fireKame(true); // ready → fire the energy blast (significant dmg + stun) on release
       this.kameState = "idle";
     }
 
@@ -1108,13 +1134,7 @@ export class Player implements BulletTarget {
       const yaw = sampleSaberYaw(t);
       this.staffPivot.rotation.y = yaw;
       // Dynamic forward mount: clear the cube during the backward part of the arc.
-      const cosY = Math.cos(yaw);
-      let mountX = BASE_SABER_MOUNT;
-      if (cosY < 0) {
-        const sinY = Math.abs(Math.sin(yaw)) || 1;
-        mountX = Math.min(SABER_MAX_MOUNT, Math.max(mountX, SABER_CLEAR_R / sinY));
-      }
-      this.staff.position.x = mountX;
+      this.staff.position.x = saberMountX(yaw);
       this.staff.updateWorldMatrix(true, true); // fresh blade transform for the sample
 
       // No "recovery" phase any more — the strike sweeps the full arc, so hits
@@ -1260,16 +1280,17 @@ export class Player implements BulletTarget {
   dispose() {
     this.avatar.dispose();
     this.shadow.dispose();
-    // The gun's geometries AND its material are per-instance (buildGun() makes a
-    // fresh MeshLambertMaterial shared across this gun's meshes) — dispose both.
-    // The shared material is referenced by every gun mesh; Material.dispose() is
-    // idempotent, so traversing and disposing per-mesh is safe.
-    this.gun.traverse((c) => {
-      const m = c as THREE.Mesh;
-      if (m.geometry) m.geometry.dispose();
-      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-      else if (mat) mat.dispose();
-    });
+    // The gun + saber geometries AND their materials are per-instance (buildGun /
+    // buildSaber make fresh materials shared across each weapon's meshes) — dispose
+    // both weapons. Material.dispose() is idempotent, so per-mesh traversal is safe.
+    for (const weapon of [this.gun, this.staff]) {
+      weapon.traverse((c) => {
+        const m = c as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else if (mat) mat.dispose();
+      });
+    }
   }
 }

@@ -7,9 +7,11 @@ super, kame, beam-front, favor-the-victim, responsividade, netcode.
 > **Origem:** saída de um MegaBrain (workflow de 17 agentes) + conselho externo **GLM 5.2** e
 > **Codex GPT‑5.5** (ver `mega-brain.md`). Diagnóstico em
 > [`online-invisible-shots-diagnosis.md`](online-invisible-shots-diagnosis.md); autoridade em
-> [`netcode-trust-model.md`](netcode-trust-model.md). Status: **Fases 0–1 implementadas + verificadas**
-> (oracle `server/test/hit-sync-harness.mjs`: BEFORE mediana **−284 ms** → AFTER tiro **+27 ms**, super **+35 ms**);
-> **Fase 4 (super do bot) feita; Fases 2, 3, 5 pendentes.**
+> [`netcode-trust-model.md`](netcode-trust-model.md). Status: **Fases 0–5 implementadas — COMPLETO.**
+> (oracle `server/test/hit-sync-harness.mjs`: BEFORE mediana **−284 ms** → AFTER tiro **+27 ms**, super **+35 ms**).
+> O invariante "nunca morrer de um tiro não-visto" está fechado para **bot** (Fases 1–4 + gate do cliente
+> Fase 3) **e PvP humano-vs-humano** (Fase 5 — server agenda + `seq`, gate do cliente já trata). Cobertura
+> automatizada determinística em [`netcode-testing.md`](netcode-testing.md).
 
 ## Invariante (requisito inegociável do dono)
 **Nunca morrer de um tiro que você não viu chegar.** É aceitável: servidor mais pesado, animação de
@@ -65,14 +67,38 @@ Três pilares (todos necessários; nenhum sozinho satisfaz o invariante):
 - ✅ **Fase 2 — apresentação direcionada (fecha o decoupling espacial).** *(feito: server `fire()` manda `targetId` no shot LETAL + agenda pela dist ao alvo real; cliente `setShotHandler` ancora o tracer letal na `origin` do server e mira NO player local. Server-side verificado por harness (31/31 hits vieram de shot tagueado, timing OK); o VISUAL (bala cruzando o avatar) precisa de confirmação in-game.)*
   Server manda `origin` autoritativo + `targetId` + `shotSeq` + endpoint/deadline no `shot` letal.
   `Game.ts`: tracer letal sai da `origin` recebida (não da interp) e é desenhado p/ **intersectar o alvo no impacto** (dropar lead p/ a bala correlacionada). `MIN_TRAVEL_MS` (~90 ms) p/ readability em close-range.
-- **Fase 3 — gate de impacto no cliente (obrigatório).**
-  `Bullets.ts`: teste de proximidade do tracer seq-taggeado vs player local (hoje pulado em `:403`) → `onLethalArrive({shooterId,shotSeq})`.
-  `Game.ts` hit/died/hp do player local: **não** matar na hora; bufferizar por chave; soltar em `onLethalArrive` **ou** no timeout limitado — **e no timeout sintetizar impacto visível primeiro, soltar morte ≥1 frame depois.** Áudio/flash continuam instantâneos (cosméticos). Entradas pendentes **independentes** por atirador simultâneo.
+- ✅ **Fase 3 — gate de impacto no cliente (obrigatório).** *(feito.)*
+  - `Multiplayer.ts`: `seq` plumbado até os handlers — `DiedEvent.seq` + `onHit(... , seq?)` (o `seq` do `hit`/`died` do servidor agora chega ao cliente).
+  - `Bullets.ts`: o tracer letal-pra-mim (Fase 2, `targetId===me`) é taggeado `{seq, targetDist}`; novo `setLethalSelfTarget` + `setOnLethalArrive`. Quando o tracer **alcança o player local** (raio `LETHAL_ARRIVE_RADIUS=0.7` **ou** `traveled≥targetDist` p/ dodge lateral) → `onLethalArrive(shooterId, seq)` + despawn (= puff de impacto visível).
+  - `Game.ts` (`LethalGate` keyed `${shooterId}:${seq}`): o `"shot"` letal **pré-arma** a porta com `deadlineAt = now + dist/22 + LETHAL_GATE_MARGIN_MS(200)` (cap `LETHAL_GATE_MAX_MS=700`). O `"hit"` do player local virou **presentation-only** no servidor real (`Player.playHitReaction()` — flash/shake/SFX, **sem** dano/morte previstos); **no `?local` (LocalRoom não emite `"hp"`) mantém `takeHit` previsto** senão o HP do alvo congela até a morte súbita. O `"died"` (seq) marca `diedSeen` e **solta a morte no instante em que o tracer chega** (`arrived`). Drenado por `updateLethalGates()` a cada frame.
+  - **Invariante blindado contra ordering/perda (2 rounds de review GPT-5.5/Codex):** o `"hp=0"` chega **antes** do `"died"` e podia matar na hora (`setHealthShield`→`serverKilled`). Agora **nenhum cue letal "pelado" mata instantâneo**: `"hp=0"`/`"died"` sem porta viva (super do bot não tem `"shot"`; PvP sem `seq`; ou porta que expirou — o deadline usa a dist no **recv-time**, o server agenda pela dist no **fire-time**, então andar pro atirador pode expirar a porta cedo) caem numa **rede de segurança** (`bareDeathState`): a WS callback só **pede** a morte; o impacto é **sintetizado dentro do frame** (`updateLethalGates`, antes do `renderFrame`) e a morte só solta **num frame posterior** — garante o impacto pintado ≥1 frame antes da morte (correção Codex P1: nunca sintetizar+matar no mesmo frame). Portas limpas na morte/respawn; independentes por atirador.
+  - **Verificação:** `tsc` (cliente+server) + eslint limpos nos arquivos tocados; `build:prod`/`build:server` verdes; **review GPT-5.5/Codex limpo** (4 rodadas: 3×P2 → 2×P1 → "no blocking correctness issues"). Confirmação in-game do feel (morte coincide com a bala) pendente de playtest.
+  - **Extração + testes (2026-06-25):** o gate saiu de `Game.ts` para um módulo **puro e injetável**
+    `src/game/net/LethalImpactGate.ts` (sem THREE/DOM/relógio — efeitos + `now()` injetados; `Game` delega
+    nos seams), destravando teste determinístico. Cobertura: `LethalImpactGate.test.ts` (16 casos + property
+    de 2000 runs codificando os 2 P1) e `server/test/pending-hits.test.ts` (scheduler). Ver
+    [`netcode-testing.md`](netcode-testing.md).
 - ✅ **Fase 4 — super/kame do BOT (beam-front, não bala de velocidade 22).** *(feito: `fireSuper()`→`resolveSuper()` enfileirado com `applyAt = now + SUPER_REVEAL_MS=120ms`, gate de esquiva mantido no fire-time, `seq` no `kame`. Verificado: super delta mediana 35ms (≥0). O `kamehit` do JOGADOR fica na Fase 5 (precisa o cliente carimbar `seq`).)*
   `bots.ts fireSuper()`: manter o gate de dodge no **fire time**; trocar dano síncrono por `enqueueHit(kind:'super', applyAt = now + SUPER_REVEAL_MS)` atado ao **blast-FX** (o feixe é quase instantâneo visualmente, não viaja a 22). `index.ts kamehit`: idem p/ super do jogador. `Game.ts`/`Kamehameha.ts`: morte/HP do super dirigida pelo `impactAt` do beam, com o mesmo fallback.
-- **Fase 5 — PvP throttle/loss + docs (tranca o invariante).**
-  `index.ts`: `shot` letal não-dropável enquanto seu `hit` passa (reestruturar o bucket pré-parse).
-  `hit` PvP: `applyAt = now + dist/22`, **CLAMP a `BULLET_MAX_RANGE` e FLOOR a `MIN_TRAVEL_MS`** (dist forjada pequena não pode instant-kill nem grande agendar futuro). Correlacionar `shot`↔`hit` (hoje são mensagens **não relacionadas**, ambas dropáveis — Codex). Documentar a inversão deliberada (favor-the-VICTIM) aqui + em `netcode-trust-model.md`; cap defensivo no tamanho de `pendingHits`.
+- ✅ **Fase 5 — PvP: `seq` na morte (tranca o invariante p/ humano-vs-humano).** *(feito, 2026-06-25, server-only.)*
+  - **Insight:** a rede de segurança bare-cue da Fase 3 (`requestBareDeath` → impacto sintetizado +
+    morte ≥1 frame depois) **já trata** um `died(seq)` sem porta. Então a Fase 5 é **só servidor**: basta o
+    `died` do PvP carregar um `seq`; o gate do cliente (já testado) faz o resto. **Zero mudança de cliente.**
+  - **NÃO agendar (correção do Codex P1):** ao contrário do bot — cujo `shot` E o dano nascem no fire-time, então
+    o server **atrasa** o dano p/ casar com o tracer — o atirador HUMANO só envia `hit` **depois** que a bala dele
+    já colidiu localmente (`RemotePlayer.takeHit`). O travel `dist/BULLET_SPEED` **já está contado**; re-agendar
+    `dist/22` **dobraria** a contagem (morte ~455ms tarde no alcance máximo). Logo o dano PvP é **aplicado na hora**.
+  - `rooms.ts` `resolvePlayerHit(room, target, by, "shot"|"super")`: aplica dano síncrono (`applyHit`/`damagePlayerN`)
+    e, na morte, faz fanout do `died` com `seq = playerHitSeq++`. Vítima-bot continua **sem `seq`** (não tem gate).
+  - `index.ts`: `case "hit"` e o ramo `kamehit` → `resolvePlayerHit` p/ vítima-jogador.
+  - **Throttle:** decidido **não** isentar `shot`/`hit` do token-bucket (mantém a proteção anti-DoS). Um `shot`
+    dropado pelo bucket → a vítima ainda recebe um **impacto sintetizado** pela rede bare-cue, então o
+    invariante vale sem reabrir o furo de DoS — a rede da Fase 3 **supera** a necessidade de "shot não-dropável".
+  - **Dedup:** `server/src/ws/combat-consts.ts` (novo) — `BULLET_SPEED/MIN_TRAVEL_MS/SUPER_REVEAL_MS/SUPER_DAMAGE`
+    em um módulo, importado por `bots.ts`+`rooms.ts`+`index.ts` (some a tripla cópia no server; cliente fica como follow-up cross-pacote).
+  - **Verificação:** `server/test/pvp-hit-seq.test.ts` (5 casos: dano imediato 1pt, `died`+`seq` letal, super,
+    `seq` monotônico/único, não-mata-cadáver); `tsc`+eslint+`pnpm test`+build verdes; **review GPT-5.5/Codex**
+    (pegou o P1 do double-count → corrigido p/ síncrono).
 
 ## Verificação (dupla, por causa do aviso do Codex)
 1. **WS sintético** mede `t_hit − tracerArrival ≥ 0` (espaçamento de envio do server). 
@@ -80,8 +106,18 @@ Três pilares (todos necessários; nenhum sozinho satisfaz o invariante):
 Gate: `tsc --noEmit` + eslint (cliente+server) + `build:prod`/`build:server` verdes.
 
 ## Questões em aberto (decidir na implementação)
-- Duração do safety-timeout: atrelar ao travel restante agendado vs cap fixo (~250 ms). Janela máxima de "vivo a mais" aceitável?
-- `MIN_TRAVEL_MS`: piso só visual (~30–50 ms, posição do Codex/feel) vs ≥RTT (posição do GLM p/ cobrir 1 retransmissão). Decisão depende da telemetria de perda.
+- ✅ **Safety-timeout (Fase 3): decidido = atrelado ao travel esperado.** `deadlineAt = now + dist/22*1000 +
+  LETHAL_GATE_MARGIN_MS(200)`, com teto `LETHAL_GATE_MAX_MS(700)`. Cap fixo de ~250 ms foi rejeitado: seria
+  **menor** que o travel real de um tiro longe (~455 ms a 10 u) → mataria antes do tracer chegar. Janela máx
+  de "vivo a mais" = 700 ms.
+- ✅ **Chave da porta (Fase 3): decidido = `{shooterId, seq}`** (por-atirador, p/ multi-shooter simultâneo).
+- `MIN_TRAVEL_MS`: piso só visual (~30–50 ms, posição do Codex/feel) vs ≥RTT (posição do GLM p/ cobrir 1 retransmissão). Decisão depende da telemetria de perda. *(hoje 90 ms no server.)*
 - `SUPER_REVEAL_MS` fixo vs escalado por distância p/ supers de longo alcance.
 - Drain a 20Hz (50 ms) vs subir botLoop p/ 30–60Hz (dono aceita server mais pesado).
-- `shotSeq` por-sala vs `{shooterId, seq}` (GLM + Codex preferem por-atirador p/ multi-shooter simultâneo).
+- **Super/kame do bot no cliente:** a morte do super chega por `hit`/`died`(seq) **sem `shot`** → não há porta
+  pré-armada → cai no fallback (morte imediata). Hoje OK porque o `kame` já revela o feixe quase-instantâneo
+  (Fase 4, `SUPER_REVEAL_MS=120 ms`). Se quiser gatear o super no cliente também, pré-armar a porta a partir do
+  `kame`(seq) com deadline curto.
+- **Parry vs tracer letal do bot:** refletir a bala do bot não escuda (autoridade do server); o tracer refletido
+  voa p/ longe → não dispara `onLethalArrive` → a porta cai no deadline (sintetiza impacto + morte). Mesmo
+  desfecho de antes (você morre), só que com impacto sintetizado. Edge raro, aceitável.

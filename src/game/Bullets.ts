@@ -25,6 +25,18 @@ interface Bullet {
   /** How many times this bullet has been saber-reflected (capped to prevent
    *  infinite player↔player ping-pong). */
   reflections: number;
+  /** True for the visual tracer of a shot the server says WILL hit the LOCAL
+   *  player (Phase 2 `targetId === me`). When such a tracer visibly reaches the
+   *  local player, `onLethalArrive` fires so Game can release the gated death —
+   *  the client guarantee that you never die from a bullet you didn't see land.
+   *  See docs/systems/netcode-hit-sync-plan.md (Phase 3). */
+  lethalToLocal: boolean;
+  /** Per-shot id correlating this tracer with its scheduled damage/death cue. */
+  seq: number;
+  /** XZ distance from the muzzle to the local player at spawn — the tracer has
+   *  "arrived" once it has travelled this far (reached the aim point) even if the
+   *  player strafed out of the way. */
+  targetDist: number;
 }
 
 const BULLET_GEOM = new THREE.BoxGeometry(0.1, 0.1, 0.1);
@@ -49,6 +61,10 @@ const MAX_BULLET_REFLECTIONS = 1;
 const BULLET_MAX_RANGE = 2 * HEARING_RADIUS;
 /** Vertical tolerance: a bullet at flightY only hits a target whose body is within this Y range. */
 const HIT_VERTICAL_TOLERANCE = 0.35;
+/** A lethal-to-local tracer counts as "arrived" within this XZ radius of the
+ *  local player — generous (wider than HIT_RADIUS) so a strafing dodge still
+ *  registers the impact rather than leaving the gated death to time out. */
+const LETHAL_ARRIVE_RADIUS = 0.7;
 
 export interface BulletTarget {
   /** Stable id used to skip self-hits (a bullet never hits its own shooter). */
@@ -89,6 +105,12 @@ export class Bullets {
   private onEnd: ((x: number, y: number, z: number) => void) | null = null;
   /** Fired when a damaging bullet lands on a target (for kill attribution). */
   private onDamage: ((target: BulletTarget, ownerId: string) => void) | null = null;
+  /** The local player, for the lethal-tracer arrival test (Phase 3). */
+  private selfTarget: BulletTarget | null = null;
+  /** Fired when a lethal-to-local tracer visibly reaches the local player. */
+  private onLethalArrive:
+    | ((shooterId: string, seq: number, x: number, y: number, z: number) => void)
+    | null = null;
 
   constructor() {
     this.group = new THREE.Group();
@@ -107,6 +129,20 @@ export class Bullets {
   /** Register a callback fired when a damaging bullet hits a target (attribution). */
   setOnDamage(fn: (target: BulletTarget, ownerId: string) => void) {
     this.onDamage = fn;
+  }
+
+  /** Register the local player as the arrival target for lethal-to-local tracers. */
+  setLethalSelfTarget(t: BulletTarget | null) {
+    this.selfTarget = t;
+  }
+
+  /** Register a callback fired when a lethal-to-local tracer reaches the local
+   *  player — Game uses it to release the gated death IN SYNC with the visible
+   *  bullet (Phase 3). */
+  setOnLethalArrive(
+    fn: (shooterId: string, seq: number, x: number, y: number, z: number) => void,
+  ) {
+    this.onLethalArrive = fn;
   }
 
   registerTarget(t: BulletTarget) {
@@ -162,6 +198,9 @@ export class Bullets {
       maxRange: BULLET_MAX_RANGE,
       shooterId: "",
       reflections: 0,
+      lethalToLocal: false,
+      seq: -1,
+      targetDist: 0,
     });
     this.group.add(mesh);
   }
@@ -177,6 +216,7 @@ export class Bullets {
     direction: THREE.Vector3,
     color: string,
     shooterId: string = "",
+    lethal?: { seq: number; selfPos: THREE.Vector3 },
   ) {
     const mat = new THREE.MeshBasicMaterial({
       color: new THREE.Color(color),
@@ -201,6 +241,11 @@ export class Bullets {
       maxRange: BULLET_MAX_RANGE,
       shooterId,
       reflections: 0,
+      lethalToLocal: lethal != null,
+      seq: lethal?.seq ?? -1,
+      targetDist: lethal
+        ? Math.hypot(lethal.selfPos.x - origin.x, lethal.selfPos.z - origin.z)
+        : 0,
     });
     this.group.add(mesh);
   }
@@ -309,6 +354,12 @@ export class Bullets {
       b.reflections += 1;
       b.traveled = 0;
       b.life = BULLET_LIFE;
+      // A reflected lethal-to-local tracer is now flying AWAY — drop the arrival
+      // flag so `traveled >= targetDist` can't later fire onLethalArrive at a puff
+      // far from the player. The gated death then falls back to its deadline, which
+      // synthesizes the impact ON the player (parry vs a server bot doesn't shield).
+      b.lethalToLocal = false;
+      b.seq = -1;
       // A reflected remote-visual bullet stays non-damaging locally (avoids
       // double-damage; the server resolves PvP via the credited "hit").
       out.push({ prevOwnerId, shooterId, wasDamaging, x: bx, y: b.mesh.position.y, z: bz });
@@ -331,6 +382,31 @@ export class Bullets {
     for (let i = 0; i < this.bullets.length; i++) {
       const b = this.bullets[i];
       if (!b.damaging || b.ownerId !== ownerId) continue;
+      const d2 = (b.mesh.position.x - x) ** 2 + (b.mesh.position.z - z) ** 2;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        best = i;
+      }
+    }
+    if (best < 0) return false;
+    this.removeAt(best);
+    return true;
+  }
+
+  /**
+   * Cancel the nearest still-flying VISUAL (non-damaging) bullet fired by
+   * `shooterId` within `radius` of (x,z). Used on OBSERVER clients when a remote
+   * parries another remote's shot: the forward tracer the observer renders must stop
+   * (the reflected visual is spawned separately), so the parry reads the same as on
+   * the shooter's own screen. Visual bullets carry the firing player's `shooterId`.
+   * Returns true if one was cancelled.
+   */
+  cancelVisualByShooterNear(shooterId: string, x: number, z: number, radius: number): boolean {
+    let best = -1;
+    let bestD2 = radius * radius;
+    for (let i = 0; i < this.bullets.length; i++) {
+      const b = this.bullets[i];
+      if (b.damaging || b.shooterId !== shooterId) continue;
       const d2 = (b.mesh.position.x - x) ** 2 + (b.mesh.position.z - z) ** 2;
       if (d2 <= bestD2) {
         bestD2 = d2;
@@ -404,6 +480,30 @@ export class Bullets {
       if (blocked) {
         this.removeAt(i);
         continue;
+      }
+
+      // --- Lethal-to-local tracer arrival (Phase 3 impact gate) ---
+      // The server says this shot WILL hit us; hold the death until the bullet
+      // visibly reaches us (or its aim point if we strafed), then release it in
+      // sync with this impact. Despawning here puffs smoke at the contact point.
+      if (b.lethalToLocal && this.selfTarget) {
+        const sp = this.selfTarget.position;
+        const ddx = sp.x - b.mesh.position.x;
+        const ddz = sp.z - b.mesh.position.z;
+        const reached =
+          ddx * ddx + ddz * ddz <= LETHAL_ARRIVE_RADIUS * LETHAL_ARRIVE_RADIUS ||
+          b.traveled >= b.targetDist;
+        if (reached) {
+          this.onLethalArrive?.(
+            b.shooterId,
+            b.seq,
+            b.mesh.position.x,
+            b.mesh.position.y,
+            b.mesh.position.z,
+          );
+          this.removeAt(i);
+          continue;
+        }
       }
 
       // Collision check against opposite-side targets — visual-only bullets
