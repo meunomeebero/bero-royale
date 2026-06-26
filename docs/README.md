@@ -21,6 +21,7 @@
 | [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick, skill, accEff, reactT, commitT, superHesitateT, kills, streak, genHandle, retaliation, player-attention-floor, yaw-slew, miss-spread |
 | [`systems/voxel-character-gen.md`](systems/voxel-character-gen.md) | Gerar personagens voxel via IA | personagem, character, voxel, gerar, IA, owl, coruja, OBJ, paleta, proporção, coerência, novo animal |
 | [`systems/secret-characters-easter-egg.md`](systems/secret-characters-easter-egg.md) | Personagens secretos (easter egg do username) | easter egg, secret, owl, coruja, rabbi, rabino, _jew, bero, roster escondido, unlock, randomAnimalName |
+| [`systems/security-leaderboard.md`](systems/security-leaderboard.md) | Segurança — leaderboard server-authoritative (anti-poisoning) | leaderboard, score, poisoning, api, injection, server-authoritative, anti-cheat, submitScore, /api/score, finalizeRun, creditKill, sanitizeUsername |
 
 > _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento/dash,
 > super/kamehameha, power-ups, voz/WebRTC, HUD, leaderboard) em `docs/systems/`._

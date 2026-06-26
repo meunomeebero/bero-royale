@@ -4,6 +4,17 @@
 > refletida na documentação e bem indexada (ver `docs/INDEX.md` quando existir + a regra em
 > `CLAUDE.md`/`README.md`). Qualquer agente novo começa por aqui e pelo índice de docs.
 
+## Segurança — itens diferidos (pós `security/leaderboard-hardening`)
+
+> Doc completo: [`docs/systems/security-leaderboard.md`](systems/security-leaderboard.md)
+
+- [ ] **WS hit anti-cheat / lag-compensation rewind:** `{t:"hit"}` forjado ainda chipa 1 HP de
+  qualquer target vivo sem validação geométrica — bounded grind cheat (não instant-kill). Fix:
+  lag-compensation server-side com rewind. Diferido: aguardar telemetria de abuso real.
+- [ ] **Identidade account-based:** `username` vem do meta do cliente. Um jogador pode reivindicar
+  qualquer nome e envervenar a row do leaderboard de outro usuário. Fix: session auth + username
+  canônico server-assigned. Diferido: aguardar decisão de escopo de contas.
+
 ## FASE A — feature do sabre (gate antes de ir ao ar) — ✅ CONCLUÍDA (2026-06-24)
 > Review GPT-5.5 Max limpo na rodada 7 ("No actionable correctness issues found"). Push em
 > `origin/main` (commits d792ce3..2287608) + deploy em prod (bundle `index-Bu1sRSLz.js`, restart OK,
