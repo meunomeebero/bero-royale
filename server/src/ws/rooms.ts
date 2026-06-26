@@ -234,6 +234,11 @@ export class RoomHub {
         p.health = 0;
         p.shield = 0;
         p.deadAt = Date.now();
+        // Self/environmental death (fall, lava, self-registered shots) ends this
+        // life too — persist the run server-authoritatively. Guarded by `p.alive`
+        // so a server-damage death already finalized in damagePlayer never
+        // double-finalizes (its alive is already false when this ack arrives).
+        this.finalizeRun(p);
       }
       p.acked = true;
     } else if (!p.alive) {
@@ -249,6 +254,7 @@ export class RoomHub {
         p.alive = true;
         p.deadAt = 0;
         p.acked = false;
+        p.lifeStart = Date.now(); // new life → reset the run clock for per-life aliveSeconds
         this.syncOwnerHP(p); // HUD snaps back to full on the authoritative respawn
       }
     }
