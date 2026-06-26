@@ -87,17 +87,22 @@ export function validateMapDef(x: unknown): MapDefinition | null {
   const o = x as Record<string, unknown>;
   if (o.version !== 1 || !Array.isArray(o.decor) || o.decor.length > MAX_DECOR) return null;
   const out: DecorEntry[] = [];
+  const seen = new Set<string>();
   for (const e of o.decor) {
     if (!e || typeof e !== "object") return null;
     const { id, asset, ix, iz } = e as Record<string, unknown>;
+    // Strict id: a unique non-empty string (deterministic; protects keyed render + delete).
+    if (typeof id !== "string" || id.length === 0 || seen.has(id)) return null;
     if (typeof asset !== "string" || !PROP_SET.has(asset)) return null;
     if (!Number.isInteger(ix) || !Number.isInteger(iz)) return null;
     if ((ix as number) < 0 || (ix as number) >= GRID || (iz as number) < 0 || (iz as number) >= GRID) return null;
-    out.push({ id: typeof id === "string" && id ? id : makeDecorEntry(asset as EnvProp, ix as number, iz as number).id, asset: asset as EnvProp, ix: ix as number, iz: iz as number });
+    seen.add(id);
+    out.push({ id, asset: asset as EnvProp, ix: ix as number, iz: iz as number });
   }
   return { version: 1, decor: out };
 }
 ```
+> Server `validateDef` (Task 4) copies these EXACT rules incl. strict-unique-id (reject missing/empty/dupe).
 
 - [ ] **Step 4: Run test, verify PASS** — `corepack pnpm exec vitest run src/game/map/MapDefinition.test.ts` → PASS.
 - [ ] **Step 5: Commit** — `git add src/game/map/MapDefinition.ts src/game/map/MapDefinition.test.ts && git commit -m "feat(map): MapDefinition schema + validation (editor v1)"`

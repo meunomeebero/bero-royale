@@ -21,13 +21,18 @@ export function validateMapDef(x: unknown): MapDefinition | null {
   const o = x as Record<string, unknown>;
   if (o.version !== 1 || !Array.isArray(o.decor) || o.decor.length > MAX_DECOR) return null;
   const out: DecorEntry[] = [];
+  const seen = new Set<string>();
   for (const e of o.decor) {
     if (!e || typeof e !== "object") return null;
     const { id, asset, ix, iz } = e as Record<string, unknown>;
+    // Strict id: a unique non-empty string (deterministic across client/server/
+    // reload; protects keyed render + place/delete bookkeeping).
+    if (typeof id !== "string" || id.length === 0 || seen.has(id)) return null;
     if (typeof asset !== "string" || !PROP_SET.has(asset)) return null;
     if (!Number.isInteger(ix) || !Number.isInteger(iz)) return null;
     if ((ix as number) < 0 || (ix as number) >= GRID || (iz as number) < 0 || (iz as number) >= GRID) return null;
-    out.push({ id: typeof id === "string" && id ? id : makeDecorEntry(asset as EnvProp, ix as number, iz as number).id, asset: asset as EnvProp, ix: ix as number, iz: iz as number });
+    seen.add(id);
+    out.push({ id, asset: asset as EnvProp, ix: ix as number, iz: iz as number });
   }
   return { version: 1, decor: out };
 }

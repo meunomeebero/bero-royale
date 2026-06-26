@@ -22,4 +22,15 @@ describe("MapDefinition", () => {
   it("ENV_PROPS lists exactly the 7 editable props", () => {
     expect(ENV_PROPS).toEqual(["tree1","tree2","box1","box2","grassflower1","grassflower2","grassmushroom"]);
   });
+  it("rejects a missing/empty/non-string id (strict, deterministic)", () => {
+    expect(validateMapDef({ version: 1, decor: [{ asset: "tree1", ix: 1, iz: 1 }] })).toBeNull();
+    expect(validateMapDef({ version: 1, decor: [{ id: "", asset: "tree1", ix: 1, iz: 1 }] })).toBeNull();
+    expect(validateMapDef({ version: 1, decor: [{ id: 5, asset: "tree1", ix: 1, iz: 1 }] })).toBeNull();
+  });
+  it("rejects duplicate ids", () => {
+    expect(validateMapDef({ version: 1, decor: [
+      { id: "x", asset: "tree1", ix: 1, iz: 1 },
+      { id: "x", asset: "tree2", ix: 2, iz: 2 },
+    ] })).toBeNull();
+  });
 });
