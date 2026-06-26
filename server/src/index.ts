@@ -47,34 +47,27 @@ process.on("unhandledRejection", (e) =>
 // Also doubles as a cheap RTT probe for the client's ping read-out.
 let onlineCount = (): number => 0;
 
-// Per-IP token bucket for sensitive GETs (e.g. /api/turn). Refills steadily; a
-// burst beyond capacity gets a 429. Conservative caps so real users never hit it.
-const ipBuckets = new Map<string, { tokens: number; last: number }>();
-const RL_CAP = 20,
-  RL_REFILL_PER_SEC = 1; // 20 burst, +1/s sustained
-function rateLimitOk(ip: string): boolean {
+// GLOBAL token bucket for /api/turn (deliberately NOT per-IP). The only client-IP
+// signal is `X-Forwarded-For`, which is attacker-controllable (the app can be hit
+// directly and a spoofed XFF mints a fresh per-IP bucket every request), so a
+// per-IP limiter is trivially bypassed. A single global bucket bounds total TURN-
+// credential minting regardless of source and cannot be rotated around. Legit
+// clients fetch /api/turn rarely (once per session + a ~24h TTL refresh), so this
+// generous cap never affects real users. The real relay-abuse defense is coturn-
+// side quotas (per-allocation bandwidth/time limits) — infra, see shardcloud.md.
+const TURN_RL_CAP = 60,
+  TURN_RL_REFILL_PER_SEC = 30; // 60 burst, 30/s sustained — global
+const turnBucket = { tokens: TURN_RL_CAP, last: Date.now() };
+function turnRateLimitOk(): boolean {
   const now = Date.now();
-  let b = ipBuckets.get(ip);
-  if (!b) {
-    b = { tokens: RL_CAP, last: now };
-    ipBuckets.set(ip, b);
-  }
-  b.tokens = Math.min(RL_CAP, b.tokens + ((now - b.last) / 1000) * RL_REFILL_PER_SEC);
-  b.last = now;
-  if (ipBuckets.size > 10000) {
-    // bound memory: drop the oldest-ish on overflow
-    for (const k of ipBuckets.keys()) {
-      ipBuckets.delete(k);
-      if (ipBuckets.size <= 8000) break;
-    }
-  }
-  if (b.tokens < 1) return false;
-  b.tokens -= 1;
+  turnBucket.tokens = Math.min(
+    TURN_RL_CAP,
+    turnBucket.tokens + ((now - turnBucket.last) / 1000) * TURN_RL_REFILL_PER_SEC,
+  );
+  turnBucket.last = now;
+  if (turnBucket.tokens < 1) return false;
+  turnBucket.tokens -= 1;
   return true;
-}
-function clientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for"); // Shard Cloud edge sets this
-  return (xff ? xff.split(",")[0].trim() : "") || "unknown";
 }
 
 const app = new Elysia({ adapter: node() })
@@ -83,9 +76,8 @@ const app = new Elysia({ adapter: node() })
   .get("/api/leaderboard", ({ query }) =>
     getLeaderboardHandler(query as Record<string, string | undefined>),
   )
-  .get("/api/turn", ({ request, set }) => {
-    const ip = clientIp(request);
-    if (!rateLimitOk(ip)) {
+  .get("/api/turn", ({ set }) => {
+    if (!turnRateLimitOk()) {
       set.status = 429;
       return { error: "rate limited" };
     }

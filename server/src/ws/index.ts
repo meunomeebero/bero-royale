@@ -197,7 +197,12 @@ export function attachWebSocket(server: Server): RoomHub {
             if (typeof target === "string" && hub.botSim.hasBot(ws.room, target)) {
               const res = hub.botSim.killBot(ws.room, target);
               if (res?.died) {
-                hub.creditKill(ws.room, ws.id, target); // player kamehameha killed a bot
+                // NOTE: bot kills do NOT score the leaderboard. `kamehit`/`hit`
+                // bot targets are client-declared and unvalidated (killBot drains a
+                // named bot in one frame), so crediting them would let a script farm
+                // the board over WS — the same poisoning, moved off HTTP. Only
+                // server-resolved PvP kills (damagePlayer) score. Re-enable bot
+                // scoring only once WS hit validation (range/cooldown) exists.
                 hub.fanout(ws.room, {
                   t: "broadcast",
                   event: "died",
@@ -268,7 +273,8 @@ export function attachWebSocket(server: Server): RoomHub {
           // synchronously as before (the "died" needs no seq).
           const result = hub.applyHit(ws.room, m.target, ws.id);
           if (result?.died) {
-            hub.creditKill(ws.room, ws.id, m.target); // player shot killed a bot
+            // Bot kills do NOT score (client-declared target, farmable over WS) —
+            // only server-resolved PvP kills (damagePlayer) credit the leaderboard.
             const diedMsg: ServerMsg = {
               t: "broadcast",
               event: "died",
