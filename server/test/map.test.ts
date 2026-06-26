@@ -63,6 +63,9 @@ describe("server map validation (validateDef)", () => {
     expect(
       validateDef({ version: 1, decor: [{ id: "", asset: "tree1", ix: 1, iz: 1 }] }),
     ).toBeNull();
+    expect(
+      validateDef({ version: 1, decor: [{ id: "x".repeat(65), asset: "tree1", ix: 1, iz: 1 }] }),
+    ).toBeNull();
   });
 
   it("rejects a duplicate id", () => {

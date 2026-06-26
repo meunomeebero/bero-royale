@@ -26,6 +26,7 @@ describe("MapDefinition", () => {
     expect(validateMapDef({ version: 1, decor: [{ asset: "tree1", ix: 1, iz: 1 }] })).toBeNull();
     expect(validateMapDef({ version: 1, decor: [{ id: "", asset: "tree1", ix: 1, iz: 1 }] })).toBeNull();
     expect(validateMapDef({ version: 1, decor: [{ id: 5, asset: "tree1", ix: 1, iz: 1 }] })).toBeNull();
+    expect(validateMapDef({ version: 1, decor: [{ id: "x".repeat(65), asset: "tree1", ix: 1, iz: 1 }] })).toBeNull();
   });
   it("rejects duplicate ids", () => {
     expect(validateMapDef({ version: 1, decor: [

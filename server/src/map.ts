@@ -68,8 +68,9 @@ export function validateDef(x: unknown): MapDef | null {
   for (const e of o.decor) {
     if (!e || typeof e !== "object") return null;
     const { id, asset, ix, iz } = e as Record<string, unknown>;
-    // Strict id: a unique non-empty string (protects keyed render + place/delete).
-    if (typeof id !== "string" || id.length === 0 || seen.has(id)) return null;
+    // Strict id: a unique non-empty string ≤64 chars (protects keyed render +
+    // place/delete + bounds the persisted/broadcast payload size).
+    if (typeof id !== "string" || id.length === 0 || id.length > 64 || seen.has(id)) return null;
     if (typeof asset !== "string" || !PROP_SET.has(asset)) return null;
     if (!Number.isInteger(ix) || !Number.isInteger(iz)) return null;
     if (
