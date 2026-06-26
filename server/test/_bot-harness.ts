@@ -30,8 +30,3 @@ export function makeHarness(opts: { players?: FakePlayer[] } = {}) {
     inspect: () => sim.inspect(ROOM),
   };
 }
-
-export function assert(cond: any, msg: string): void {
-  if (!cond) { console.error("FAIL:", msg); process.exit(1); }
-}
-export function done(): void { console.log("PASS"); process.exit(0); }
