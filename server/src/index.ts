@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { PORT } from "./env";
 import { migrate } from "./db";
 import { getLeaderboardHandler, postScoreHandler } from "./leaderboard";
+import { authHandler, getMapHandler, putMapHandler, initMapCache } from "./map";
 import { getTurnCredentials } from "./turn";
 import { attachWebSocket } from "./ws/index";
 import { spaStatic } from "./static";
@@ -61,6 +62,21 @@ const app = new Elysia({ adapter: node() })
       return { error: r.error };
     }
     return r.row;
+  })
+  .post("/api/editor/auth", ({ body, set }) => {
+    const r = authHandler(body);
+    set.status = r.status;
+    return r.body;
+  })
+  .get("/api/map", async ({ set }) => {
+    const r = await getMapHandler();
+    set.status = r.status;
+    return r.body;
+  })
+  .put("/api/map", async ({ headers, body, set }) => {
+    const r = await putMapHandler(headers["x-editor-password"], body);
+    set.status = r.status;
+    return r.body;
   })
   .use(spaStatic(join(process.cwd(), "public")));
 
@@ -142,5 +158,13 @@ server.listen(PORT, () => {
       "[db] migrate failed (continuing so multiplayer/voice still work):",
       e,
     ),
+  );
+
+  // Seed the in-memory active-map cache from disk (so rooms can read the
+  // authored decor on join). Fire-and-forget so a missing/slow file never
+  // delays the port binding; a read failure just leaves the cache null
+  // (game falls back to the seeded scatter).
+  initMapCache().catch((e) =>
+    console.error("[map] initMapCache failed (continuing with no active map):", e),
   );
 });
