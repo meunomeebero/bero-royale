@@ -29,7 +29,17 @@ import { GrassPoof } from "./GrassPoof";
 import { ModelLibrary } from "./ModelLibrary";
 import { PostFX } from "./PostFX";
 import { isMobileDevice } from "@/lib/useIsMobile";
-import { HEARING_RADIUS, NET_TICK_HZ, PIXEL_FILTER_KEY } from "./consts";
+import {
+  AIM_SENSITIVITY_DEFAULT,
+  AIM_SENSITIVITY_KEY,
+  AIM_SENSITIVITY_MAX,
+  AIM_SENSITIVITY_MIN,
+  HEARING_RADIUS,
+  NET_TICK_HZ,
+  PIXEL_FILTER_KEY,
+  VHS_LEVEL_DEFAULT,
+  VHS_LEVEL_KEY,
+} from "./consts";
 
 const INITIAL_BOTS = 3;
 const NEW_BOT_EVERY_SECONDS = 60;
@@ -41,6 +51,22 @@ function pixelFilterEnabled(): boolean {
   } catch {
     return true;
   }
+}
+
+/** Read a persisted numeric setting, clamped to [min,max], with a default. */
+function readNumberSetting(
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  try {
+    const raw = parseFloat(localStorage.getItem(key) ?? "");
+    if (Number.isFinite(raw)) return Math.max(min, Math.min(max, raw));
+  } catch {
+    /* private mode — ignore */
+  }
+  return fallback;
 }
 
 // (Online backfill bots are now SERVER-driven — see server/src/ws/bots.ts. The
@@ -157,6 +183,8 @@ export class Game {
   private postfx: PostFX | null = null;
   /** Whether the pixel/cartoon filter is currently active (persisted in LS). */
   private pixelFilter = pixelFilterEnabled();
+  /** VHS/retro-filter intensity 0..1 (persisted in LS); only used while ON. */
+  private vhsLevel = readNumberSetting(VHS_LEVEL_KEY, VHS_LEVEL_DEFAULT, 0, 1);
 
   private input: InputManager;
   private audio: AudioEngine;
@@ -362,6 +390,14 @@ export class Game {
     // — Platform + Decor + bullet world wiring — is built later in buildWorld()).
     this.audio = new AudioEngine();
     this.input = new InputManager();
+    this.input.setAimSensitivity(
+      readNumberSetting(
+        AIM_SENSITIVITY_KEY,
+        AIM_SENSITIVITY_DEFAULT,
+        AIM_SENSITIVITY_MIN,
+        AIM_SENSITIVITY_MAX,
+      ),
+    );
     this.dust = new DustParticles();
     this.bullets = new Bullets();
     this.smoke = new SmokePuffs();
@@ -2214,7 +2250,14 @@ export class Game {
       this.postfx = null;
     }
     if (this.pixelFilter) {
-      this.postfx = new PostFX(this.renderer, this.scene, this.camera, w, h);
+      this.postfx = new PostFX(
+        this.renderer,
+        this.scene,
+        this.camera,
+        w,
+        h,
+        this.vhsLevel,
+      );
     }
   }
 
@@ -2223,6 +2266,22 @@ export class Game {
     if (on === this.pixelFilter) return;
     this.pixelFilter = on;
     this.applyPixelFilter();
+  }
+
+  /** Live VHS/retro-filter intensity (0..1) — persisted by the Settings UI. */
+  setVhsLevel(level: number) {
+    this.vhsLevel = Math.max(0, Math.min(1, level));
+    this.postfx?.setLevel(this.vhsLevel);
+  }
+
+  /** Live cursor/aim sensitivity multiplier — persisted by the Settings UI. */
+  setAimSensitivity(s: number) {
+    this.input.setAimSensitivity(s);
+  }
+
+  /** Sensitivity-gained screen position for a raw client point (HUD crosshair). */
+  aimCursorPos(clientX: number, clientY: number): { x: number; y: number } {
+    return this.input.gainCursor(clientX, clientY);
   }
 
   /** Render one frame through the filter when active, else straight to screen. */

@@ -22,6 +22,7 @@
 | [`systems/voxel-character-gen.md`](systems/voxel-character-gen.md) | Gerar personagens voxel via IA | personagem, character, voxel, gerar, IA, owl, coruja, OBJ, paleta, proporção, coerência, novo animal |
 | [`systems/secret-characters-easter-egg.md`](systems/secret-characters-easter-egg.md) | Personagens secretos (easter egg do username) | easter egg, secret, owl, coruja, rabbi, rabino, _jew, bero, roster escondido, unlock, randomAnimalName |
 | [`systems/map-editor.md`](systems/map-editor.md) | Editor de mapa oficial (v1, só decor) — rota `/editor` gated | map editor, editor de mapa, /editor, decor, árvores, props, MapDefinition, DecorEntry, senha, password, super-user, active.json, persistência, snap-to-grid, validateMapDef, MAP_EDITOR_PASSWORD |
+| [`systems/settings-sliders.md`](systems/settings-sliders.md) | Configurações — sliders de sensibilidade do cursor + nível do filtro VHS | configurações, settings, slider, sensibilidade, cursor, mira, aim sensitivity, gain, VHS, filtro retrô, modo desenho, intensidade, nível, level, localStorage, gainCursor, setLevel |
 
 > _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento/dash,
 > super/kamehameha, power-ups, voz/WebRTC, HUD, leaderboard) em `docs/systems/`._

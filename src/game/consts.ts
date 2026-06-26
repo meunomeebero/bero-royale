@@ -35,6 +35,21 @@ export const SFX_MUTED_KEY = "cozykiller:settings:sfxMuted";
 export const VOICE_MUTED_KEY = "cozykiller:settings:voiceMuted";
 /** "modo desenho" (PostFX) flag — absent or "1" => ON, "0" => OFF. Defaults ON. */
 export const PIXEL_FILTER_KEY = "cozykiller:settings:pixelFilter";
+/**
+ * Cursor/aim sensitivity — a center-anchored gain on the pointer position that
+ * scales how far the aim deflects per unit of cursor offset from screen center
+ * (1 = unchanged, like a 1:1 cursor). Persisted; read by InputManager.
+ */
+export const AIM_SENSITIVITY_KEY = "cozykiller:settings:aimSensitivity";
+export const AIM_SENSITIVITY_MIN = 0.4;
+export const AIM_SENSITIVITY_MAX = 2.0;
+export const AIM_SENSITIVITY_DEFAULT = 1;
+/**
+ * "Modo desenho" / VHS retro-filter intensity (0 = subtle .. 1 = full as shipped).
+ * Only matters while PIXEL_FILTER_KEY is ON. Persisted; read by PostFX via Game.
+ */
+export const VHS_LEVEL_KEY = "cozykiller:settings:vhsLevel";
+export const VHS_LEVEL_DEFAULT = 1;
 
 // ── "Modo desenho" post-processing tuning (PostFX.ts) ───────────────────────
 // Softened in two ~20% steps from the first pass (4 / 0.4 / 0.4 / 6 / 1.15).

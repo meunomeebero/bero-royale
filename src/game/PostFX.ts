@@ -13,6 +13,27 @@ import {
 } from "./consts";
 
 /**
+ * Map the VHS-filter "level" slider (0..1) onto the retro stack's tunables by
+ * lerping from a near-clean endpoint (level 0) to the shipped look (level 1, the
+ * `consts.ts` values). The filter is never fully OFF here — that is the separate
+ * "Modo desenho" toggle (Game rebuilds/destroys the whole PostFX). At level 0 the
+ * pass still runs but with neutral params (1px blocks, no outline, fine banding).
+ */
+function paramsForLevel(level: number) {
+  const t = Math.max(0, Math.min(1, level));
+  const lerp = (clean: number, full: number) => clean + (full - clean) * t;
+  return {
+    // RenderPixelatedPass: chunkier + stronger ink toward level 1.
+    pixelSize: lerp(1, PIXEL_SIZE),
+    normalEdge: lerp(0, PIXEL_NORMAL_EDGE),
+    depthEdge: lerp(0, PIXEL_DEPTH_EDGE),
+    // Posterize: MORE bands (=subtler) toward 0, flatter cartoon bands toward 1.
+    levels: lerp(32, POSTERIZE_LEVELS),
+    saturation: lerp(1, POSTERIZE_SATURATION),
+  };
+}
+
+/**
  * "Modo desenho" — a GameCube-flavored post-processing stack rendered in front of
  * the normal frame. Three layered passes give the look the player asked for:
  *
@@ -67,6 +88,9 @@ export class PostFX {
   private composer: EffectComposer;
   /** The passes we added — kept so dispose() can free each one (see dispose). */
   private passes: Pass[];
+  /** Kept to retune the look live when the VHS-level slider changes. */
+  private pixelPass: RenderPixelatedPass;
+  private posterizePass: ShaderPass;
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -74,18 +98,31 @@ export class PostFX {
     camera: THREE.Camera,
     width: number,
     height: number,
+    level = 1,
   ) {
+    const p = paramsForLevel(level);
+    this.pixelPass = new RenderPixelatedPass(p.pixelSize, scene, camera, {
+      normalEdgeStrength: p.normalEdge,
+      depthEdgeStrength: p.depthEdge,
+    });
+    this.posterizePass = new ShaderPass(PosterizeShader);
+    this.posterizePass.uniforms.levels.value = p.levels;
+    this.posterizePass.uniforms.saturation.value = p.saturation;
+
     this.composer = new EffectComposer(renderer);
-    this.passes = [
-      new RenderPixelatedPass(PIXEL_SIZE, scene, camera, {
-        normalEdgeStrength: PIXEL_NORMAL_EDGE,
-        depthEdgeStrength: PIXEL_DEPTH_EDGE,
-      }),
-      new ShaderPass(PosterizeShader),
-      new OutputPass(),
-    ];
+    this.passes = [this.pixelPass, this.posterizePass, new OutputPass()];
     for (const pass of this.passes) this.composer.addPass(pass);
     this.composer.setSize(width, height);
+  }
+
+  /** Live-retune the retro stack to a 0..1 intensity (no rebuild needed). */
+  setLevel(level: number) {
+    const p = paramsForLevel(level);
+    this.pixelPass.setPixelSize(p.pixelSize);
+    this.pixelPass.normalEdgeStrength = p.normalEdge;
+    this.pixelPass.depthEdgeStrength = p.depthEdge;
+    this.posterizePass.uniforms.levels.value = p.levels;
+    this.posterizePass.uniforms.saturation.value = p.saturation;
   }
 
   render() {

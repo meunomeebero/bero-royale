@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
+  Film,
   Gamepad2,
   Mic,
+  MousePointer2,
   Music2,
   Radio,
   Volume2,
 } from "lucide-react";
 import {
+  AIM_SENSITIVITY_DEFAULT,
+  AIM_SENSITIVITY_KEY,
+  AIM_SENSITIVITY_MAX,
+  AIM_SENSITIVITY_MIN,
   PIXEL_FILTER_KEY,
   SFX_MUTED_KEY,
+  VHS_LEVEL_DEFAULT,
+  VHS_LEVEL_KEY,
   VOICE_MUTED_KEY,
 } from "@/game/consts";
 import { cn } from "@/lib/utils";
@@ -19,6 +27,7 @@ import {
   INK_TEXT,
   ScreenShell,
   SelectField,
+  SliderRow,
   ToggleRow,
 } from "./menu-primitives";
 
@@ -50,6 +59,10 @@ interface SettingsScreenProps {
   onSfxMutedChange?: (muted: boolean) => void;
   /** Apply the "modo desenho" filter live to the menu's ambient scene. */
   onPixelFilterChange?: (on: boolean) => void;
+  /** Apply the VHS/retro filter intensity (0..1) live to the ambient scene. */
+  onVhsLevelChange?: (level: number) => void;
+  /** Apply the cursor/aim sensitivity multiplier (persists; next match). */
+  onAimSensitivityChange?: (sensitivity: number) => void;
 }
 
 function sinkIdSupported(): boolean {
@@ -75,10 +88,30 @@ function writeFlag(key: string, value: boolean) {
   }
 }
 
+function readNumber(key: string, fallback: number, min: number, max: number) {
+  try {
+    const raw = parseFloat(localStorage.getItem(key) ?? "");
+    if (Number.isFinite(raw)) return Math.max(min, Math.min(max, raw));
+  } catch {
+    /* private mode — ignore */
+  }
+  return fallback;
+}
+
+function writeNumber(key: string, value: number) {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    /* private mode — ignore */
+  }
+}
+
 export const SettingsScreen = ({
   onBack,
   onSfxMutedChange,
   onPixelFilterChange,
+  onVhsLevelChange,
+  onAimSensitivityChange,
 }: SettingsScreenProps) => {
   const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
@@ -100,6 +133,18 @@ export const SettingsScreen = ({
       return true;
     }
   });
+  // VHS/retro filter intensity (0..1) + cursor sensitivity multiplier.
+  const [vhsLevel, setVhsLevel] = useState<number>(() =>
+    readNumber(VHS_LEVEL_KEY, VHS_LEVEL_DEFAULT, 0, 1),
+  );
+  const [sensitivity, setSensitivity] = useState<number>(() =>
+    readNumber(
+      AIM_SENSITIVITY_KEY,
+      AIM_SENSITIVITY_DEFAULT,
+      AIM_SENSITIVITY_MIN,
+      AIM_SENSITIVITY_MAX,
+    ),
+  );
 
   const canRouteOutput = sinkIdSupported();
   const testAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -197,6 +242,18 @@ export const SettingsScreen = ({
     setPixelOn(next);
     writeFlag(PIXEL_FILTER_KEY, next); // stored value is ENABLED (not inverted)
     onPixelFilterChange?.(next);
+  };
+
+  const handleVhsLevel = (level: number) => {
+    setVhsLevel(level);
+    writeNumber(VHS_LEVEL_KEY, level);
+    onVhsLevelChange?.(level);
+  };
+
+  const handleSensitivity = (s: number) => {
+    setSensitivity(s);
+    writeNumber(AIM_SENSITIVITY_KEY, s);
+    onAimSensitivityChange?.(s);
   };
 
   const handleTestSound = async () => {
@@ -417,6 +474,50 @@ export const SettingsScreen = ({
             desc="Pixelado, contorno e cores de cartoon"
             icon={Gamepad2}
             accent={HUD.rose}
+          />
+          <SliderRow
+            value={vhsLevel}
+            min={0}
+            max={1}
+            step={0.05}
+            onValueChange={handleVhsLevel}
+            title="Intensidade do filtro VHS"
+            desc={
+              pixelOn
+                ? "Quão forte é o visual retrô (pixel, contorno, cores)"
+                : "Liga o «Modo desenho» para ver o efeito"
+            }
+            icon={Film}
+            accent={HUD.honey}
+            format={(v) => `${Math.round(v * 100)}%`}
+          />
+        </section>
+
+        {/* ── Controles ── */}
+        <section className="flex flex-col gap-2.5">
+          <RibbonStrip
+            icon={MousePointer2}
+            accent={HUD.honey}
+            className="self-start"
+          >
+            <span
+              className="hud-label text-[12px]"
+              style={{ color: "#fff", textShadow: `1px 1px 0 ${INK}` }}
+            >
+              Controles
+            </span>
+          </RibbonStrip>
+          <SliderRow
+            value={sensitivity}
+            min={AIM_SENSITIVITY_MIN}
+            max={AIM_SENSITIVITY_MAX}
+            step={0.1}
+            onValueChange={handleSensitivity}
+            title="Sensibilidade do cursor"
+            desc="O quanto a mira anda por movimento do mouse"
+            icon={MousePointer2}
+            accent={HUD.rose}
+            format={(v) => `${v.toFixed(1)}×`}
           />
         </section>
 

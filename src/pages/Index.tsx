@@ -200,11 +200,14 @@ const Index = () => {
         // Position the crosshair directly on the DOM node — no setState, no
         // reconciliation. The element centers itself via the `- 50%` offset.
         onMove = (e: MouseEvent) => {
-          cursorPos.current.x = e.clientX;
-          cursorPos.current.y = e.clientY;
+          // Route through the game's sensitivity gain so the reticle sits exactly
+          // where the shot will land (same transform the aim raycast uses).
+          const p = game!.aimCursorPos(e.clientX, e.clientY);
+          cursorPos.current.x = p.x;
+          cursorPos.current.y = p.y;
           const el = crosshairRef.current;
           if (el) {
-            el.style.transform = `translate(calc(${e.clientX}px - 50%), calc(${e.clientY}px - 50%))`;
+            el.style.transform = `translate(calc(${p.x}px - 50%), calc(${p.y}px - 50%))`;
           }
         };
         onKey = (e: KeyboardEvent) => {

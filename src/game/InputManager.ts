@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import {
+  AIM_SENSITIVITY_DEFAULT,
+  AIM_SENSITIVITY_MAX,
+  AIM_SENSITIVITY_MIN,
+} from "./consts";
 
 export class InputManager {
   private enabled = true;
@@ -24,6 +29,12 @@ export class InputManager {
   readonly mouseNDC = new THREE.Vector2(0, 0);
   /** Mouse client position in pixels (for HUD crosshair). */
   readonly mouseClient = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  /**
+   * Cursor/aim sensitivity. A center-anchored gain: the effective cursor sits at
+   * center + (rawCursor − center) × sensitivity, so it scales how far the aim
+   * deflects per unit of cursor offset from screen center (1 = raw 1:1 cursor).
+   */
+  private aimSensitivity = AIM_SENSITIVITY_DEFAULT;
 
   constructor() {
     window.addEventListener("keydown", this.onKeyDown);
@@ -105,11 +116,37 @@ export class InputManager {
     this.keys.delete(e.code);
   };
 
+  /** Clamp + persist the aim sensitivity multiplier (settings slider). */
+  setAimSensitivity(s: number) {
+    this.aimSensitivity = Math.max(
+      AIM_SENSITIVITY_MIN,
+      Math.min(AIM_SENSITIVITY_MAX, s),
+    );
+  }
+
+  /**
+   * Apply the sensitivity gain to a raw client point and clamp to the viewport.
+   * Single source of truth for both the aim raycast (mouseNDC) and the HUD
+   * crosshair, so the reticle always sits exactly where the shot will land.
+   */
+  gainCursor(clientX: number, clientY: number): { x: number; y: number } {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const cx = w / 2;
+    const cy = h / 2;
+    const s = this.aimSensitivity;
+    return {
+      x: Math.max(0, Math.min(w, cx + (clientX - cx) * s)),
+      y: Math.max(0, Math.min(h, cy + (clientY - cy) * s)),
+    };
+  }
+
   private onMouseMove = (e: MouseEvent) => {
-    this.mouseClient.x = e.clientX;
-    this.mouseClient.y = e.clientY;
-    this.mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
-    this.mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    const { x, y } = this.gainCursor(e.clientX, e.clientY);
+    this.mouseClient.x = x;
+    this.mouseClient.y = y;
+    this.mouseNDC.x = (x / window.innerWidth) * 2 - 1;
+    this.mouseNDC.y = -(y / window.innerHeight) * 2 + 1;
   };
 
   private onMouseDown = (e: MouseEvent) => {

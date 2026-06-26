@@ -285,6 +285,12 @@ const Menu = () => {
             onPixelFilterChange={(on) =>
               ambientGameRef.current?.setPixelFilter(on)
             }
+            onVhsLevelChange={(level) =>
+              ambientGameRef.current?.setVhsLevel(level)
+            }
+            onAimSensitivityChange={(s) =>
+              ambientGameRef.current?.setAimSensitivity(s)
+            }
           />
         </div>
       )}

@@ -1,6 +1,7 @@
 import { type CSSProperties, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
+import * as SliderPrimitive from "@radix-ui/react-slider";
 import { cn } from "@/lib/utils";
 import { HEX, HUD, IconWell } from "./primitives";
 
@@ -324,6 +325,98 @@ export const ToggleRow = ({
       />
     </span>
   </button>
+);
+
+/* ─────────────────────────── SliderRow ─────────────────────────── */
+
+interface SliderRowProps {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onValueChange: (v: number) => void;
+  title: string;
+  desc?: string;
+  icon: LucideIcon;
+  accent?: string;
+  /** Render the live value (e.g. "120%", "1.4×"). */
+  format?: (v: number) => string;
+}
+
+/** Chunky cream-panel labeled slider (same DNA as ToggleRow, with a track). */
+export const SliderRow = ({
+  value,
+  min,
+  max,
+  step,
+  onValueChange,
+  title,
+  desc,
+  icon,
+  accent = HUD.rose,
+  format,
+}: SliderRowProps) => (
+  <div
+    style={{
+      background: CREAM,
+      border: `2px solid ${MENU_INK}`,
+      borderRadius: 10,
+      padding: "10px 12px",
+      boxShadow: `0 3px 0 ${MENU_INK}`,
+    }}
+  >
+    <div className="flex items-center gap-3">
+      <IconWell icon={icon} accent={accent} size={32} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-[14px] font-bold" style={{ color: INK_TEXT }}>
+          {title}
+        </span>
+        {desc && (
+          <span
+            className="text-[11px] leading-snug"
+            style={{ color: "#9B7B63" }}
+          >
+            {desc}
+          </span>
+        )}
+      </span>
+      <span
+        className="shrink-0 text-[13px] font-bold tabular-nums"
+        style={{ color: INK_TEXT }}
+      >
+        {format ? format(value) : value}
+      </span>
+    </div>
+    <SliderPrimitive.Root
+      className="relative mt-3 flex h-5 w-full touch-none select-none items-center"
+      value={[value]}
+      min={min}
+      max={max}
+      step={step}
+      aria-label={title}
+      onValueChange={([v]) => onValueChange(v)}
+    >
+      <SliderPrimitive.Track
+        className="relative h-2.5 w-full grow rounded-full"
+        style={{ background: "#E6D6BF", border: `2px solid ${MENU_INK}` }}
+      >
+        <SliderPrimitive.Range
+          className="absolute h-full rounded-full"
+          style={{ background: accent }}
+        />
+      </SliderPrimitive.Track>
+      <SliderPrimitive.Thumb
+        className="block rounded-full outline-none"
+        style={{
+          width: 20,
+          height: 20,
+          background: "#fff",
+          border: `2px solid ${MENU_INK}`,
+          boxShadow: `0 2px 0 ${MENU_INK}`,
+        }}
+      />
+    </SliderPrimitive.Root>
+  </div>
 );
 
 /* ─────────────────────────── SelectField ─────────────────────────── */
