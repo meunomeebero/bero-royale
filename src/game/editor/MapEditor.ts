@@ -108,14 +108,16 @@ export class MapEditor {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#bfe3ff");
 
-    // Flat top-down lighting: a strong ambient + a near-vertical sun so cells read
-    // evenly (no long shadows to misjudge a cell by).
-    this.scene.add(new THREE.AmbientLight(new THREE.Color("#ffffff"), 1.5));
-    const sun = new THREE.DirectionalLight(new THREE.Color("#fff6ea"), 1.1);
+    // Flat top-down lighting — NEUTRAL/white on purpose (unlike the game's stylized
+    // pink atmosphere): from a pure overhead view a tinted sky washes every top face,
+    // so the editor uses white light to show props in their TRUE colors (green grass,
+    // colorful trees) — you're designing, you need to tell props apart at a glance.
+    this.scene.add(new THREE.AmbientLight(new THREE.Color("#ffffff"), 1.6));
+    const sun = new THREE.DirectionalLight(new THREE.Color("#ffffff"), 1.0);
     sun.position.set(4, 20, 6);
     this.scene.add(sun);
     this.scene.add(
-      new THREE.HemisphereLight(new THREE.Color("#ffe3f2"), new THREE.Color("#cdb89a"), 0.6),
+      new THREE.HemisphereLight(new THREE.Color("#ffffff"), new THREE.Color("#cccccc"), 0.5),
     );
 
     // Pure overhead orthographic camera (no tilt): straight down the −Y axis.
