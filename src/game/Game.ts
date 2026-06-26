@@ -7,6 +7,7 @@ import { AudioEngine } from "./AudioEngine";
 import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
 import { Decor } from "./Decor";
+import { buildWorld } from "./map/buildWorld";
 import { Butterflies } from "./Butterflies";
 import { Gore } from "./Gore";
 import { Kamehameha } from "./Kamehameha";
@@ -509,8 +510,12 @@ export class Game {
    * room seed arrives in multiplayer mode.
    */
   private buildWorld(seed: number) {
-    this.platform = new Platform(seed);
-    this.scene.add(this.platform.group);
+    // Terrain + decor are constructed by the shared `buildWorld` helper (also used
+    // by the map editor) so both build the world identically; everything below is
+    // the game-specific wiring around the returned `platform`/`decor`.
+    const world = buildWorld(this.scene, { seed });
+    this.platform = world.platform;
+    this.decor = world.decor;
 
     this.fog = new FogPatches(this.platform.size / 2);
     this.player = new Player(
@@ -592,8 +597,6 @@ export class Game {
       );
     });
 
-    this.decor = new Decor(this.platform, seed);
-    this.scene.add(this.decor.group);
     // Wire up bullet collisions with the world (terrain hills + decor props + bounds)
     this.bullets.setObstacles(this.decor.obstacles);
     this.bullets.setBounds(this.platform.getBounds());
