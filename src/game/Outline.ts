@@ -109,26 +109,17 @@ export function addOutline(object: THREE.Object3D): void {
 }
 
 /**
- * Build a parallel outline shell for an InstancedMesh (the terrain blocks): a
- * second InstancedMesh sharing the source's instance matrices, but with the
- * smoothed geometry + the singleton black shell material. Add the returned mesh
- * to the same parent. Tagged `userData.isOutline` like the per-mesh shells.
+ * Build a standalone outline shell from a (typically merged) geometry — used for
+ * a RAISED terrain block GROUP: merging the cells into one welded surface means
+ * the silhouette is a single outer line, with no internal grid between adjacent
+ * blocks. The shell owns its smoothed geometry (the merged source isn't shared).
  */
-export function makeInstancedOutline(
-  source: THREE.InstancedMesh,
-): THREE.InstancedMesh {
-  const shell = new THREE.InstancedMesh(
-    smoothedGeometry(source.geometry),
-    outlineMaterial,
-    source.count,
-  );
-  shell.instanceMatrix.array.set(source.instanceMatrix.array);
-  shell.instanceMatrix.needsUpdate = true;
+export function makeOutlineMesh(geometry: THREE.BufferGeometry): THREE.Mesh {
+  const shell = new THREE.Mesh(smoothedGeometry(geometry), outlineMaterial);
   shell.userData.isOutline = true;
-  shell.frustumCulled = source.frustumCulled;
   shell.castShadow = false;
   shell.receiveShadow = false;
-  shell.renderOrder = source.renderOrder - 1;
+  shell.renderOrder = -1;
   return shell;
 }
 

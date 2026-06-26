@@ -1,6 +1,7 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ModelLibrary } from "./ModelLibrary";
-import { makeInstancedOutline } from "./Outline";
+import { makeOutlineMesh } from "./Outline";
 import { mulberry32 } from "./rng";
 
 const PLATFORM_GRID = 180; // +50% bigger arena (was 120 → 90 world units wide)
@@ -182,11 +183,55 @@ export class Platform {
     });
     inst.instanceMatrix.needsUpdate = true;
     this.group.add(inst);
-    // Cel-shading: outline only RAISED tiles — the hill tops (baseY > 0) that
-    // stick up out of the flat earth and act as jump-over obstacles. The flat
-    // ground (baseY = 0) and the cliff under-layers (baseY < 0) stay clean, so
-    // only blocks "outside the earth" (plus trees/props/entities) get the line.
-    if (baseY > 0) this.group.add(makeInstancedOutline(inst));
+  }
+
+  /**
+   * Cel-shading outline for a RAISED block GROUP (hill tops): one merged shell
+   * over the cluster's EXTERIOR surface only — a top cap plus the side faces that
+   * face a non-raised neighbour. Internal faces (between two raised cells) are
+   * culled, so welding leaves a flat top with no internal rim: the cluster reads
+   * as a single outer silhouette, not a grid of per-block lines.
+   */
+  private addRaisedOutline(cells: Array<[number, number]>, baseY: number) {
+    if (cells.length === 0) return;
+    const gridHalf = PLATFORM_GRID / 2;
+    const h = BLOCK_SIZE / 2;
+    const yTop = baseY + BLOCK_HEIGHT;
+    const yMid = baseY + BLOCK_HEIGHT / 2;
+    const raised = (ix: number, iz: number) =>
+      ix >= 0 &&
+      ix < PLATFORM_GRID &&
+      iz >= 0 &&
+      iz < PLATFORM_GRID &&
+      this.cells[ix][iz].height > 0;
+
+    const parts: THREE.BufferGeometry[] = [];
+    // A quad with correct CCW winding for the face normal (smoothedGeometry
+    // recomputes the smooth normals; only the winding/positions matter here).
+    const side = () => new THREE.PlaneGeometry(BLOCK_SIZE, BLOCK_HEIGHT);
+    for (const [ix, iz] of cells) {
+      const cx = (ix - gridHalf + 0.5) * BLOCK_SIZE;
+      const cz = (iz - gridHalf + 0.5) * BLOCK_SIZE;
+      const top = new THREE.PlaneGeometry(BLOCK_SIZE, BLOCK_SIZE);
+      top.rotateX(-Math.PI / 2);
+      top.translate(cx, yTop, cz);
+      parts.push(top);
+      if (!raised(ix + 1, iz)) {
+        const g = side(); g.rotateY(Math.PI / 2); g.translate(cx + h, yMid, cz); parts.push(g);
+      }
+      if (!raised(ix - 1, iz)) {
+        const g = side(); g.rotateY(-Math.PI / 2); g.translate(cx - h, yMid, cz); parts.push(g);
+      }
+      if (!raised(ix, iz + 1)) {
+        const g = side(); g.translate(cx, yMid, cz + h); parts.push(g);
+      }
+      if (!raised(ix, iz - 1)) {
+        const g = side(); g.rotateY(Math.PI); g.translate(cx, yMid, cz - h); parts.push(g);
+      }
+    }
+    const merged = mergeGeometries(parts, false);
+    parts.forEach((g) => g.dispose());
+    if (merged) this.group.add(makeOutlineMesh(merged));
   }
 
   private buildSurfaceMeshes() {
@@ -223,6 +268,8 @@ export class Platform {
     buckets.forEach((cells, i) =>
       this.addTileLayer(this.grassTiles[i], cells, BLOCK_HEIGHT),
     );
+    // Single merged outline around the whole raised group (no internal grid).
+    this.addRaisedOutline(hillCells, BLOCK_HEIGHT);
   }
 
   private buildUnderLayers() {

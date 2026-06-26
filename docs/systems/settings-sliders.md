@@ -61,9 +61,11 @@ da próxima partida). Os setters (`Game.setVhsLevel` / `setAimSensitivity` / `se
   morro (`baseY > 0`) que ficam "fora da terra" e servem de obstáculo pra pular. O chão plano
   (`baseY = 0`) e os under-layers de penhasco (`baseY < 0`) **não** levam contorno; o scatter de
   grama também não.
-- **Terreno (instancing):** `Platform.addTileLayer` só adiciona o `makeInstancedOutline(inst)`
-  quando `baseY > 0`. O shader trata `#ifdef USE_INSTANCING` aplicando o `instanceMatrix` (senão
-  todos os blocos colapsariam num só). Cada bloco elevado leva o traço; o chão fica limpo.
+- **Grupo de blocos = só o contorno EXTERNO:** `Platform.addRaisedOutline(hillCells, BLOCK_HEIGHT)`
+  gera **uma malha mesclada** da **superfície externa** do grupo (top cap + faces laterais cujo
+  vizinho NÃO é elevado; faces internas entre dois blocos elevados são descartadas). Soldada +
+  suavizada, o topo fica plano sem rim interno → o cluster vira uma **silhueta única**, não uma
+  grade de linhas por bloco. O chão (`baseY = 0`) e os penhascos (`baseY < 0`) continuam limpos.
 - **Faixa / default:** `0%`–`100%`, default `20%`. Espessura em **unidades de mundo** (ortho ≈ px
   de tela constante), `OUTLINE_LEVEL_*` + `OUTLINE_THICKNESS_MAX` em `consts.ts`.
 - **Independente do "Modo desenho":** é geometria, não PostFX — funciona com o filtro on **ou** off.
@@ -79,9 +81,9 @@ da próxima partida). Os setters (`Game.setVhsLevel` / `setAimSensitivity` / `se
 | Arquivo | Papel |
 |---|---|
 | `src/game/consts.ts` | Chaves LS + faixas/defaults: `AIM_SENSITIVITY_*`, `VHS_LEVEL_*`, `OUTLINE_LEVEL_*`, `OUTLINE_THICKNESS_MAX`. |
-| `src/game/Outline.ts` | **Contorno cel-shading**: material singleton (casco preto BackSide, shader instancing-aware + fog, uniform `thickness`), `addOutline()` (meshes), `makeInstancedOutline()` (terreno), `setOutlineThickness()`, cache de geometria suavizada. |
+| `src/game/Outline.ts` | **Contorno cel-shading**: material singleton (casco preto BackSide + fog, uniform `thickness`), `addOutline()` (meshes), `makeOutlineMesh(geometry)` (malha mesclada do terreno), `setOutlineThickness()`, cache de geometria suavizada. |
 | `src/game/ModelLibrary.ts` | `create(..., outline)` chama `addOutline()` depois de clonar materiais. |
-| `src/game/Platform.ts` | `addTileLayer()` adiciona um `makeInstancedOutline(inst)` paralelo → contorno em **todo bloco de terreno**. |
+| `src/game/Platform.ts` | `addRaisedOutline()` → casco mesclado só da superfície externa dos grupos de blocos elevados (`baseY > 0`); chão e penhascos sem contorno. |
 | `src/game/Avatar.ts` / `Crates.ts` / `PowerUps.ts` / `Decor.ts` | Passam `outline: true` (Decor só pra `radius > 0`); `disposeObject` de Decor/PowerUps/Crates pula `userData.isOutline`. Avatar esconde os cascos junto com o fade de opacidade do corpo. |
 | `src/game/InputManager.ts` | `aimSensitivity`, `setAimSensitivity()`, `gainCursor()` (ganho centrado + clamp). |
 | `src/game/PostFX.ts` | `paramsForLevel(level)` (pixel + posterize; edges OFF) + `setLevel()` ao vivo. |
