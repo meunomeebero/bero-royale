@@ -32,12 +32,13 @@ function loadKey() {
 }
 
 function parseArgs(argv) {
-  const out = { model: argv[0], system: null, json: false, temp: 0.7 };
+  const out = { model: argv[0], system: null, json: false, temp: 0.7, max: null };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--system") out.system = argv[++i];
     else if (a === "--json") out.json = true;
     else if (a === "--temp") out.temp = Number(argv[++i]);
+    else if (a === "--max") out.max = Number(argv[++i]); // cap output tokens (cheaper)
   }
   return out;
 }
@@ -73,6 +74,7 @@ const body = {
   messages,
   temperature: args.temp,
 };
+if (args.max && Number.isFinite(args.max)) body.max_tokens = args.max;
 if (args.json) body.response_format = { type: "json_object" };
 
 const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
