@@ -248,6 +248,41 @@ export class Platform {
     return { minX: -half, maxX: half, minZ: -half, maxZ: half };
   }
 
+  /** Total cells per axis — grid is `gridSize²`, cells `(ix,iz) ∈ [0, gridSize)`. */
+  get gridSize(): number {
+    return PLATFORM_GRID;
+  }
+
+  /**
+   * World-space center (XZ) of cell `(ix,iz)` — the canonical cell→world mapping
+   * (mirrors `addTileLayer`). Y is omitted; callers use `surfaceY` for the prop base.
+   */
+  cellCenter(ix: number, iz: number): { x: number; z: number } {
+    const gridHalf = PLATFORM_GRID / 2;
+    return {
+      x: (ix - gridHalf + 0.5) * BLOCK_SIZE,
+      z: (iz - gridHalf + 0.5) * BLOCK_SIZE,
+    };
+  }
+
+  /** True if `(ix,iz)` is a valid integer cell inside the grid. */
+  cellInBounds(ix: number, iz: number): boolean {
+    return (
+      Number.isInteger(ix) &&
+      Number.isInteger(iz) &&
+      ix >= 0 &&
+      iz >= 0 &&
+      ix < PLATFORM_GRID &&
+      iz < PLATFORM_GRID
+    );
+  }
+
+  /** Surface height in BLOCKS at cell `(ix,iz)` (0 = base, 1 = one hill bump). */
+  cellHeight(ix: number, iz: number): number {
+    if (!this.cellInBounds(ix, iz)) return 0;
+    return this.cells[ix][iz].height;
+  }
+
   private cellAt(x: number, z: number): Cell | null {
     const gridHalf = PLATFORM_GRID / 2;
     const ix = Math.floor(x / BLOCK_SIZE + gridHalf);
