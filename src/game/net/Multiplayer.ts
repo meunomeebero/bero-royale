@@ -153,6 +153,16 @@ export interface ParryEvent {
   from: string; // the shooter whose bullet was parried
 }
 
+/** Two sabers crossed mid-swing (a CLASH): both `a` and `b` recoil and neither is
+ *  hit/stunned. Observers spawn white smoke + a clang at the contact point (x,z).
+ *  Relayed verbatim; the server also intercepts it to cancel a clashed bot's swing. */
+export interface ClashEvent {
+  a: string; // one swinger id
+  b: string; // the other swinger id
+  x: number; // world contact point X
+  z: number; // world contact point Z
+}
+
 /** Server announced a new power-up on the map (drives the floating pickup). */
 export interface PowerupSpawnEvent {
   id: string;
@@ -234,6 +244,7 @@ export class Multiplayer {
   private onMelee?: (e: MeleeEvent) => void;
   private onMeleeHit?: (e: MeleeHitEvent) => void;
   private onParry?: (e: ParryEvent) => void;
+  private onClash?: (e: ClashEvent) => void;
   private onPowerupSpawn?: (e: PowerupSpawnEvent) => void;
   private onPowerupTake?: (e: PowerupTakeEvent) => void;
   private onCrateSpawn?: (e: CrateSpawnEvent) => void;
@@ -317,6 +328,10 @@ export class Multiplayer {
   /** Register a handler for incoming melee hits (knockback self if targeted). */
   setMeleeHitHandler(cb: (e: MeleeHitEvent) => void) {
     this.onMeleeHit = cb;
+  }
+
+  setClashHandler(cb: (e: ClashEvent) => void) {
+    this.onClash = cb;
   }
 
   setParryHandler(cb: (e: ParryEvent) => void) {
@@ -475,6 +490,13 @@ export class Multiplayer {
           const e = payload as ParryEvent;
           if (e && e.id !== this.id) this.onParry?.(e);
         },
+        clash: (payload) => {
+          // No id-filter: a clash has two participant ids (a,b). Game skips the FX
+          // when WE are a participant (already applied locally) and renders the
+          // observer smoke/clang otherwise.
+          const e = payload as ClashEvent;
+          if (e) this.onClash?.(e);
+        },
         puspawn: (payload) => {
           const e = payload as PowerupSpawnEvent;
           // Global event: server fans out to ALL (incl. late joiners re-announces).
@@ -624,6 +646,12 @@ export class Multiplayer {
    *  authoritative bullet near us (the parry then actually shields). */
   sendParry(shooterId: string) {
     this.room.broadcast("parry", { id: this.id, from: shooterId });
+  }
+
+  /** Announce a saber clash between `a` and `b` at contact point (x,z): observers
+   *  render the clash FX; the server cancels a clashed server-bot's swing. */
+  sendClash(a: string, b: string, x: number, z: number) {
+    this.room.broadcast("clash", { a, b, x, z });
   }
 
   /** Update presence metadata (e.g. on respawn or after a kill). */

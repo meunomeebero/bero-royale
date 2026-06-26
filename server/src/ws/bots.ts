@@ -106,6 +106,32 @@ const MELEE_FIRE_LOCK_T = 1.0; // constant-fire lockout (no shots) after the stu
 const MELEE_SUPER_REARM = 1.0; // an interrupted super can't re-wind for this long
 const MELEE_STAGGER_FREE_MS = 500; // guaranteed un-staggerable window after each stagger
 
+// ── Saber SWING (a bot wields the saber too) — server-authoritative, mirrors client ──
+// A bot in melee range prefers the saber over the gun: it commits a SWING (a
+// telegraphed arc fanned via "melee"), then the strike lands at SWING_WINDUP_END_T
+// of the way through, scheduled via the same damage-on-arrival queue as fire(). A
+// hit mini-stuns the victim (staggerBot for bots, "meleehit" for players). Two
+// blades crossing mid-swing → a CLASH (mutual recoil, no damage). Numbers mirror
+// the client saber (src/game/saberKinematics.ts + Game.ts) so online == offline.
+const MELEE_DAMAGE = 3; // a saber hit is worth ~3 gun shots (mirrors the client melee damage)
+const SABER_RANGE = 3.2; // reach of the blade arc (point-in-arc radius)
+const SABER_ARC_DOT = 0.0; // forward half-disc: a victim counts if dot(facing, toVictim) >= this (≈90° each side)
+const MELEE_SWING_DUR = 0.4; // total swing animation duration (s) — the "melee" arc the client renders
+const SWING_WINDUP_END_T = 0.18; // fraction of the swing before the blade starts striking (strike-time)
+const SABER_CD = 0.6; // cooldown between a bot's swings (only ONE swing in flight at a time)
+const SABER_RECOIL_SPEED = 9; // clash recoil impulse speed (pushed back along the contact normal)
+// A bot prefers the saber when the target is this close; a brief LUNGE lets an
+// engager periodically close from shooting range into melee range (bounded so the
+// whole lobby doesn't melee-rush at once).
+const SABER_PREFER_RANGE = SABER_RANGE; // within this → swing instead of shoot (when off cooldown)
+const LUNGE_CD_MIN = 2.6; // shortest gap between a bot's melee lunges
+const LUNGE_CD_RND = 3.0; // + random spread (so lunges don't sync across bots)
+const LUNGE_TRIGGER_DIST = 7; // an engager within this (but outside saber range) may lunge in to melee
+const LUNGE_CHANCE = 0.6; // per eligible tick once off cooldown: START a lunge press (bounded melee-rush)
+const LUNGE_PRESS_DUR = 1.2; // how long an active lunge presses straight IN to melee (overrides orbit/kite)
+// Opposed-facing threshold for a clash: two swing directions must roughly oppose.
+const CLASH_OPPOSED_DOT = -0.2;
+
 // ── Engager cap (anti-dogpile, owner-locked) ─────────────────────────────────
 // In a lopsided fight (1 human vs N bots) every bot would otherwise lock onto the
 // lone player, close in, and fire — an unfair ~6 hits/sec wall plus overlapping
@@ -288,6 +314,16 @@ interface ServerBot {
   stunT: number; // >0 = full-action freeze (no steer/fire/super), decays each tick
   fireLockT: number; // >0 = constant-fire lockout (no shots), outlives the stun
   staggerOkAt: number; // epoch ms; the next stagger is only honored at/after this (anti-spam)
+  // ── Saber SWING (the bot wields the saber) ──
+  saberCd: number; // cooldown before this bot may swing again (0 = ready)
+  swinging: boolean; // true while a swing arc is in flight (drives snapshot weapon="saber")
+  swingT: number; // remaining swing time (s); decays each tick, 0 = idle
+  swingDirX: number; // FROZEN facing X at swing start (the arc + strike use this, not live yaw)
+  swingDirZ: number; // FROZEN facing Z at swing start
+  swingHitIds: Set<string>; // victims/clash-partners already resolved this swing (once-per-swing)
+  clashed: boolean; // true once a clash (self-detected or client-declared) cancelled this swing's damage
+  lungeCd: number; // cooldown before this bot may START a new melee LUNGE
+  lungeT: number; // >0 = actively pressing IN to melee (overrides orbit/kite); decays each tick
   // ── Per-bot identity (persistent skill → accuracy/cadence/aim-lead) ──
   skill: number;      // 0..1, rolled once, PRESERVED across respawn (a person keeps their rep)
   accEff: number;     // cached effective accuracy (derived from skill)
@@ -461,6 +497,32 @@ export class BotSim {
     return true;
   }
 
+  /**
+   * A CLIENT declared a clash (player↔server-bot) that names this bot. Cancel the
+   * bot's in-flight saber swing so its scheduled strike does NO damage, and apply a
+   * mutual recoil (knockback) pushed AWAY from the other party at (x,z). This is
+   * client-declared / best-effort (the project's deferred-anti-cheat posture): a
+   * forged clash can only neutralise a bot's own NON-damaging swing — it grants the
+   * sender nothing. No-op if the bot isn't currently swinging. Returns true if a
+   * live swinging bot was clashed. The "clash" relay (white smoke/sound) is done by
+   * the caller in index.ts; this just applies the server-side gameplay effect.
+   */
+  clashBot(room: string, botId: string, x: number, z: number): boolean {
+    if (room !== GAME_ROOM) return false;
+    const b = this.bots.get(botId);
+    if (!b || !b.alive) return false;
+    if (!b.swinging) return false; // nothing in flight to cancel
+    b.clashed = true; // resolveSaberSwing skips ALL victims while clashed (no damage, no stun)
+    // Recoil AWAY from the contact point (mutual recoil / block): the bot is shoved
+    // back along the contact→bot normal. Falls back to its facing if degenerate.
+    let nx = b.x - x;
+    let nz = b.z - z;
+    const len = Math.hypot(nx, nz);
+    if (len < 0.001) { nx = -b.swingDirX; nz = -b.swingDirZ; }
+    this.applySaberRecoil(room, b, nx, nz);
+    return true;
+  }
+
   /** Drain a bot to death from a player's concentrated mega ("kamehit"). */
   killBot(room: string, targetId: string): HitResult | null {
     if (room !== GAME_ROOM) return null;
@@ -569,6 +631,15 @@ export class BotSim {
       stunT: 0,
       fireLockT: 0,
       staggerOkAt: 0,
+      saberCd: rand() * SABER_CD, // stagger first-swing readiness across a spawn wave
+      swinging: false,
+      swingT: 0,
+      swingDirX: 1,
+      swingDirZ: 0,
+      swingHitIds: new Set<string>(),
+      clashed: false,
+      lungeCd: LUNGE_CD_MIN + rand() * LUNGE_CD_RND,
+      lungeT: 0,
       skill: 0, accEff: 0, cadenceMul: 0, leadMul: 0,
       commitT: 0,
       reactT: 0,
@@ -617,6 +688,15 @@ export class BotSim {
     b.stunT = 0;
     b.fireLockT = 0;
     b.staggerOkAt = 0;
+    b.saberCd = rand() * SABER_CD;
+    b.swinging = false;
+    b.swingT = 0;
+    b.swingDirX = 1;
+    b.swingDirZ = 0;
+    b.swingHitIds.clear();
+    b.clashed = false;
+    b.lungeCd = LUNGE_CD_MIN + rand() * LUNGE_CD_RND;
+    b.lungeT = 0;
     b.commitT = 0;
     b.reactT = 0;
     b.defensiveReactT = 0;
@@ -698,6 +778,10 @@ export class BotSim {
       // Drives the client's remote charge-orb glow (Game.ts ~1457): set while the
       // bot is winding up its telegraphed super, cleared on release/abort/death.
       charging: b.kameCharging, chargeT: b.kameChargeT, present: true,
+      // Weapon held: "saber" while a swing arc is in flight (so the blade shows on
+      // every client), "gun" otherwise. The client renders the saber off this AND
+      // the "melee" arc event; "gun" lets its shot/super inference run as before.
+      weapon: b.swinging ? "saber" : "gun",
     };
   }
 
@@ -863,6 +947,14 @@ export class BotSim {
       if (b.fireLockT > 0) b.fireLockT = Math.max(0, b.fireLockT - dt);
       // Decay the super hesitation timer (paused while stunned by a saber).
       if (b.stunT <= 0 && b.superHesitateT > 0) b.superHesitateT = Math.max(0, b.superHesitateT - dt);
+      // Decay the bot's OWN saber timers (swing in flight + cooldown + lunge gates).
+      if (b.saberCd > 0) b.saberCd = Math.max(0, b.saberCd - dt);
+      if (b.lungeCd > 0) b.lungeCd = Math.max(0, b.lungeCd - dt);
+      if (b.lungeT > 0) b.lungeT = Math.max(0, b.lungeT - dt);
+      if (b.swingT > 0) {
+        b.swingT = Math.max(0, b.swingT - dt);
+        if (b.swingT <= 0) { b.swinging = false; b.clashed = false; } // swing ended → weapon back to "gun"
+      }
 
       // ── CHARGE_SUPER: while winding up the telegraphed super, the bot COMMITS
       // (this short-circuits all normal combat below so a player gets a clean
@@ -1032,8 +1124,40 @@ export class BotSim {
         const refDist = isEngager ? ENGAGE_DIST : STANDOFF_DIST;
         const refBand = isEngager ? ENGAGE_BAND : STANDOFF_BAND;
 
-        // Approach / retreat / circle-strafe around the engagement band.
-        if (dist > refDist + refBand) {
+        // ── LUNGE intent (close into saber range) ──────────────────────────────
+        // To actually REACH melee, an engager that is off lunge-cooldown and within
+        // LUNGE_TRIGGER_DIST (but still outside saber range) STARTS a lunge press: a
+        // short window (LUNGE_PRESS_DUR) during which it drives STRAIGHT IN at the
+        // target — overriding the orbit/kite below — until it lands a swing or the
+        // window elapses. Bounded by LUNGE_CD + LUNGE_CHANCE so the whole lobby doesn't
+        // melee-rush at once. Suppressed while staggered / mid-swing / low-HP (a hurt
+        // bot keeps kiting). (b.lungeCd/lungeT/saberCd are decayed at the top of the tick.)
+        const wantSaber =
+          isEngager && b.swingT <= 0 && b.stunT <= 0 && b.health > DASH_RETREAT_HP;
+        if (
+          wantSaber &&
+          b.lungeCd <= 0 &&
+          b.lungeT <= 0 &&
+          dist > SABER_RANGE &&
+          dist <= LUNGE_TRIGGER_DIST &&
+          rand() < LUNGE_CHANCE
+        ) {
+          b.lungeCd = LUNGE_CD_MIN + rand() * LUNGE_CD_RND;
+          b.lungeT = LUNGE_PRESS_DUR; // press straight in for the next ~1.2s
+          // Kick the approach with a dash if grounded + off dash-cooldown. The
+          // per-tick `b.dashCd -= dt` decay is owned solely by the DASH block below
+          // (~line 1231); reading dashCd here stale-by-one-tick is harmless.
+          if (b.dashCd <= 0 && b.grounded) this.dashSafely(room, b, ux, uz);
+        }
+        const lunging = wantSaber && b.lungeT > 0 && dist > SABER_RANGE;
+
+        // Approach / retreat / circle-strafe around the engagement band — UNLESS a
+        // lunge press is active, in which case drive straight at the target to close
+        // into saber range (no kite-back, so the bot can actually reach melee).
+        if (lunging) {
+          mvx = ux;
+          mvz = uz;
+        } else if (dist > refDist + refBand) {
           // Too far: close in (with a slight strafe so the approach isn't a straight line).
           mvx = ux * 0.85 - uz * b.strafeDir * 0.5;
           mvz = uz * 0.85 + ux * b.strafeDir * 0.5;
@@ -1047,7 +1171,9 @@ export class BotSim {
           mvz = ux * b.strafeDir;
         }
 
-        // Low HP: bias the whole vector away from the target (retreat / kite).
+        // Low HP: bias the whole vector away from the target (retreat / kite). Never
+        // while lunging (a committed melee press isn't gated here — wantSaber already
+        // excludes low HP, so this only affects the non-lunge orbit/kite vector).
         if (b.health <= DASH_RETREAT_HP) {
           mvx = mvx * 0.4 - ux * 0.8;
           mvz = mvz * 0.4 - uz * 0.8;
@@ -1060,12 +1186,35 @@ export class BotSim {
           if (rand() < 0.5) b.strafeDir = -b.strafeDir;
         }
 
+        // ── SABER swing gate (sibling of the fire gate; preferred in melee) ──────
+        // In saber range, off cooldown, grounded, not stunned/fire-locked/mid-swing →
+        // SWING instead of shooting. The bot prefers the blade when close, else keeps
+        // shooting (coherent with the offline bot behaviour). One swing in flight at a
+        // time (b.swingT gate). fireLockT (a stagger lockout) also suppresses a swing.
+        let didSwing = false;
+        if (
+          isEngager &&
+          b.reactT <= 0 &&
+          b.saberCd <= 0 &&
+          b.swingT <= 0 &&
+          dist <= SABER_PREFER_RANGE &&
+          b.grounded &&
+          b.stunT <= 0 &&
+          b.fireLockT <= 0
+        ) {
+          this.startSaberSwing(room, b, tgt);
+          didSwing = true;
+        }
+
         // ── Shoot (with slight aim leading + varied cadence) ──
         // Only ENGAGERS fire: the nearest few bots per player keep the heat fair
-        // (capping the dogpile at ~MAX_ENGAGERS_PER_PLAYER guns instead of N).
+        // (capping the dogpile at ~MAX_ENGAGERS_PER_PLAYER guns instead of N). A bot
+        // that swung this tick (or is mid-swing) does NOT also shoot — saber takes over.
         b.shootCd -= dt;
         if (
           isEngager &&
+          !didSwing &&
+          b.swingT <= 0 &&
           b.reactT <= 0 &&
           b.shootCd <= 0 &&
           dist <= SHOOT_RANGE &&
@@ -1591,6 +1740,202 @@ export class BotSim {
   }
 
   /**
+   * Begin a saber SWING toward `tgt`: FREEZE the facing toward the target (the arc
+   * + the strike both read this frozen dir, NOT the live yaw, so the swing can't be
+   * re-aimed mid-animation), fan the visual "melee" arc NOW, and SCHEDULE the strike
+   * to land at SWING_WINDUP_END_T of the way through the swing — via the SAME
+   * damage-on-arrival queue fire() uses — so the hit coincides with the blade
+   * visually striking. Only ONE swing is in flight at a time (gated by b.swinging).
+   * Mirrors the player saber (src/game/Game.ts); the snapshot weapon flips to
+   * "saber" via b.swinging while swingT>0.
+   */
+  private startSaberSwing(room: string, b: ServerBot, tgt: Target) {
+    const dx = tgt.x - b.x;
+    const dz = tgt.z - b.z;
+    const len = Math.hypot(dx, dz) || 1;
+    b.swingDirX = dx / len;
+    b.swingDirZ = dz / len;
+    b.swinging = true;
+    b.swingT = MELEE_SWING_DUR;
+    b.swingHitIds.clear();
+    b.clashed = false;
+    b.saberCd = SABER_CD;
+    b.lungeT = 0; // swing landed → stop pressing in (resume orbit/kite during the cooldown)
+    b.yaw = Math.atan2(b.swingDirZ, b.swingDirX); // commit the facing to the strike
+
+    // VISUAL arc (matches the player MeleeEvent shape {id, origin, dir}). The client
+    // renders the bot's full saber arc from this (bots render as RemotePlayers).
+    this.fanout(room, "melee", {
+      id: b.id,
+      origin: { x: b.x, y: MUZZLE_Y, z: b.z },
+      dir: { x: b.swingDirX, y: 0, z: b.swingDirZ },
+    }, b.id);
+
+    // STRIKE scheduled at strike-time (≈0.072s) via the shared damage-on-arrival queue,
+    // so the hit lands when the blade visually strikes — same mechanism as fire().
+    this.hub.enqueueHit(room, {
+      applyAt: Date.now() + MELEE_SWING_DUR * SWING_WINDUP_END_T * 1000,
+      resolve: () => this.resolveSaberSwing(room, b),
+    });
+  }
+
+  /**
+   * Resolve a saber swing's strike at strike-time. Recompute the arc from the bot's
+   * CURRENT position + the FROZEN swing direction, then for each enemy (players +
+   * other bots) inside SABER_RANGE and forward of the blade (dot >= SABER_ARC_DOT),
+   * not already resolved this swing and not clashed:
+   *   - bot↔bot CLASH: the victim bot is itself mid-swing in its strike window with
+   *     an OPPOSED facing → fan "clash" ONCE, cancel BOTH swings' damage + recoil
+   *     both, NO damage, NO stun;
+   *   - player victim: damagePlayer × MELEE_DAMAGE + "meleehit" stagger cue;
+   *   - bot victim: damageBot × MELEE_DAMAGE + staggerBot (authoritative stun) + a
+   *     "meleehit" observer cue so the victim bot visibly staggers on every client.
+   * Scalar point-in-arc test only (no client blade geometry on the server).
+   */
+  private resolveSaberSwing(room: string, b: ServerBot) {
+    if (!b.alive || !b.swinging) return; // swing ended/cancelled before the strike landed
+
+    const dirX = b.swingDirX;
+    const dirZ = b.swingDirZ;
+    const r2 = SABER_RANGE * SABER_RANGE;
+
+    // ── Players first (the headline victims) ──
+    for (const p of this.hub.playerTargets(room)) {
+      if (b.clashed) break; // a clash this strike cancels all remaining damage
+      if (b.swingHitIds.has(p.id)) continue;
+      const px = p.x - b.x;
+      const pz = p.z - b.z;
+      const d2 = px * px + pz * pz;
+      if (d2 > r2) continue;
+      const d = Math.sqrt(d2) || 1;
+      if ((px / d) * dirX + (pz / d) * dirZ < SABER_ARC_DOT) continue; // outside forward arc
+      b.swingHitIds.add(p.id);
+      this.strikePlayer(room, b, p.id, dirX, dirZ);
+    }
+
+    // ── Other bots (clash detection + bot-on-bot saber damage) ──
+    for (const other of this.bots.values()) {
+      if (b.clashed) break;
+      if (other.id === b.id || !other.alive) continue;
+      if (b.swingHitIds.has(other.id)) continue;
+      const ox = other.x - b.x;
+      const oz = other.z - b.z;
+      const d2 = ox * ox + oz * oz;
+      if (d2 > r2) continue;
+      const d = Math.sqrt(d2) || 1;
+      if ((ox / d) * dirX + (oz / d) * dirZ < SABER_ARC_DOT) continue; // outside forward arc
+
+      // CLASH: the other bot is ALSO mid-swing — and PAST its wind-up, i.e. in the
+      // STRIKE phase (mirrors the client's isSaberStriking) — with an opposed facing
+      // → two blades cross. swingT decays from MELEE_SWING_DUR to 0, so "past wind-up"
+      // ⇔ swingT <= MELEE_SWING_DUR * (1 - SWING_WINDUP_END_T). Fan ONCE (guard via
+      // swingHitIds on BOTH so the mirrored strike doesn't double-fire), cancel both
+      // swings' damage, recoil both.
+      const otherStriking =
+        other.swinging &&
+        !other.clashed &&
+        !other.swingHitIds.has(b.id) &&
+        other.swingT <= MELEE_SWING_DUR * (1 - SWING_WINDUP_END_T);
+      const opposed = dirX * other.swingDirX + dirZ * other.swingDirZ < CLASH_OPPOSED_DOT;
+      if (otherStriking && opposed) {
+        b.swingHitIds.add(other.id);
+        other.swingHitIds.add(b.id);
+        b.clashed = true;
+        other.clashed = true;
+        const mx = (b.x + other.x) * 0.5;
+        const mz = (b.z + other.z) * 0.5;
+        this.fanout(room, "clash", { a: b.id, b: other.id, x: mx, z: mz }, b.id);
+        // Mutual recoil: each bot shoved away from the contact midpoint.
+        this.applySaberRecoil(room, b, b.x - mx, b.z - mz);
+        this.applySaberRecoil(room, other, other.x - mx, other.z - mz);
+        break; // the clash cancels the rest of THIS swing (b.clashed now true)
+      }
+
+      // No clash → a clean bot-on-bot saber hit.
+      b.swingHitIds.add(other.id);
+      this.strikeBot(room, b, other, dirX, dirZ);
+    }
+  }
+
+  /** Apply a saber hit to a PLAYER victim: MELEE_DAMAGE points (shield-first) + the
+   *  death/kill feed (mirrors resolveShot), then the "meleehit" stun cue the victim's
+   *  client applies (server-origin = trusted). */
+  private strikePlayer(room: string, b: ServerBot, targetId: string, dirX: number, dirZ: number) {
+    let res: HitResult | null = null;
+    for (let i = 0; i < MELEE_DAMAGE; i++) {
+      const r = this.hub.damagePlayer(room, targetId, b.id);
+      if (!r) break; // target vanished mid-loop
+      res = r;
+      if (r.died) break;
+    }
+    // The stun/knockback cue: server-origin = trusted. Sent even on a shielded hit
+    // (the saber still staggers). Clamped values are the canonical server constants.
+    this.fanout(room, "meleehit", {
+      id: b.id,
+      target: targetId,
+      dir: { x: dirX, y: 0, z: dirZ },
+      stunMs: Math.round(MELEE_STUN_T * 1000),
+      fireLockMs: Math.round(MELEE_FIRE_LOCK_T * 1000),
+      interruptCharge: true,
+    }, b.id);
+    if (!res) return;
+    if (res.died) {
+      this.fanout(room, "died", { id: targetId, x: res.x, z: res.z, by: b.id }, b.id);
+      b.kills += 1;
+      b.streak += 1;
+      this.fanout(room, "kill", {
+        id: `srvk_${this.killSeq++}`,
+        killer: b.name,
+        victim: res.victimName,
+        streak: Math.min(b.streak, 2),
+      }, b.id);
+    }
+  }
+
+  /** Apply a saber hit to a BOT victim: MELEE_DAMAGE via damageBot (which fans the
+   *  kill feed itself on a bot→bot frag) + an AUTHORITATIVE staggerBot, and a
+   *  "meleehit" observer cue so the victim bot visibly staggers on EVERY client
+   *  (online must render 100% of what happens — a server bot has no client to honor
+   *  the stun, so the relayed cue is the fidelity carrier for observers). */
+  private strikeBot(room: string, b: ServerBot, other: ServerBot, dirX: number, dirZ: number) {
+    let res: HitResult | null = null;
+    for (let i = 0; i < MELEE_DAMAGE; i++) {
+      const r = this.damageBot(room, other.id, b.id);
+      if (!r) break;
+      res = r;
+      if (r.died) break;
+    }
+    this.staggerBot(room, other.id); // authoritative server-side stun on the victim bot
+    // Observer cue: the victim is a RemotePlayer on every client → the "meleehit"
+    // makes them visibly react (knockback/flash), matching what a player victim shows.
+    this.fanout(room, "meleehit", {
+      id: b.id,
+      target: other.id,
+      dir: { x: dirX, y: 0, z: dirZ },
+      stunMs: Math.round(MELEE_STUN_T * 1000),
+      fireLockMs: Math.round(MELEE_FIRE_LOCK_T * 1000),
+      interruptCharge: true,
+    }, b.id);
+    if (res?.died) {
+      this.fanout(room, "died", { id: other.id, x: res.x, z: res.z, by: b.id }, b.id);
+      // damageBot already fanned the bot→bot "kill" feed line; do NOT double-emit.
+    }
+  }
+
+  /** Apply a mutual-recoil knockback to a bot along (nx,nz): reuse the dash impulse
+   *  channel so the lunge rides the existing "s" vx/vz dead-reckoning + the "dash"
+   *  juice. No allocation; normalises in place. */
+  private applySaberRecoil(room: string, b: ServerBot, nx: number, nz: number) {
+    const len = Math.hypot(nx, nz);
+    const ux = len > 0.001 ? nx / len : -b.swingDirX;
+    const uz = len > 0.001 ? nz / len : -b.swingDirZ;
+    b.dashVx = ux * SABER_RECOIL_SPEED;
+    b.dashVz = uz * SABER_RECOIL_SPEED;
+    b.dashT = DASH_DURATION;
+    this.fanout(room, "dash", { id: b.id, dir: Math.atan2(uz, ux) }, b.id);
+  }
+
+  /**
    * Fire a normal shot at `tgt`: broadcast the tracer NOW, but SCHEDULE the
    * damage to land when the visible bullet arrives (`dist/BULLET_SPEED` later)
    * instead of applying it synchronously — so the victim SEES the shot before
@@ -1706,6 +2051,8 @@ export class BotSim {
       commitT: b.commitT,
       reactT: b.reactT, superHesitateT: b.superHesitateT, defensiveReactT: b.defensiveReactT,
       kameCharging: b.kameCharging, kills: b.kills, streak: b.streak,
+      saberCd: b.saberCd, swinging: b.swinging, swingT: b.swingT, clashed: b.clashed,
+      stunT: b.stunT, fireLockT: b.fireLockT,
     }));
   }
 }

@@ -3,7 +3,8 @@
 **Keywords:** bot, server bot, srvbot, IA, AI, backfill, engager, dogpile, target, hitscan, fire,
 super, kamehameha, telegraph, dash, jump, item-seek, powerup, stagger, stun, tick, 20Hz, h(dano),
 skill, accEff, cadenceMul, leadMul, reactT, commitT, superHesitateT, kills, streak, genHandle,
-retaliation, player-attention-floor, yaw-slew, MAX_TURN_RATE, miss-spread, kill-feed, reaction.
+retaliation, player-attention-floor, yaw-slew, MAX_TURN_RATE, miss-spread, kill-feed, reaction,
+sabre, saber, swing, melee, meleehit, clash, bloqueio, block, recoil, lunge, saberCd, swingT.
 
 > Domínio: IA/combate online server-side. Autoridade de rede: [`netcode-trust-model.md`](netcode-trust-model.md).
 > O bug 🔴 dos "tiros invisíveis" mora aqui: [`online-invisible-shots-diagnosis.md`](online-invisible-shots-diagnosis.md).
@@ -30,7 +31,7 @@ stem (sem dígitos). Animal dedupado entre bots vivos. `rosterMembers` expõe `k
 ## Mapa de código (`server/src/ws/bots.ts`)
 | Peça | Onde | O quê |
 |---|---|---|
-| Estado do bot | `interface ServerBot` | pos/vel, jump arc (y/vy/grounded), dash, HP/shield, target, super (kameCharging), item-seek, buffs, **stagger** (stunT/fireLockT/staggerOkAt), **skill/accEff/cadenceMul/leadMul**, **commitT**, **reactT**, **superHesitateT/\_superArmed**, **kills/streak** |
+| Estado do bot | `interface ServerBot` | pos/vel, jump arc (y/vy/grounded), dash, HP/shield, target, super (kameCharging), item-seek, buffs, **stagger** (stunT/fireLockT/staggerOkAt), **sabre** (saberCd/swinging/swingT/swingDirX/Z/swingHitIds/clashed/lungeCd/lungeT), **skill/accEff/cadenceMul/leadMul**, **commitT**, **reactT**, **superHesitateT/\_superArmed**, **kills/streak** |
 | Gerar nome | `genHandle(taken)` | handle procedural PT-BR+anime, deduplicação nome+stem |
 | Derivar skill | `deriveSkill(b)` | computa accEff/cadenceMul/leadMul a partir de b.skill |
 | Loop principal | `tick(room, dt)` | mantém população [3,6] → estima vel dos alvos → **engager cap** → por bot: super-charge, seleção de alvo (equal-by-distance), nav (engage/seek/hunt), separação, steering, dash/jump, fire, integra física, fanout `"s"` → **player-attention-floor (post-pass)** |
@@ -42,7 +43,10 @@ stem (sem dígitos). Animal dedupado entre bots vivos. `rosterMembers` expõe `k
 | Super (kamehameha) | `tickSuperCharge`/`fireSuper`/`abortSuper` | telegrafo ~1.2s (`SUPER_CHARGE`), feixe hitscan letal dodgeable, `SUPER_DAMAGE=3` shield-first; **superHesitateT** (0.15–0.50s, skill-scaled): gate arm→commit em 2 passos; `_superArmed` flag; slot-safe (clearado em abort/stagger/respawn) |
 | Dano sofrido | `damageBot`/`killBot` | shield-first; `wasCalm` semente `reactT`; respawn após `RESPAWN_MS=5000` |
 | Kill feed | `damageBot` (bot→bot) + `resolveShot`/`resolveSuper` (bot→player) | `kills` (lifetime, preservado) + `streak` (reset em morte); emitido como `min(streak,2)` → nunca tripla o banner de rampage `>=3` do cliente |
-| Stagger (sabre) | `staggerBot` + interceptação de `meleehit` em `index.ts` | stun/fire-lock/super-interrupt server-side (ver [`weapons-melee-saber.md`](weapons-melee-saber.md)) |
+| Stagger (sabre) | `staggerBot` + interceptação de `meleehit` em `index.ts` | stun/fire-lock/super-interrupt server-side (vítima = bot; ver [`weapons-melee-saber.md`](weapons-melee-saber.md)) |
+| **Sabre do bot (swing)** | `startSaberSwing`/`resolveSaberSwing` + `strikePlayer`/`strikeBot`/`applySaberRecoil` | bot em melee **prefere o sabre**: fana `"melee"` (arco) AGORA + agenda o strike (em `SWING_WINDUP_END_T*MELEE_SWING_DUR≈72ms` via `enqueueHit`, mesmo padrão de `fire`). Strike: ponto-em-arco escalar (`dist≤SABER_RANGE=3.2 && dot≥SABER_ARC_DOT=0`); vítima player → `damagePlayer×MELEE_DAMAGE=3` + fana `"meleehit"` (stun 250/firelock 1000/interruptCharge); vítima bot → `damageBot×3` + `staggerBot` (autoritativo) + `"meleehit"` (cue de fidelidade pro observador). `weapon:"saber"` no snapshot enquanto `swinging`. |
+| **Clash (bloqueio)** | `resolveSaberSwing` (bot↔bot) + `clashBot` + branch `clash` em `index.ts` | duas lâminas cruzando mid-swing com facing oposto (`dot<CLASH_OPPOSED_DOT=-0.2`) → **recoil mútuo, sem dano/stun**. bot↔bot: servidor DETECTA e fana `clash{a,b,x,z}` (guard 1×/swing via `swingHitIds`). player↔bot: cliente declara `clash` → `index.ts` relaya pra todos (smoke/som) + `clashBot` cancela o swing do bot (`clashed=true`, não causa dano) + recoil. Forjar `clash` só anula o swing **não-letal** do próprio bot (postura anti-cheat diferida). |
+| **Lunge (fechar pra melee)** | dentro do `tick` (engage branch) | um engager off-cooldown dentro de `LUNGE_TRIGGER_DIST=7` inicia uma press (`lungeT=LUNGE_PRESS_DUR=1.2s`, gated por `lungeCd`+`LUNGE_CHANCE`) que **dirige reto** ao alvo (override do orbit/kite) até entrar em `SABER_RANGE` e dar o swing — limitado pra a sala toda não fazer melee-rush. |
 | Pickups | `applyBotPickup` | heal/rapid/speed/dash/shield/super (resolvido em `powerups.ts`) |
 
 ## Acoplamento (boundaries)
@@ -77,6 +81,16 @@ e o beam-front do super. O fluxo completo está documentado lá. **Pendente de d
 | `COMMIT_MIN` | 0.8s | duração mínima do commitT (0.8–1.6s, skill-scaled) |
 | `COMMIT_SPAN` | 0.8s | span do commit |
 | `MISS_SPREAD_RAD` | 0.18 | deflexão máxima do tracer cosmético em miss |
+| `MELEE_DAMAGE` | 3 | dano do sabre por swing (shield-first; ~3 tiros) |
+| `SABER_RANGE` | 3.2 | alcance do arco do sabre (point-in-arc) |
+| `SABER_ARC_DOT` | 0.0 | half-disc frontal: vítima conta se `dot(facing,toVictim)≥isto` (~90° cada lado) |
+| `MELEE_SWING_DUR` | 0.4s | duração do swing (arco `"melee"`) |
+| `SWING_WINDUP_END_T` | 0.18 | fração do swing antes do strike (strike-time ≈72ms) |
+| `SABER_CD` | 0.6s | cooldown entre swings (1 swing em voo por vez) |
+| `CLASH_OPPOSED_DOT` | -0.2 | limite de facing oposto pra um clash |
+| `SABER_RECOIL_SPEED` | 9 | impulso de recuo no clash (canal de dash/knockback) |
+| `LUNGE_TRIGGER_DIST` | 7 | dentro disto (e fora do sabre) um engager pode iniciar a press de lunge |
+| `LUNGE_PRESS_DUR` | 1.2s | duração da press que dirige reto pra dentro do alcance do sabre |
 
 ## Tell conhecido sobrevivente
 Todos os bots compartilham a mesma **cinemática de movimento** (orbit/dash/jump idênticos). O campo

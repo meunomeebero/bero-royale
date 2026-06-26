@@ -28,7 +28,10 @@ export function makeHarness(opts: { players?: FakePlayer[] } = {}) {
     sim,
     setPlayers: (ps: FakePlayer[]) => { players = ps; },
     fanned,
-    drainHits: () => { const now = Date.now(); for (let i = pending.length - 1; i >= 0; i--) { if (pending[i].applyAt <= now) { pending[i].resolve(); pending.splice(i, 1); } } },
+    // Resolve every scheduled hit due at `now` (default wall-clock). Tests that need
+    // a sub-second scheduled hit (e.g. the saber strike at ≈72ms) pass an explicit
+    // future `now` so they don't depend on real time elapsing between ticks.
+    drainHits: (now: number = Date.now()) => { for (let i = pending.length - 1; i >= 0; i--) { if (pending[i].applyAt <= now) { pending[i].resolve(); pending.splice(i, 1); } } },
     inspect: () => sim.inspect(ROOM),
   };
 }

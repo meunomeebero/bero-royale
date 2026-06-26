@@ -5,18 +5,23 @@ swing, baseball, parry, reflexão de projéteis, reflect, deflect, deflexão, im
 dano puro, hotbar.
 
 > Domínio: combate / arma de melee. Para visão geral do combate veja
-> [`../ARCHITECTURE.md`](../ARCHITECTURE.md); o **stun** migrou para a Energy Blast (o knockback/flash
-> voltaram pro saber, **sem** stun) — veja [`weapons-energy-blast.md`](weapons-energy-blast.md); para netcode veja
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md); para netcode veja
 > [`netcode-trust-model.md`](netcode-trust-model.md).
+>
+> ⚔️ **Atualização 2026-06-26:** o **stun voltou ao sabre** + nova mecânica de **clash (bloqueio)**,
+> coerentes em **todo contexto** (bots agora usam sabre). A regra de negócio + a matriz de autoridade
+> + os números vivem em **[`saber-clash-and-stun.md`](saber-clash-and-stun.md)** — este doc cobre o
+> swing/parry base.
 
 ## O que é
 A 3ª arma (slot 3 da hotbar). A `FireMode` é `"lightsaber"`; o item é um **sabre de luz** que
 flutua à frente do cubo (sem mão). Substituiu o antigo bastão de madeira.
 
-**Pós-rebalance 2026-06-25:** o Lightsaber é **dano puro + deflexão**. A velha mecânica de **stun
-(travar tiro + interromper super + freeze + pulinho/flash)** foi REMOVIDA daqui e MIGROU para a
-Energy Blast (ver [`weapons-energy-blast.md`](weapons-energy-blast.md)). Antes o saber era OP
-(dano alto + control); agora seu valor é a **deflexão de balas/super** e o dano corpo-a-corpo.
+**Histórico de balance:** em 2026-06-25 o stun foi **removido** do sabre (era OP) e migrou pra Energy
+Blast. Em **2026-06-26** o stun **voltou** ao sabre (freeze + trava tiro + interrompe o canal) com
+contrapeso de **clash + dash**, e as duas armas atordoam — ver
+[`saber-clash-and-stun.md`](saber-clash-and-stun.md). Além do stun, o valor do sabre é a **deflexão**
+de balas/super e o dano corpo-a-corpo.
 
 ## Onde está o código (mapa)
 | Peça | Arquivo | O quê |
@@ -38,10 +43,11 @@ Energy Blast (ver [`weapons-energy-blast.md`](weapons-energy-blast.md)). Antes o
   `MELEE_SWING_DUR=0.4s`, `MELEE_COOLDOWN=0.55s`, wind-up = primeiros 18%. Aim **congela** durante o swing.
 - **Dano:** `MELEE_DAMAGE=3` HP por swing, hit por segmento varrido (`MELEE_SWEEP_RADIUS=0.6`), 1× por
   alvo por `swingId`.
-- **Impacto no acerto (SEM stun):** knockback pra trás + **blink branco** (`SABER_IMPACT_FLASH=0.6s`) +
-  **fumaça branca** (`meleeImpactFx`) — a sensação de pancada voltou. Mas **NÃO** trava tiro e **NÃO**
-  interrompe o canal/super da vítima (o controle vive na Energy Blast). Implementado client-side
-  (`rp.applyStaggerVisual` p/ remotos, `bot.knockback` + `bot.flash` p/ bots; **sem** `meleehit`).
+- **Impacto no acerto (COM stun — 2026-06-26):** knockback + **blink branco** (`SABER_IMPACT_FLASH=0.6s`)
+  + **fumaça branca** + **mini-stun** (`MELEE_STUN=0.25s` freeze, `MELEE_FIRE_LOCK=1.0s` trava tiro,
+  **interrompe a canalização da Energy Blast**). Aplicado em todo contexto (`bot.applyMeleeStagger`,
+  `player.applyMeleeStagger`, `sendMeleeHit`→receptor com clamps, server `staggerBot`). **Clash**
+  (cruzar lâminas) bloqueia o acerto. Detalhes + matriz: [`saber-clash-and-stun.md`](saber-clash-and-stun.md).
 - **Alcance:** `MELEE_RANGE=3.2` (dobrado).
 - **Rastro:** `SaberTrail` desenha um arco azul aditivo seguindo a lâmina (alimentado no strike, fade ~0.16s,
   `clear()` no início de cada swing pra não soldar arcos).

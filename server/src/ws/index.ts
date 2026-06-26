@@ -230,6 +230,26 @@ export function attachWebSocket(server: Server): RoomHub {
             }
           }
 
+          // A CLIENT-declared saber CLASH (player↔server-bot): two blades crossed.
+          // The verbatim relay below carries the white-smoke/sound cue to every
+          // observer at (x,z). Here we additionally apply the server-side gameplay
+          // effect: if `a` or `b` names one of THIS room's bots, cancel that bot's
+          // in-flight (non-damaging) swing + apply a mutual recoil. This is
+          // client-declared / best-effort (deferred-anti-cheat posture): a forged
+          // clash can only neutralise a bot's OWN swing — it grants the sender
+          // nothing. x,z are validated as finite numbers before use.
+          if (m.event === "clash" && m.payload && typeof m.payload === "object") {
+            const c = m.payload as { a?: unknown; b?: unknown; x?: unknown; z?: unknown };
+            const cx = typeof c.x === "number" && Number.isFinite(c.x) ? c.x : 0;
+            const cz = typeof c.z === "number" && Number.isFinite(c.z) ? c.z : 0;
+            if (typeof c.a === "string" && hub.botSim.hasBot(ws.room, c.a)) {
+              hub.botSim.clashBot(ws.room, c.a, cx, cz);
+            }
+            if (typeof c.b === "string" && hub.botSim.hasBot(ws.room, c.b)) {
+              hub.botSim.clashBot(ws.room, c.b, cx, cz);
+            }
+          }
+
           const out: ServerMsg = {
             t: "broadcast",
             event: m.event,
