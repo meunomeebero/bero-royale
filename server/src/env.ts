@@ -56,3 +56,10 @@ export const TURN_SECRET: string | undefined = process.env.TURN_SECRET;
  * missing the ICE list is STUN-only.
  */
 export const TURN_HOST: string | undefined = process.env.TURN_HOST;
+
+/**
+ * Shared secret that gates the map editor (`/api/editor/auth` + `PUT /api/map`).
+ * Checked SERVER-SIDE on every write — the client gate is cosmetic. Falls back to
+ * a baked default for local dev; in prod set it via the Shard Cloud run command.
+ */
+export const MAP_EDITOR_PASSWORD = process.env.MAP_EDITOR_PASSWORD ?? "29981721";
