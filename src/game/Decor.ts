@@ -274,7 +274,11 @@ export class Decor {
     }
 
     this.items.set(entry.id, record);
-    this.cellToId.set(cellKey(entry.ix, entry.iz), entry.id);
+    // Only the data/editor path is cell-addressable (one prop per cell). The seeded
+    // scatter is render-only and may legally overlap a cell; indexing it would let a
+    // later same-cell scatter prop clobber cellToId → break removeAt/serialize. The
+    // scatter path passes `rand`; the data/editor path does not.
+    if (!rand) this.cellToId.set(cellKey(entry.ix, entry.iz), entry.id);
   }
 
   // ---- Addressable place / delete (editor) ------------------------------
@@ -378,8 +382,12 @@ export class Decor {
 
   dispose() {
     for (const record of this.items.values()) {
+      disposeObject(record.object); // per-instance materials only (geometry is shared)
       if (record.shadow) record.shadow.dispose();
     }
+    this.obstacles.splice(0); // empty in place — never reassign (bullets holds the ref)
+    this.items.clear();
+    this.cellToId.clear();
   }
 
   // ---- Cell helpers -----------------------------------------------------
@@ -398,12 +406,15 @@ function cellKey(ix: number, iz: number): number {
   return ix * 1000 + iz;
 }
 
-/** Recursively dispose a prop's geometries + cloned materials. */
+/** Recursively dispose a prop's per-instance cloned materials.
+ *  IMPORTANT: do NOT dispose geometry — `ModelLibrary.create` does `tmpl.clone(true)`,
+ *  which SHARES the template's BufferGeometry across every instance of that asset.
+ *  Disposing it here would break all other (and future) instances of the same prop.
+ *  Only the materials are per-instance clones (ModelLibrary clones them) and safe to free. */
 function disposeObject(obj: THREE.Object3D) {
   obj.traverse((child) => {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh) return;
-    mesh.geometry?.dispose();
     const mat = mesh.material;
     if (Array.isArray(mat)) {
       for (const m of mat) m.dispose();
