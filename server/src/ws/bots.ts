@@ -1703,9 +1703,9 @@ export class BotSim {
       id: b.id, name: b.name, animal: b.animal, x: b.x, z: b.z, yaw: b.yaw,
       health: b.health, alive: b.alive, skill: b.skill, accEff: b.accEff,
       cadenceMul: b.cadenceMul, leadMul: b.leadMul, targetId: b.targetId,
-      commitT: (b as any).commitT ?? 0,
-      reactT: (b as any).reactT ?? 0, superHesitateT: (b as any).superHesitateT ?? 0,
-      kameCharging: b.kameCharging, kills: (b as any).kills ?? 0, streak: (b as any).streak ?? 0,
+      commitT: b.commitT,
+      reactT: b.reactT, superHesitateT: b.superHesitateT, defensiveReactT: b.defensiveReactT,
+      kameCharging: b.kameCharging, kills: b.kills, streak: b.streak,
     }));
   }
 }

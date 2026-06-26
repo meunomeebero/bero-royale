@@ -19,7 +19,7 @@ describe("names", () => {
 
     // (c) style variance over a big sample: genuinely-plain handles (single word, no digit,
     // no xX/Xx wrap, no underscore) should land in the ~30–40% spec band.
-    let plain = 0, total = 5000;
+    let plain = 0; const total = 5000;
     const seen = new Set<string>();
     // drive variety by repeated independent generation via fresh harnesses
     for (let i = 0; i < total; i++) {

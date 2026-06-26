@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeHarness } from "./_bot-harness.ts";
+import { makeHarness, Captured } from "./_bot-harness.ts";
 const ROOM = "voxelcube-ffa";
 
 describe("killfeed", () => {
@@ -10,14 +10,15 @@ describe("killfeed", () => {
     const [killer, victim] = ids;
 
     // drive the victim to death by repeated bot→bot damage from `killer`
-    let killEvt: any = null;
+    let killEvt: Captured | undefined;
     for (let i = 0; i < 12 && !killEvt; i++) {
       const before = h.fanned.length;
       h.sim.damageBot(ROOM, victim, killer);
       killEvt = h.fanned.slice(before).find((m) => m.event === "kill");
     }
     expect(killEvt, "no kill feed line emitted for a bot→bot frag").toBeTruthy();
-    expect(killEvt.payload.streak <= 2, `streak not capped at 2: ${killEvt.payload.streak}`).toBeTruthy();
+    const kp = killEvt!.payload as { streak: number };
+    expect(kp.streak <= 2, `streak not capped at 2: ${kp.streak}`).toBeTruthy();
     const k = h.inspect().find((b) => b.id === killer);
     expect((k!.kills as number) >= 1, "killer kills not incremented").toBeTruthy();
     const v = h.inspect().find((b) => b.id === victim);

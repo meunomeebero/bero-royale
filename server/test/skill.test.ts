@@ -22,7 +22,7 @@ describe("skill", () => {
     }
 
     // (c) population-mean accuracy invariant: E[accEff] ≈ ACCURACY (0.30) over many rolls
-    let sum = 0, n = 50000;
+    let sum = 0; const n = 50000;
     for (let i = 0; i < n; i++) { const sk = (Math.random() + Math.random()) / 2; sum += 0.3 * (0.7 + 0.6 * sk); }
     expect(Math.abs(sum / n - 0.3) < 0.005, `mean accEff drifted: ${(sum / n).toFixed(4)}`).toBeTruthy();
   }, 30000);

@@ -52,7 +52,7 @@ describe("facing", () => {
     // Warm up.
     for (let i = 0; i < 20; i++) h2.sim.tick(ROOM, dt);
 
-    let prev = new Map(h2.inspect().map((b) => [b.id as string, b.yaw as number]));
+    const prev = new Map(h2.inspect().map((b) => [b.id as string, b.yaw as number]));
     let maxStep = 0;
     for (let i = 0; i < 60; i++) {
       // Move player in a circle so bots must continuously re-orient.

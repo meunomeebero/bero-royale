@@ -7,10 +7,10 @@ describe("reaction", () => {
     const h = makeHarness({ players: [{ id: "P", x: 0, z: 0 }] });
     for (let i = 0; i < 20; i++) h.sim.tick(ROOM, 0.05);
     // pick a calm bot
-    const b0 = h.inspect().find((b) => (b as any).reactT === 0)!;
+    const b0 = h.inspect().find((b) => (b.reactT as number) === 0)!;
 
     // reposition player right next to the bot so retaliation range is guaranteed
-    h.setPlayers([{ id: "P", x: (b0 as any).x as number, z: (b0 as any).z as number }]);
+    h.setPlayers([{ id: "P", x: b0.x as number, z: b0.z as number }]);
     // one tick so the bot's position-delta estimate sees the player at the new location
     h.sim.tick(ROOM, 0.05);
 
@@ -28,7 +28,8 @@ describe("reaction", () => {
       h.fanned.length = 0;
       h.sim.tick(ROOM, 0.05);
       const firedAtP = h.fanned.some(
-        (m) => m.event === "shot" && m.from === b0.id && m.payload?.targetId === "P"
+        (m) => m.event === "shot" && m.from === b0.id &&
+          (m.payload as { targetId?: string } | null)?.targetId === "P"
       );
       expect(!firedAtP, "bot fired at attacker during startle window (no reaction delay)").toBeTruthy();
       remaining -= DT;
@@ -45,6 +46,7 @@ describe("reaction", () => {
 
     // vx/vz are always present in the snapshot (never stranded by a continue)
     const lastSnap = [...h.fanned].reverse().find((m) => m.event === "s" && m.from === b0.id);
-    expect(lastSnap && typeof lastSnap.payload.vx === "number" && typeof lastSnap.payload.vz === "number", "snapshot missing vx/vz (stranded)").toBeTruthy();
+    const lp = lastSnap?.payload as { vx?: unknown; vz?: unknown } | undefined;
+    expect(lastSnap && typeof lp?.vx === "number" && typeof lp?.vz === "number", "snapshot missing vx/vz (stranded)").toBeTruthy();
   }, 30000);
 });

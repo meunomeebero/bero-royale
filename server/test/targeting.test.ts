@@ -15,7 +15,7 @@ describe("targeting", () => {
 
   // (b) player-attention floor: a lone PASSIVE player is targeted within a commit cycle.
   it("(b) player-attention floor: lone player is targeted in <8% untargeted trials", () => {
-    let untargeted = 0, trials = 200;
+    let untargeted = 0; const trials = 200;
     for (let t = 0; t < trials; t++) {
       const h = makeHarness({ players: [{ id: "P", x: (Math.random()*2-1)*40, z: (Math.random()*2-1)*40 }] });
       for (let i = 0; i < 40; i++) h.sim.tick(ROOM, 0.05); // ~2s, > max commitT
