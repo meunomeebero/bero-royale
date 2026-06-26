@@ -5,6 +5,18 @@
 super-user places/deletes trees & decor (and optionally paints terrain) from the 3D asset pack to
 author a **single official map** that replaces the current messy procedural scatter for everyone.
 
+## 0. v1 = EASIEST-FIRST (this build) — chosen 2026-06-25
+Ship the smallest thing that solves the pain (decor disposal), then iterate. v1 simplifications:
+- **Decor only.** Terrain stays exactly as today (seeded `Platform`, **unchanged** — no overrides, no
+  terrain paint). Only `Decor` becomes data-driven. → `MapDefinition` for v1 is just
+  `{ version:1, decor: [{id, asset, ix, iz}] }` (drop `terrainSeed`/`terrainOverrides` until Phase 2).
+- **File persistence**, not Postgres: the active map is a JSON file `server/public/maps/active.json`
+  (no DB table, no migration). Swap to Postgres later if multi-map is wanted.
+- **Snap-to-grid**, no per-prop rotation in v1 (yaw defaults 0).
+- Live wiring: the room reads `active.json` and includes the `decor[]` in the `welcome` payload
+  alongside the existing seed (seed still drives terrain). Empty/missing ⇒ today's scatter fallback.
+Everything below is the fuller design; the v1 cut implements only the decor + file + route + auth slice.
+
 ---
 
 ## 1. Problem & the core constraint
