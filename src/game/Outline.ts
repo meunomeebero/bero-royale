@@ -35,10 +35,18 @@ const outlineMaterial = new THREE.ShaderMaterial({
     uniform float thickness;
     #include <fog_pars_vertex>
     void main() {
-      // View-space normal expansion: constant world-space (≈ screen) thickness
-      // regardless of each model's local scale. normalMatrix is the view normal.
-      vec3 vn = normalize(normalMatrix * normal);
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      // Works for plain meshes (entities/props) AND InstancedMesh (terrain): the
+      // #ifdef applies the per-instance matrix so terrain shells don't collapse
+      // to one tile. View-space normal expansion → constant world-space (≈ screen)
+      // thickness regardless of each model's / instance's scale.
+      vec3 objectNormal = normal;
+      vec4 mvPosition = vec4(position, 1.0);
+      #ifdef USE_INSTANCING
+        mvPosition = instanceMatrix * mvPosition;
+        objectNormal = mat3(instanceMatrix) * objectNormal;
+      #endif
+      mvPosition = modelViewMatrix * mvPosition;
+      vec3 vn = normalize(normalMatrix * objectNormal);
       mvPosition.xyz += vn * thickness;
       gl_Position = projectionMatrix * mvPosition;
       #include <fog_vertex>
@@ -98,6 +106,30 @@ export function addOutline(object: THREE.Object3D): void {
     shell.renderOrder = mesh.renderOrder - 1; // draw before the real mesh
     mesh.add(shell);
   }
+}
+
+/**
+ * Build a parallel outline shell for an InstancedMesh (the terrain blocks): a
+ * second InstancedMesh sharing the source's instance matrices, but with the
+ * smoothed geometry + the singleton black shell material. Add the returned mesh
+ * to the same parent. Tagged `userData.isOutline` like the per-mesh shells.
+ */
+export function makeInstancedOutline(
+  source: THREE.InstancedMesh,
+): THREE.InstancedMesh {
+  const shell = new THREE.InstancedMesh(
+    smoothedGeometry(source.geometry),
+    outlineMaterial,
+    source.count,
+  );
+  shell.instanceMatrix.array.set(source.instanceMatrix.array);
+  shell.instanceMatrix.needsUpdate = true;
+  shell.userData.isOutline = true;
+  shell.frustumCulled = source.frustumCulled;
+  shell.castShadow = false;
+  shell.receiveShadow = false;
+  shell.renderOrder = source.renderOrder - 1;
+  return shell;
 }
 
 /** Live cartoon-outline thickness in world units (0 = off). */

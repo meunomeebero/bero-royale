@@ -49,7 +49,7 @@ export const AIM_SENSITIVITY_DEFAULT = 1;
  * Only matters while PIXEL_FILTER_KEY is ON. Persisted; read by PostFX via Game.
  */
 export const VHS_LEVEL_KEY = "cozykiller:settings:vhsLevel";
-export const VHS_LEVEL_DEFAULT = 1;
+export const VHS_LEVEL_DEFAULT = 0.15;
 /**
  * Cel-shading outline (the black cartoon contour) intensity 0..1 — drives the
  * inverted-hull shell thickness (see Outline.ts), INDEPENDENT of the camera /
@@ -57,7 +57,7 @@ export const VHS_LEVEL_DEFAULT = 1;
  * geometry, not post-processing. Persisted; read by Game → setOutlineThickness.
  */
 export const OUTLINE_LEVEL_KEY = "cozykiller:settings:celOutline";
-export const OUTLINE_LEVEL_DEFAULT = 0.6;
+export const OUTLINE_LEVEL_DEFAULT = 0.2;
 /** Outline thickness at level 1, in WORLD units (orthographic ≈ constant px). */
 export const OUTLINE_THICKNESS_MAX = 0.04;
 

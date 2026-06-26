@@ -43,7 +43,7 @@ da próxima partida). Os setters (`Game.setVhsLevel` / `setAimSensitivity` / `se
 - **Importante:** só tem efeito enquanto o **toggle "Modo desenho"** (`PIXEL_FILTER_KEY`) está ON —
   o toggle liga/desliga toda a `PostFX`; o slider só ajusta a intensidade. Em nível 0 o passe ainda
   roda, mas neutro (blocos de 1px, banding fino).
-- **Faixa / default:** `0%`–`100%`, default `100%` (= como sempre foi). `VHS_LEVEL_*` em `consts.ts`.
+- **Faixa / default:** `0%`–`100%`, default `15%` (retrô bem leve). `VHS_LEVEL_*` em `consts.ts`.
 - **Ao vivo:** `PostFX.setLevel()` reusa `RenderPixelatedPass.setPixelSize()` + os uniforms do
   posterize — sem rebuild. As edges do `RenderPixelatedPass` ficam **OFF** (o contorno cartoon é
   geometria, abaixo — não post-process).
@@ -56,10 +56,14 @@ da próxima partida). Os setters (`Game.setVhsLevel` / `setAimSensitivity` / `se
 - **Por que NÃO post-process:** a câmera é **ortográfica** com near/far largo → o detector de edges
   por profundidade do `RenderPixelatedPass` quase não dispara (testado: nem a 3× saturava). O casco
   invertido é independente de câmera/resolução e dá um traço **sólido e nítido**.
-- **Escopo (opção A):** **personagens** (`Avatar`: player, bots, remotes, preview) + **props
-  sólidos** (crates, pickups, e decor com `radius > 0` = árvores). O **terreno NÃO** leva contorno
-  (fica limpo; o scatter de grama também não, por custo/ruído).
-- **Faixa / default:** `0%`–`100%`, default `60%`. Espessura em **unidades de mundo** (ortho ≈ px
+- **Escopo:** **personagens** (`Avatar`: player, bots, remotes, preview) + **props sólidos**
+  (crates, pickups, decor com `radius > 0`) + **TODO bloco de terreno** (via
+  `Platform.addTileLayer` → `makeInstancedOutline`, um `InstancedMesh`-casco paralelo). O scatter
+  de grama (tufos) continua sem contorno.
+- **Terreno (instancing):** o shader trata `#ifdef USE_INSTANCING` aplicando o `instanceMatrix`
+  (senão todos os blocos colapsariam num só). Tops coplanares adjacentes mostram uma grade fina
+  (cada casco sobe um tico acima do vizinho); degraus/bordas/silhuetas ficam com traço cheio.
+- **Faixa / default:** `0%`–`100%`, default `20%`. Espessura em **unidades de mundo** (ortho ≈ px
   de tela constante), `OUTLINE_LEVEL_*` + `OUTLINE_THICKNESS_MAX` em `consts.ts`.
 - **Independente do "Modo desenho":** é geometria, não PostFX — funciona com o filtro on **ou** off.
 - **Ao vivo:** um **único material singleton** com uniform `thickness` global → `setOutlineThickness()`
@@ -74,9 +78,10 @@ da próxima partida). Os setters (`Game.setVhsLevel` / `setAimSensitivity` / `se
 | Arquivo | Papel |
 |---|---|
 | `src/game/consts.ts` | Chaves LS + faixas/defaults: `AIM_SENSITIVITY_*`, `VHS_LEVEL_*`, `OUTLINE_LEVEL_*`, `OUTLINE_THICKNESS_MAX`. |
-| `src/game/Outline.ts` | **Contorno cel-shading**: material singleton (casco preto BackSide + uniform `thickness`), `addOutline()`, `setOutlineThickness()`, cache de geometria suavizada. |
-| `src/game/ModelLibrary.ts` | `create(..., outline)` chama `addOutline()` depois de clonar materiais (terreno usa `bakeTile` → sem contorno). |
-| `src/game/Avatar.ts` / `Crates.ts` / `PowerUps.ts` / `Decor.ts` | Passam `outline: true` (Decor só pra `radius > 0`); `disposeObject` de Decor/PowerUps pula `userData.isOutline`. |
+| `src/game/Outline.ts` | **Contorno cel-shading**: material singleton (casco preto BackSide, shader instancing-aware + fog, uniform `thickness`), `addOutline()` (meshes), `makeInstancedOutline()` (terreno), `setOutlineThickness()`, cache de geometria suavizada. |
+| `src/game/ModelLibrary.ts` | `create(..., outline)` chama `addOutline()` depois de clonar materiais. |
+| `src/game/Platform.ts` | `addTileLayer()` adiciona um `makeInstancedOutline(inst)` paralelo → contorno em **todo bloco de terreno**. |
+| `src/game/Avatar.ts` / `Crates.ts` / `PowerUps.ts` / `Decor.ts` | Passam `outline: true` (Decor só pra `radius > 0`); `disposeObject` de Decor/PowerUps/Crates pula `userData.isOutline`. Avatar esconde os cascos junto com o fade de opacidade do corpo. |
 | `src/game/InputManager.ts` | `aimSensitivity`, `setAimSensitivity()`, `gainCursor()` (ganho centrado + clamp). |
 | `src/game/PostFX.ts` | `paramsForLevel(level)` (pixel + posterize; edges OFF) + `setLevel()` ao vivo. |
 | `src/game/Game.ts` | Lê as settings; `setVhsLevel()` / `setCelOutline()` / `setAimSensitivity()` / `aimCursorPos()`. |
@@ -95,6 +100,8 @@ da próxima partida). Os setters (`Game.setVhsLevel` / `setAimSensitivity` / `se
   aproximação proposital, previsível e barata (sem pointer-lock, sem acúmulo/drift).
 - O contorno usa **espessura de mundo constante**: objetos pequenos (crate, pickup) leem traço mais
   grosso que objetos grandes (árvore) — esperado num cel-shading (px de tela constante).
-- O casco é **opaco e preto fixo**: não acompanha o fade de opacidade do `Avatar` (respawn/morte), então
-  durante um blink a silhueta preta pode aparecer sólida. Limitação aceita na v1.
-- Terreno e scatter de grama **não** levam contorno (opção A — limpo + barato).
+- O casco do `Avatar` é escondido (`visible=false`) quando o corpo some no fade (morte/respawn) —
+  evita a silhueta preta sólida sem corpo dentro. Já tem fog (`fog: true`) pra sumir na névoa ao longe.
+- **Todo bloco de terreno** leva contorno (casco instanciado). Tops planos viram uma grade fina;
+  custo extra = ~1 draw call instanciado por camada + dobra o throughput de vértices do terreno
+  (aceitável; baixe o slider se pesar em hardware fraco). Scatter de grama (tufos) fica sem contorno.
