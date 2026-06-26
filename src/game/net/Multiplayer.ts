@@ -221,7 +221,9 @@ export class Multiplayer {
     seq?: number,
   ) => void;
   private seed: number | null = null;
-  private seedHandler?: (seed: number) => void;
+  /** Raw, unvalidated authored-map decor delivered with the welcome (or null). */
+  private decor: unknown = null;
+  private seedHandler?: (seed: number, decor?: unknown) => void;
   private onShot?: (e: ShotEvent) => void;
   private onDash?: (e: DashEvent) => void;
   private onJump?: (e: JumpEvent) => void;
@@ -350,9 +352,9 @@ export class Multiplayer {
    * Register the seed callback. Fires immediately if the seed already arrived
    * (welcome can land before the game registers its handler).
    */
-  setSeedHandler(cb: (seed: number) => void) {
+  setSeedHandler(cb: (seed: number, decor?: unknown) => void) {
     this.seedHandler = cb;
-    if (this.seed != null) cb(this.seed);
+    if (this.seed != null) cb(this.seed, this.decor);
   }
 
   connect() {
@@ -362,9 +364,10 @@ export class Multiplayer {
       onStatus: (s) => {
         this.status = s === "online" ? "online" : s === "error" ? "error" : "connecting";
       },
-      onSeed: (s) => {
+      onSeed: (s, decor) => {
         this.seed = s;
-        this.seedHandler?.(s);
+        this.decor = decor ?? null;
+        this.seedHandler?.(s, this.decor);
       },
       onPresence: (members) => {
         this.presence.clear();

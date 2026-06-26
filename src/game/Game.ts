@@ -8,6 +8,7 @@ import { DustParticles } from "./DustParticles";
 import { Bullets } from "./Bullets";
 import { Decor } from "./Decor";
 import { buildWorld } from "./map/buildWorld";
+import { validateMapDef, type DecorEntry } from "./map/MapDefinition";
 import { Butterflies } from "./Butterflies";
 import { Gore } from "./Gore";
 import { Kamehameha } from "./Kamehameha";
@@ -467,9 +468,15 @@ export class Game {
       this.bestRunsTimer = window.setInterval(() => this.refreshBestRuns(), 20000);
       // Build the world (and the voice ring) only once the seed arrives, then
       // tell Index it's ready and start the render loop.
-      this.mp.setSeedHandler((seed) => {
+      this.mp.setSeedHandler((seed, decor) => {
         if (this.platform) return; // guard against a second welcome frame
-        this.buildWorld(seed);
+        // Authored map editor v1: the welcome may carry the active map's decor
+        // alongside the seed. It is UNTRUSTED (a peer/relay could forge it), so
+        // re-validate it through the SAME schema the editor/server use before
+        // building from it. Missing/invalid ⇒ undefined ⇒ seeded scatter (no
+        // regression, identical to before the editor existed).
+        const validated = validateMapDef({ version: 1, decor });
+        this.buildWorld(seed, validated?.decor);
         // Correct the broadcast animal to the avatar we actually render, so
         // remotes see the same animal we see locally.
         this.mp?.setAnimal(this.player.getAnimal());
@@ -509,11 +516,13 @@ export class Game {
    * Called immediately (seed 12345) in local mode, or once the authoritative
    * room seed arrives in multiplayer mode.
    */
-  private buildWorld(seed: number) {
+  private buildWorld(seed: number, decor?: DecorEntry[]) {
     // Terrain + decor are constructed by the shared `buildWorld` helper (also used
     // by the map editor) so both build the world identically; everything below is
-    // the game-specific wiring around the returned `platform`/`decor`.
-    const world = buildWorld(this.scene, { seed });
+    // the game-specific wiring around the returned `platform`/`decor`. `decor` is
+    // the authored map's prop list when an active map exists; when undefined the
+    // helper falls back to the seeded scatter.
+    const world = buildWorld(this.scene, { seed, decor });
     this.platform = world.platform;
     this.decor = world.decor;
 

@@ -5,6 +5,7 @@ import type { ClientMsg, NetSnapshot, ServerMsg, Sock } from "./protocol";
 import { parseClientMsg } from "./protocol";
 import { RoomHub } from "./rooms";
 import { BOT_TICK_MS, BOT_TICK_SECONDS } from "./bots";
+import { activeMapCache } from "../map";
 
 /** Hard cap on concurrent sockets per room. */
 const MAX_ROOM = 64;
@@ -129,7 +130,16 @@ export function attachWebSocket(server: Server): RoomHub {
     // First player on an idle server: spin the 20Hz bot/power-up loop back up.
     startBotLoop();
 
-    const welcome: ServerMsg = { t: "welcome", id, room, seed: hub.seedOf(room) };
+    // Authored map editor v1: hand the active map's decor to the joiner alongside
+    // the seed so everyone plays the SAME layout. No active map ⇒ `decor: null` ⇒
+    // the client builds the seeded scatter, identical to before the editor existed.
+    const welcome: ServerMsg = {
+      t: "welcome",
+      id,
+      room,
+      seed: hub.seedOf(room),
+      decor: activeMapCache?.decor ?? null,
+    };
     ws.send(JSON.stringify(welcome));
     // Authoritative roster sync: covers the joiner AND notifies existing members.
     hub.broadcastPresence(room);

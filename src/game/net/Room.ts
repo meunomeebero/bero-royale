@@ -32,8 +32,13 @@ export interface RoomHandlers {
   /** Per-event broadcast handlers, keyed by event name. */
   onMessage?: Record<string, (payload: unknown) => void>;
   onStatus?: (status: RoomStatus) => void;
-  /** The room's authoritative world seed, delivered once on join. */
-  onSeed?: (seed: number) => void;
+  /**
+   * The room's authoritative world seed, delivered once on join. `decor` is the
+   * active authored map's prop list (map editor v1) sent alongside the seed, or
+   * undefined when there is no active map. It is RAW/untrusted here — the consumer
+   * re-validates it (via `validateMapDef`) before building the world.
+   */
+  onSeed?: (seed: number, decor?: unknown) => void;
 }
 
 export interface Room {
@@ -128,7 +133,7 @@ class ServerRoom implements Room {
         case "welcome":
           this.handlers.onStatus?.("online");
           this.send({ t: "track", meta: this.meta }); // re-assert meta
-          if (typeof msg.seed === "number") this.handlers.onSeed?.(msg.seed);
+          if (typeof msg.seed === "number") this.handlers.onSeed?.(msg.seed, msg.decor);
           break;
         case "presence": {
           const m = new Map<string, RoomMeta>();

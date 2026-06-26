@@ -69,7 +69,17 @@ export type ServerMsg =
   // server. The "hit" envelope is likewise server-applied (1 dmg to a live target),
   // not relayed verbatim. So the seed is the only fully server-authoritative SHARED
   // state, but HP/alive and bot deaths are server-arbitrated on top of the relay.
-  | { t: "welcome"; id: string; room: string; seed: number }
+  // `decor` is the active authored map's prop list (map editor v1), sent ALONGSIDE
+  // the seed so every client builds the SAME authored layout; terrain still comes
+  // from the seed. Absent/null ⇒ no active map ⇒ the client falls back to the
+  // seeded decor scatter (zero regression). The client re-validates it before use.
+  | {
+      t: "welcome";
+      id: string;
+      room: string;
+      seed: number;
+      decor?: Array<{ id: string; asset: string; ix: number; iz: number }> | null;
+    }
   // FULL roster of the room (incl. self). Sent to a joiner and to everyone on any change.
   | { t: "presence"; members: Member[] }
   // A relayed broadcast from another member; `from` is the sender's server-known id.
