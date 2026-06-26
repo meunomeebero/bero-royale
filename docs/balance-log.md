@@ -78,9 +78,13 @@ bots, IA, realismo, skill, reação, targeting, hesitation.
   `PLAYER_PULL` (bias de distância proposto pelo GLM) foi **rejeitado** — não funcionava na
   geometria do arena (5u num arena de ±42); o post-pass é a garantia direta e sem alocação.
 
-**🚀 Deploy:** em prod 2026-06-25 (review GPT-5.5 via OpenRouter — APPROVE, sem blockers; 2 fixes
-aplicados: timer `defensiveReactT` real + limpar estado de super na morte). tsc/build/testes verdes.
-Integrado sobre `main` (rename de armas + netcode Phase 3/5 já em prod) sem regressão.
+**🚀 Deploy:** em prod 2026-06-25 (commit `abf1fed`). Review GPT-5.5 via OpenRouter — **APPROVE**,
+sem blockers (2 fixes aplicados antes: timer `defensiveReactT` real + limpar estado de super na
+morte). client+server tsc, eslint (só 5 erros pré-existentes de prod), **39 testes vitest** e build
+verdes. Integrado sobre `main` (rename de armas + netcode Phase 3/5 já em prod) sem regressão — só
+servidor (`bots.ts`), sem mudança de client/bundle. **Smoke ao vivo:** 6 bots no `voxelcube-ffa`
+(`kakashi`, `treta`, `v01d99`, `xXz0ro_proXx`, `destruidor_da_capeta75565`, `monstro_de_treta90031`),
+movendo + atirando (1038 snapshots / 25 shots em 9s). https://beroroyale.shardweb.app
 
 ---
 
