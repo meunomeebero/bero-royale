@@ -55,6 +55,8 @@ const RETARGET_CD = 0.6; // re-pick nearest enemy this often
 const RESPAWN_MS = 5000;
 const WANDER_CD = 2.5;
 
+const MAX_TURN_RATE = 8; // rad/s yaw slew cap — a one-tick 180° snap reads as net-lag, not reflex
+
 // ── Vertical physics (mirrors the player feel in src/game/consts.ts) ─────────
 const GRAVITY = 18.0;
 const JUMP_VELOCITY = 6.0;
@@ -93,6 +95,7 @@ const SUPER_CD_MAX = 22; // cooldown ceiling after firing (random in [MIN,MAX])
 // SUPER_DAMAGE + SUPER_REVEAL_MS are imported from ./combat-consts (shared with the
 // PvP path in rooms.ts so both supers use one shield-first model + reveal delay).
 const SUPER_MIN_HP = 2; // below this a bot won't telegraph / aborts mid-charge
+const SUPER_HESITATE_MIN = 0.15, SUPER_HESITATE_SPAN = 0.35; // 0.15..0.50s, skill-scaled
 
 // ── Saber stagger (a player's melee hit on a server bot) — canonical, server-side ──
 // Mirrors the client saber stagger (src/game/Game.ts). Applied authoritatively by
@@ -102,6 +105,32 @@ const MELEE_STUN_T = 0.25; // brief full-action freeze (no steering/fire/super)
 const MELEE_FIRE_LOCK_T = 1.0; // constant-fire lockout (no shots) after the stun
 const MELEE_SUPER_REARM = 1.0; // an interrupted super can't re-wind for this long
 const MELEE_STAGGER_FREE_MS = 500; // guaranteed un-staggerable window after each stagger
+
+// ── Saber SWING (a bot wields the saber too) — server-authoritative, mirrors client ──
+// A bot in melee range prefers the saber over the gun: it commits a SWING (a
+// telegraphed arc fanned via "melee"), then the strike lands at SWING_WINDUP_END_T
+// of the way through, scheduled via the same damage-on-arrival queue as fire(). A
+// hit mini-stuns the victim (staggerBot for bots, "meleehit" for players). Two
+// blades crossing mid-swing → a CLASH (mutual recoil, no damage). Numbers mirror
+// the client saber (src/game/saberKinematics.ts + Game.ts) so online == offline.
+const MELEE_DAMAGE = 3; // a saber hit is worth ~3 gun shots (mirrors the client melee damage)
+const SABER_RANGE = 3.2; // reach of the blade arc (point-in-arc radius)
+const SABER_ARC_DOT = 0.0; // forward half-disc: a victim counts if dot(facing, toVictim) >= this (≈90° each side)
+const MELEE_SWING_DUR = 0.4; // total swing animation duration (s) — the "melee" arc the client renders
+const SWING_WINDUP_END_T = 0.18; // fraction of the swing before the blade starts striking (strike-time)
+const SABER_CD = 0.6; // cooldown between a bot's swings (only ONE swing in flight at a time)
+const SABER_RECOIL_SPEED = 9; // clash recoil impulse speed (pushed back along the contact normal)
+// A bot prefers the saber when the target is this close; a brief LUNGE lets an
+// engager periodically close from shooting range into melee range (bounded so the
+// whole lobby doesn't melee-rush at once).
+const SABER_PREFER_RANGE = SABER_RANGE; // within this → swing instead of shoot (when off cooldown)
+const LUNGE_CD_MIN = 2.6; // shortest gap between a bot's melee lunges
+const LUNGE_CD_RND = 3.0; // + random spread (so lunges don't sync across bots)
+const LUNGE_TRIGGER_DIST = 7; // an engager within this (but outside saber range) may lunge in to melee
+const LUNGE_CHANCE = 0.6; // per eligible tick once off cooldown: START a lunge press (bounded melee-rush)
+const LUNGE_PRESS_DUR = 1.2; // how long an active lunge presses straight IN to melee (overrides orbit/kite)
+// Opposed-facing threshold for a clash: two swing directions must roughly oppose.
+const CLASH_OPPOSED_DOT = -0.2;
 
 // ── Engager cap (anti-dogpile, owner-locked) ─────────────────────────────────
 // In a lopsided fight (1 human vs N bots) every bot would otherwise lock onto the
@@ -123,10 +152,20 @@ const STANDOFF_BAND = 1.5; // dead-band around STANDOFF_DIST before a non-engage
 const ENGAGE_LEASH = 12; // an enemy within this keeps/forces ENGAGE (SEEK→ENGAGE trigger radius)
 const AGGRO_BREAK_DIST = 7; // any enemy this close cancels item-seek (no pacifism)
 const LOW_HP = 4; // gates desperation heal/shield-seek (above DASH_RETREAT_HP so the kite bias is intact)
-// Target stickiness: only switch to a different SAME-TIER candidate once it is at
-// least this much closer (anti-flicker). A PLAYER always preempts a bot target
-// immediately (no cross-tier hysteresis) — humans are the point.
+// Target stickiness: only switch once the new pick is at least this much closer (anti-flicker).
 const TARGET_SWITCH_HYSTERESIS = 1.5;
+
+// ── Target commitment (anti-ping-pong) ───────────────────────────────────────
+// After acquiring a NEW target id, a bot holds it for commitT seconds before
+// re-evaluating. Skill ranges 0..1 → commitT 0.8..1.6s (weaker bots are stickier).
+const COMMIT_MIN = 0.8, COMMIT_SPAN = 0.8; // commitT = COMMIT_MIN + (1-skill)*COMMIT_SPAN → 0.8..1.6s
+
+// ── Reaction latency (startle before the first offensive reaction) ────────────
+// A bot shot while CALM (threat was 0) enters a startle window of reactT seconds
+// before it may fire/retarget at the attacker. Defensive dodge (dash/jump juke)
+// un-gates sooner at min(reactT, DEFENSIVE_FLINCH) so the bot isn't catatonic.
+const REACT_MIN = 0.15, REACT_SPAN = 0.15; // reactT = REACT_MIN + (1-skill)*REACT_SPAN → 0.15..0.30s
+const DEFENSIVE_FLINCH = 0.12;             // defensive dash/jump un-gate at min(reactT, this)
 
 // ── HUNT center gravitation (owner-locked) ───────────────────────────────────
 // Idle bots drift to a jittered RING around origin (where the rare/strong items
@@ -168,12 +207,11 @@ export const BOT_TICK_SECONDS = BOT_TICK_MS / 1000;
 
 /** The only room bots populate. */
 const GAME_ROOM = "voxelcube-ffa";
-/** Keep (live players + bots) at this many combatants. */
-const MIN_COMBATANTS = 10;
-/** Hard cap on server backfill bots (owner wants only 5 bots in a match). */
-const MAX_BOTS = 5;
+/** Hard cap on bots per room. */
+const MAX_BOTS = 6;
 
 const BULLET_COLOR = "#ff5e6c";
+const MISS_SPREAD_RAD = 0.18; // ≈10° max cosmetic miss deflection (random sign + magnitude)
 // BULLET_SPEED + MIN_TRAVEL_MS are imported from ./combat-consts (shared with the
 // PvP scheduler in rooms.ts).
 
@@ -183,14 +221,49 @@ const ANIMAL_NAMES = [
   "bear", "bunny", "cat", "chicken", "crocodile", "dog", "fox", "frog",
   "mouse", "panda", "piglet",
 ];
-const NAMES = [
-  "Lucca", "Mia", "Theo", "Nina", "Kai", "Zoe", "Bia", "Léo",
-  "Duda", "Caio", "Lara", "Vini", "Rafa", "Gabi", "Pedro", "Ana",
-  "Davi", "Sofia", "Igor", "Manu", "Tom", "Lia", "Bento", "Cléo",
-  "Noah", "Yuri", "Pipa", "Zeca", "Fefe", "Juju", "Mel", "Ravi",
-  "Dom", "Tina", "Vito", "Kira", "Bruno", "Nash", "Pixel",
-  "Turbo", "Ace", "Ghost", "Maya", "Enzo", "Cacá", "Tati", "Jota",
-];
+const PT_NOUN = ["destruidor", "mlk", "quebrada", "mundos", "lenda", "monstro", "treta", "capeta", "demonio", "bicho", "fera"];
+const PT_CONN = ["de", "do", "da", "das"];
+const ANIME = ["sasuke", "goku", "naruto", "itachi", "kakashi", "zoro", "luffy", "void", "ghost", "shadow", "reaper", "slayer", "dark", "neo", "kira"];
+const PRO = ["pro", "god", "king", "master", "op", "gg", "no1", "real"];
+const NUM3 = [420, 69, 777, 666, 1337, 7, 99, 13];
+const pick = <T,>(a: T[]): T => a[Math.floor(rand() * a.length)];
+const bigNum = () => Math.floor(rand() * 90000) + 100;      // 3–5 digits, NOT only round
+const num2 = () => String(Math.floor(rand() * 100)).padStart(2, "0");
+const maybeLeet = (s: string) =>
+  rand() < 0.3 ? s.replace(/[aeios]/g, (c) => (rand() < 0.6 ? ({ a: "4", e: "3", i: "1", o: "0", s: "5" } as Record<string, string>)[c] : c)) : s;
+
+/** A procedural gamer handle, distinct from every name in `taken`. Spawn-only. */
+function genHandle(taken: Set<string>): string {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const r = rand();
+    let name: string;
+    let skipLeet = false;
+    if (r < 0.35) {
+      // PLAIN: bare single word, no number, no leet — ~35% weight with leet skipped
+      // yields genuinely-plain handles in the ~30–40% target band.
+      name = rand() < 0.5 ? pick(ANIME) : pick(PT_NOUN);
+      skipLeet = true;
+    } else if (r < 0.5) {
+      name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${bigNum()}`;
+    } else if (r < 0.65) {
+      name = `xX${pick(ANIME)}_${pick(PRO)}Xx`;
+    } else if (r < 0.8) {
+      name = `${pick(PT_NOUN)}_${pick(PT_CONN)}_${pick(PT_NOUN)}${num2()}`;
+    } else if (r < 0.92) {
+      name = `${pick(ANIME)}${pick(NUM3)}`;
+    } else {
+      name = `${pick(ANIME)}${pick(PRO)}${rand() < 0.5 ? num2() : ""}`;
+    }
+    if (!skipLeet) name = maybeLeet(name);
+    const stem = name.replace(/[0-9]/g, "");
+    // Reject if the full name OR its digit-stripped stem already exists (no near-dupes).
+    if (!taken.has(name) && ![...taken].some((t) => t.replace(/[0-9]/g, "") === stem)) return name;
+  }
+  // Bounded final fallback: guaranteed distinct via a counter so taken is never matched.
+  let fbIdx = Math.floor(rand() * 1e6);
+  while (taken.has(`player_${fbIdx}`)) fbIdx = (fbIdx + 1) % 1e6;
+  return `player_${fbIdx}`;
+}
 
 interface ServerBot {
   id: string;
@@ -229,6 +302,8 @@ interface ServerBot {
   kameCharging: boolean; // true while winding up the super (drives the client glow)
   kameChargeT: number; // wind-up progress 0→1 (seconds elapsed / SUPER_CHARGE)
   superTargetId: string | null; // the player committed to at charge start
+  superHesitateT: number; // skill-scaled pause before committing to the super (0 = none)
+  _superArmed: boolean; // true during the hesitation window (armed but not yet charging)
   // ── Item seeking + transient buffs (Slice 2) ──
   seekItemId: string | null; // the power-up this bot is currently walking toward (null = none)
   itemRepickCd: number; // when this hits 0 the bot re-evaluates which item to seek
@@ -239,6 +314,29 @@ interface ServerBot {
   stunT: number; // >0 = full-action freeze (no steer/fire/super), decays each tick
   fireLockT: number; // >0 = constant-fire lockout (no shots), outlives the stun
   staggerOkAt: number; // epoch ms; the next stagger is only honored at/after this (anti-spam)
+  // ── Saber SWING (the bot wields the saber) ──
+  saberCd: number; // cooldown before this bot may swing again (0 = ready)
+  swinging: boolean; // true while a swing arc is in flight (drives snapshot weapon="saber")
+  swingT: number; // remaining swing time (s); decays each tick, 0 = idle
+  swingDirX: number; // FROZEN facing X at swing start (the arc + strike use this, not live yaw)
+  swingDirZ: number; // FROZEN facing Z at swing start
+  swingHitIds: Set<string>; // victims/clash-partners already resolved this swing (once-per-swing)
+  clashed: boolean; // true once a clash (self-detected or client-declared) cancelled this swing's damage
+  lungeCd: number; // cooldown before this bot may START a new melee LUNGE
+  lungeT: number; // >0 = actively pressing IN to melee (overrides orbit/kite); decays each tick
+  // ── Per-bot identity (persistent skill → accuracy/cadence/aim-lead) ──
+  skill: number;      // 0..1, rolled once, PRESERVED across respawn (a person keeps their rep)
+  accEff: number;     // cached effective accuracy (derived from skill)
+  cadenceMul: number; // cached fire-cadence multiplier (derived)
+  leadMul: number;    // cached aim-lead multiplier (derived)
+  // ── Target commitment (anti-ping-pong) ──
+  commitT: number;    // seconds remaining in the current target commitment (0 = free to repick)
+  // ── Reaction latency (startle before first offensive reaction) ────────────
+  reactT: number;          // >0 = still in the startle window (can't fire/retarget yet)
+  defensiveReactT: number; // >0 = suppress defensive dash/jump (min(reactT, DEFENSIVE_FLINCH))
+  // ── Kill feed tracking ──
+  kills: number;  // lifetime frag count (PRESERVED across respawn — a person keeps their rep)
+  streak: number; // current kill streak since last death (RESET on death, cosmetic only)
 }
 
 interface Target {
@@ -283,6 +381,7 @@ export class BotSim {
    * Rebuilt each tick from the current player set (stale ids fall off).
    */
   private targetVel = new Map<string, { x: number; z: number; vx: number; vz: number }>();
+  private targetBotCount = 0;
 
   constructor(private hub: RoomHub) {}
 
@@ -297,7 +396,7 @@ export class BotSim {
           id: b.id,
           name: b.name,
           animal: b.animal,
-          kills: 0,
+          kills: b.kills,
           aliveSince: 0,
           alive: b.alive,
           present: true,
@@ -308,16 +407,30 @@ export class BotSim {
     return out;
   }
 
-  /** Apply one point of damage to a bot (player→bot via {t:"hit"}, or bot→bot). */
+  /**
+   * Apply one point of damage to a bot (player→bot via {t:"hit"}, or bot→bot).
+   *
+   * Side-effect: also fans a `kill` event when the victim dies AND `byId`
+   * resolves to a tracked bot (bot→bot frag) — callers must NOT emit a second
+   * `kill` for bot victims. (A player killer is not in the bots map, so no
+   * server kill line is emitted; player kills are surfaced client-side.)
+   */
   damageBot(room: string, targetId: string, byId: string): HitResult | null {
     if (room !== GAME_ROOM) return null;
     const b = this.bots.get(targetId);
     if (!b || !b.alive) return null;
+    // Capture BEFORE threat is mutated: if threat was 0 this is a fresh engagement.
+    const wasCalm = b.threat <= 0;
     // Taking fire spikes the dodge urgency so the bot reacts (jump / dash away).
     b.threat = THREAT_DECAY;
     // Remember the shooter so the per-tick retaliation snap re-engages them
     // instantly (overrides target stickiness while threatened).
     b.lastAttacker = byId;
+    // Fresh engagement: seed the startle window (first offensive reaction only).
+    if (wasCalm) {
+      b.reactT = REACT_MIN + (1 - b.skill) * REACT_SPAN; // 0.15–0.30s, skill-scaled
+      b.defensiveReactT = Math.min(b.reactT, DEFENSIVE_FLINCH); // 120ms cap for dodge un-gate
+    }
     // Shield charges (from shield/super pickups) soak the hit BEFORE health,
     // mirroring the player armor in RoomHub.damagePlayer. hub.addShield is
     // players-only, so bot shields live here and are consumed here.
@@ -329,6 +442,24 @@ export class BotSim {
     if (b.health <= 0) {
       b.alive = false;
       b.deadAt = Date.now();
+      b.streak = 0; // victim streak resets on death
+      // Clear super/hesitation state so a corpse never reports stale charging=true.
+      b.kameCharging = false; b.kameChargeT = 0; b.superTargetId = null;
+      b.superHesitateT = 0; b._superArmed = false;
+      // Bot→bot kill: emit the kill feed line here (resolveShot skips it for bot targets).
+      // If the killer is also a bot, increment its stats and fan the feed.
+      const killer = this.bots.get(byId);
+      if (killer) {
+        killer.kills += 1;
+        killer.streak += 1;
+        this.fanout(room, "kill", {
+          id: `srvk_${this.killSeq++}`,
+          killer: killer.name,
+          victim: b.name,
+          // Cap at 2 so bot-vs-bot farming never trips the client's >=3 rampage banner.
+          streak: Math.min(killer.streak, 2),
+        }, killer.id);
+      }
       return { died: true, x: b.x, z: b.z, byId, victimName: b.name };
     }
     return { died: false, x: b.x, z: b.z, byId, victimName: b.name };
@@ -355,9 +486,40 @@ export class BotSim {
     if (b.kameCharging) {
       this.abortSuper(b);
       b.superCd = Math.max(b.superCd, MELEE_SUPER_REARM);
+    } else {
+      // A saber stagger must also interrupt a hesitating (armed-but-not-charging) bot
+      // so the per-player super slot is never held while the bot is staggered.
+      b.superHesitateT = 0;
+      b._superArmed = false;
     }
     b.staggerOkAt =
       now + Math.max(MELEE_STUN_T, MELEE_FIRE_LOCK_T) * 1000 + MELEE_STAGGER_FREE_MS;
+    return true;
+  }
+
+  /**
+   * A CLIENT declared a clash (player↔server-bot) that names this bot. Cancel the
+   * bot's in-flight saber swing so its scheduled strike does NO damage, and apply a
+   * mutual recoil (knockback) pushed AWAY from the other party at (x,z). This is
+   * client-declared / best-effort (the project's deferred-anti-cheat posture): a
+   * forged clash can only neutralise a bot's own NON-damaging swing — it grants the
+   * sender nothing. No-op if the bot isn't currently swinging. Returns true if a
+   * live swinging bot was clashed. The "clash" relay (white smoke/sound) is done by
+   * the caller in index.ts; this just applies the server-side gameplay effect.
+   */
+  clashBot(room: string, botId: string, x: number, z: number): boolean {
+    if (room !== GAME_ROOM) return false;
+    const b = this.bots.get(botId);
+    if (!b || !b.alive) return false;
+    if (!b.swinging) return false; // nothing in flight to cancel
+    b.clashed = true; // resolveSaberSwing skips ALL victims while clashed (no damage, no stun)
+    // Recoil AWAY from the contact point (mutual recoil / block): the bot is shoved
+    // back along the contact→bot normal. Falls back to its facing if degenerate.
+    let nx = b.x - x;
+    let nz = b.z - z;
+    const len = Math.hypot(nx, nz);
+    if (len < 0.001) { nx = -b.swingDirX; nz = -b.swingDirZ; }
+    this.applySaberRecoil(room, b, nx, nz);
     return true;
   }
 
@@ -369,6 +531,10 @@ export class BotSim {
     b.health = 0;
     b.alive = false;
     b.deadAt = Date.now();
+    b.streak = 0; // victim streak resets on death (player killer surfaced client-side)
+    // Clear super/hesitation state so a corpse never reports stale charging=true.
+    b.kameCharging = false; b.kameChargeT = 0; b.superTargetId = null;
+    b.superHesitateT = 0; b._superArmed = false;
     return { died: true, x: b.x, z: b.z, byId: "", victimName: b.name };
   }
 
@@ -425,17 +591,18 @@ export class BotSim {
 
   /** Drop all bots (room emptied). */
   clearRoom(room: string) {
-    if (room === GAME_ROOM) this.bots.clear();
+    if (room === GAME_ROOM) { this.bots.clear(); this.targetBotCount = 0; }
   }
 
   // ---------------------------------------------------------------------------
 
   private spawnBot(room: string) {
     const id = `srvbot_${this.seq++}`;
-    const used = new Set([...this.bots.values()].map((b) => b.name));
-    const free = NAMES.filter((n) => !used.has(n));
-    const name = (free.length ? free : NAMES)[Math.floor(rand() * (free.length ? free.length : NAMES.length))];
-    const animal = ANIMAL_NAMES[Math.floor(rand() * ANIMAL_NAMES.length)];
+    const taken = new Set([...this.bots.values()].map((b) => b.name));
+    const name = genHandle(taken);
+    const usedAnimals = new Set([...this.bots.values()].map((b) => b.animal));
+    const freeAnimals = ANIMAL_NAMES.filter((a) => !usedAnimals.has(a));
+    const animal = pick(freeAnimals.length ? freeAnimals : ANIMAL_NAMES); // dedupe avatars in a 3–6 lobby
     const pos = this.pickFarSpawn(room);
     this.bots.set(id, {
       id, name, animal,
@@ -454,6 +621,8 @@ export class BotSim {
       kameCharging: false,
       kameChargeT: 0,
       superTargetId: null,
+      superHesitateT: 0,
+      _superArmed: false,
       seekItemId: null,
       itemRepickCd: 0,
       shield: 0,
@@ -462,7 +631,24 @@ export class BotSim {
       stunT: 0,
       fireLockT: 0,
       staggerOkAt: 0,
+      saberCd: rand() * SABER_CD, // stagger first-swing readiness across a spawn wave
+      swinging: false,
+      swingT: 0,
+      swingDirX: 1,
+      swingDirZ: 0,
+      swingHitIds: new Set<string>(),
+      clashed: false,
+      lungeCd: LUNGE_CD_MIN + rand() * LUNGE_CD_RND,
+      lungeT: 0,
+      skill: 0, accEff: 0, cadenceMul: 0, leadMul: 0,
+      commitT: 0,
+      reactT: 0,
+      defensiveReactT: 0,
+      kills: 0, streak: 0,
     });
+    const b = this.bots.get(id)!;
+    b.skill = (rand() + rand()) / 2; // center-biased: most mid, few sharp, few free
+    this.deriveSkill(b);
   }
 
   private respawn(b: ServerBot, room: string) {
@@ -492,6 +678,8 @@ export class BotSim {
     b.kameCharging = false;
     b.kameChargeT = 0;
     b.superTargetId = null;
+    b.superHesitateT = 0;
+    b._superArmed = false;
     b.seekItemId = null;
     b.itemRepickCd = 0;
     b.shield = 0;
@@ -500,6 +688,20 @@ export class BotSim {
     b.stunT = 0;
     b.fireLockT = 0;
     b.staggerOkAt = 0;
+    b.saberCd = rand() * SABER_CD;
+    b.swinging = false;
+    b.swingT = 0;
+    b.swingDirX = 1;
+    b.swingDirZ = 0;
+    b.swingHitIds.clear();
+    b.clashed = false;
+    b.lungeCd = LUNGE_CD_MIN + rand() * LUNGE_CD_RND;
+    b.lungeT = 0;
+    b.commitT = 0;
+    b.reactT = 0;
+    b.defensiveReactT = 0;
+    b.streak = 0; // reset on each death; kills is PRESERVED (lifetime frags survive)
+    this.deriveSkill(b); // re-derive caches; skill itself is PRESERVED (a person keeps their rep)
   }
 
   /** A spawn point far from every other combatant (players + other bots). */
@@ -551,6 +753,18 @@ export class BotSim {
     return clampArena(proposed);
   }
 
+  /** Rotate b.yaw toward the heading (dx,dz), capped at MAX_TURN_RATE this tick. */
+  private faceToward(b: ServerBot, dx: number, dz: number, dt: number): void {
+    const want = Math.atan2(dz, dx);
+    let d = want - b.yaw;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    const max = MAX_TURN_RATE * dt;
+    b.yaw += Math.max(-max, Math.min(max, d));
+    if (b.yaw > Math.PI) b.yaw -= 2 * Math.PI;
+    else if (b.yaw < -Math.PI) b.yaw += 2 * Math.PI;
+  }
+
   /** Build the broadcast snapshot for a bot (NetState shape the client expects). */
   private snapshot(b: ServerBot): Record<string, unknown> {
     // Report the FULL horizontal velocity (steering + active dash impulse) so the
@@ -564,6 +778,10 @@ export class BotSim {
       // Drives the client's remote charge-orb glow (Game.ts ~1457): set while the
       // bot is winding up its telegraphed super, cleared on release/abort/death.
       charging: b.kameCharging, chargeT: b.kameChargeT, present: true,
+      // Weapon held: "saber" while a swing arc is in flight (so the blade shows on
+      // every client), "gun" otherwise. The client renders the saber off this AND
+      // the "melee" arc event; "gun" lets its shot/super inference run as before.
+      weapon: b.swinging ? "saber" : "gun",
     };
   }
 
@@ -611,11 +829,13 @@ export class BotSim {
   tick(room: string, dt: number) {
     if (room !== GAME_ROOM) return;
 
-    // Maintain the population: (live players + bots) ≈ MIN_COMBATANTS — but only
-    // while at least one REAL player is connected (no bots in an empty room).
+    // Maintain the population: hold a random [3,6] target for the room lifetime,
+    // rolled once on first activation (when live > 0) and reset on clearRoom.
     const live = this.hub.liveSizeOf(room);
-    const desired =
-      live > 0 ? Math.min(MAX_BOTS, Math.max(0, MIN_COMBATANTS - live)) : 0;
+    if (live > 0 && this.targetBotCount === 0) {
+      this.targetBotCount = 3 + Math.floor(rand() * 4); // held [3,6] for the room lifetime
+    }
+    const desired = live > 0 ? Math.min(MAX_BOTS, this.targetBotCount) : 0;
     let changed = false;
     while (this.bots.size < desired) {
       this.spawnBot(room);
@@ -715,12 +935,26 @@ export class BotSim {
 
       // Decay the "recently shot at" threat flag.
       if (b.threat > 0) b.threat = Math.max(0, b.threat - dt);
+      // Decay the startle window (reaction latency before first offensive reaction).
+      if (b.reactT > 0) b.reactT = Math.max(0, b.reactT - dt);
+      // Decay the defensive-dodge suppression timer (un-gates dash/jump before full reactT).
+      if (b.defensiveReactT > 0) b.defensiveReactT = Math.max(0, b.defensiveReactT - dt);
       // Decay the transient pickup buffs (rapid fire / move speed).
       if (b.rapidT > 0) b.rapidT = Math.max(0, b.rapidT - dt);
       if (b.speedT > 0) b.speedT = Math.max(0, b.speedT - dt);
       // Decay the saber stagger timers (freeze + fire-lock from a player's melee).
       if (b.stunT > 0) b.stunT = Math.max(0, b.stunT - dt);
       if (b.fireLockT > 0) b.fireLockT = Math.max(0, b.fireLockT - dt);
+      // Decay the super hesitation timer (paused while stunned by a saber).
+      if (b.stunT <= 0 && b.superHesitateT > 0) b.superHesitateT = Math.max(0, b.superHesitateT - dt);
+      // Decay the bot's OWN saber timers (swing in flight + cooldown + lunge gates).
+      if (b.saberCd > 0) b.saberCd = Math.max(0, b.saberCd - dt);
+      if (b.lungeCd > 0) b.lungeCd = Math.max(0, b.lungeCd - dt);
+      if (b.lungeT > 0) b.lungeT = Math.max(0, b.lungeT - dt);
+      if (b.swingT > 0) {
+        b.swingT = Math.max(0, b.swingT - dt);
+        if (b.swingT <= 0) { b.swinging = false; b.clashed = false; } // swing ended → weapon back to "gun"
+      }
 
       // ── CHARGE_SUPER: while winding up the telegraphed super, the bot COMMITS
       // (this short-circuits all normal combat below so a player gets a clean
@@ -742,11 +976,9 @@ export class BotSim {
       // per-tick position-delta estimate (for aim leading); bots are treated as
       // stationary aim-wise (vx/vz=0) since they juke unpredictably anyway.
       const enemies: Target[] = [];
-      let anyPlayerAlive = false;
       for (const p of players) {
         const est = this.targetVel.get(p.id);
         enemies.push({ id: p.id, x: p.x, z: p.z, vx: est?.vx ?? 0, vz: est?.vz ?? 0 });
-        anyPlayerAlive = true;
       }
       for (const other of this.bots.values()) {
         if (other.id !== b.id && other.alive) {
@@ -754,51 +986,46 @@ export class BotSim {
         }
       }
 
-      // ── TARGET SELECTION (player-first, sticky, with retaliation) ──────────────
-      // Humans are the point: a live PLAYER outranks any bot. Only when NO player
-      // is alive in the room do bots target each other (keeps the arena lively
-      // before humans join). Stickiness (anti-flicker) applies within a tier; a
-      // player candidate always preempts a bot target immediately (cross-tier, no
-      // hysteresis). RETARGET_CD cadence is unchanged.
-      const isPlayerId = (id: string | null): boolean =>
-        id != null && players.some((p) => p.id === id);
+      // ── TARGET SELECTION (pure nearest-enemy, committed) ──────────────────────
+      // Players and bots are identical "enemies"; nearest wins. commitT keeps a bot
+      // on its current fight (no equidistant ping-pong); a vanished target force-breaks
+      // it. The post-pass below is the SOLE player-attention floor guarantee.
       b.retargetCd -= dt;
+      if (b.commitT > 0) b.commitT = Math.max(0, b.commitT - dt);
       const curTgt = b.targetId ? enemies.find((e) => e.id === b.targetId) ?? null : null;
-      const curIsPlayer = curTgt ? isPlayerId(curTgt.id) : false;
-      // Cross-tier preempt: if the bot is currently chasing a BOT but a player is
-      // now alive, force a fresh pick this tick (a human just became available).
-      const crossTierPreempt = !!curTgt && !curIsPlayer && anyPlayerAlive;
-      if (b.retargetCd <= 0 || !curTgt || crossTierPreempt) {
+      const curInRange = !!curTgt &&
+        (curTgt.x - b.x) ** 2 + (curTgt.z - b.z) ** 2 <= (SHOOT_RANGE + ENGAGE_LEASH) ** 2;
+      const holdCommit = b.commitT > 0 && !!curTgt && curInRange; // null/out-of-range curTgt force-breaks
+
+      if (!holdCommit && (b.retargetCd <= 0 || !curTgt)) {
         b.retargetCd = RETARGET_CD;
-        // PASS 1: nearest alive PLAYER (a player anywhere outranks any bot).
-        // PASS 2 (fallback): only if NO player is alive, nearest enemy BOT.
-        let best: Target | null = null;
-        let bestD = Infinity;
+        let best: Target | null = null, bestEff = Infinity;
         for (const e of enemies) {
-          if (anyPlayerAlive && !isPlayerId(e.id)) continue; // players-only when one exists
-          const d = (e.x - b.x) ** 2 + (e.z - b.z) ** 2;
-          if (d < bestD) { bestD = d; best = e; }
+          const d = Math.hypot(e.x - b.x, e.z - b.z);
+          if (d < bestEff) { bestEff = d; best = e; }
         }
-        // STICKINESS (same tier only): keep the current target unless the new pick
-        // is at least TARGET_SWITCH_HYSTERESIS units closer. Skipped on a cross-tier
-        // preempt (we WANT to jump to the player) or when there's no current target.
-        if (best && curTgt && !crossTierPreempt && isPlayerId(best.id) === curIsPlayer) {
+        const prev = b.targetId;
+        if (best && curTgt && best.id !== curTgt.id) {
+          // same-distance tiebreak: only switch if clearly closer (anti-flicker)
           const curD = Math.hypot(curTgt.x - b.x, curTgt.z - b.z);
-          const newD = Math.sqrt(bestD);
-          b.targetId = newD < curD - TARGET_SWITCH_HYSTERESIS ? best.id : curTgt.id;
+          b.targetId = bestEff < curD - TARGET_SWITCH_HYSTERESIS ? best.id : curTgt.id;
         } else {
           b.targetId = best ? best.id : null;
         }
+        if (b.targetId && b.targetId !== prev) {
+          b.commitT = COMMIT_MIN + (1 - b.skill) * COMMIT_SPAN; // re-seed on a genuine id CHANGE only
+        }
       }
 
-      // RETALIATION: being shot re-engages the shooter instantly. If recently hit
-      // and the attacker is an alive PLAYER within SHOOT_RANGE+2, snap to them
-      // (overrides stickiness). Bots only retaliate against humans this way.
+      // RETALIATION: being shot re-aims at the shooter (player OR bot), overriding commit.
       if (b.threat > 0 && b.lastAttacker && b.lastAttacker !== b.targetId) {
         const atk = enemies.find((e) => e.id === b.lastAttacker);
-        if (atk && isPlayerId(atk.id)) {
+        if (atk) {
           const ad2 = (atk.x - b.x) ** 2 + (atk.z - b.z) ** 2;
-          if (ad2 <= (SHOOT_RANGE + 2) * (SHOOT_RANGE + 2)) b.targetId = atk.id;
+          if (ad2 <= (SHOOT_RANGE + ENGAGE_LEASH) * (SHOOT_RANGE + ENGAGE_LEASH)) {
+            b.targetId = atk.id;
+            b.commitT = COMMIT_MIN + (1 - b.skill) * COMMIT_SPAN; // bind commit to the new id
+          }
         }
       }
 
@@ -810,7 +1037,7 @@ export class BotSim {
       // still navigate/orbit but hold at STANDOFF range and suppress fire/super —
       // turning a dogpile into a readable front line. Bot-vs-bot fights (target is
       // a bot, never in engagersByPlayer) are always full engagers (uncapped).
-      const tgtIsPlayer = !!tgt && isPlayerId(tgt.id);
+      const tgtIsPlayer = !!tgt && players.some((p) => p.id === tgt!.id);
       const isEngager =
         !tgtIsPlayer || (engagersByPlayer.get(tgt!.id)?.has(b.id) ?? false);
       const maySuper = tgtIsPlayer && superHolder.get(tgt!.id) === b.id;
@@ -871,7 +1098,7 @@ export class BotSim {
         // Faint sideways wobble so the path isn't a dead-straight line.
         mvx = ux + -uz * b.strafeDir * 0.15;
         mvz = uz + ux * b.strafeDir * 0.15;
-        b.yaw = Math.atan2(dz, dx);
+        this.faceToward(b, dx, dz, dt);
 
         // Close a big gap to the item with a dash (reuse the safe-dash helper).
         b.dashCd -= dt;
@@ -889,7 +1116,7 @@ export class BotSim {
         const dist = Math.hypot(dx, dz) || 1;
         const ux = dx / dist;
         const uz = dz / dist;
-        b.yaw = Math.atan2(dz, dx);
+        this.faceToward(b, dx, dz, dt);
 
         // Engagers press to ENGAGE_DIST; non-engagers (capped out by the pre-pass)
         // loosely orbit at the looser STANDOFF range so they form the back of the
@@ -897,8 +1124,40 @@ export class BotSim {
         const refDist = isEngager ? ENGAGE_DIST : STANDOFF_DIST;
         const refBand = isEngager ? ENGAGE_BAND : STANDOFF_BAND;
 
-        // Approach / retreat / circle-strafe around the engagement band.
-        if (dist > refDist + refBand) {
+        // ── LUNGE intent (close into saber range) ──────────────────────────────
+        // To actually REACH melee, an engager that is off lunge-cooldown and within
+        // LUNGE_TRIGGER_DIST (but still outside saber range) STARTS a lunge press: a
+        // short window (LUNGE_PRESS_DUR) during which it drives STRAIGHT IN at the
+        // target — overriding the orbit/kite below — until it lands a swing or the
+        // window elapses. Bounded by LUNGE_CD + LUNGE_CHANCE so the whole lobby doesn't
+        // melee-rush at once. Suppressed while staggered / mid-swing / low-HP (a hurt
+        // bot keeps kiting). (b.lungeCd/lungeT/saberCd are decayed at the top of the tick.)
+        const wantSaber =
+          isEngager && b.swingT <= 0 && b.stunT <= 0 && b.health > DASH_RETREAT_HP;
+        if (
+          wantSaber &&
+          b.lungeCd <= 0 &&
+          b.lungeT <= 0 &&
+          dist > SABER_RANGE &&
+          dist <= LUNGE_TRIGGER_DIST &&
+          rand() < LUNGE_CHANCE
+        ) {
+          b.lungeCd = LUNGE_CD_MIN + rand() * LUNGE_CD_RND;
+          b.lungeT = LUNGE_PRESS_DUR; // press straight in for the next ~1.2s
+          // Kick the approach with a dash if grounded + off dash-cooldown. The
+          // per-tick `b.dashCd -= dt` decay is owned solely by the DASH block below
+          // (~line 1231); reading dashCd here stale-by-one-tick is harmless.
+          if (b.dashCd <= 0 && b.grounded) this.dashSafely(room, b, ux, uz);
+        }
+        const lunging = wantSaber && b.lungeT > 0 && dist > SABER_RANGE;
+
+        // Approach / retreat / circle-strafe around the engagement band — UNLESS a
+        // lunge press is active, in which case drive straight at the target to close
+        // into saber range (no kite-back, so the bot can actually reach melee).
+        if (lunging) {
+          mvx = ux;
+          mvz = uz;
+        } else if (dist > refDist + refBand) {
           // Too far: close in (with a slight strafe so the approach isn't a straight line).
           mvx = ux * 0.85 - uz * b.strafeDir * 0.5;
           mvz = uz * 0.85 + ux * b.strafeDir * 0.5;
@@ -912,7 +1171,9 @@ export class BotSim {
           mvz = ux * b.strafeDir;
         }
 
-        // Low HP: bias the whole vector away from the target (retreat / kite).
+        // Low HP: bias the whole vector away from the target (retreat / kite). Never
+        // while lunging (a committed melee press isn't gated here — wantSaber already
+        // excludes low HP, so this only affects the non-lunge orbit/kite vector).
         if (b.health <= DASH_RETREAT_HP) {
           mvx = mvx * 0.4 - ux * 0.8;
           mvz = mvz * 0.4 - uz * 0.8;
@@ -925,12 +1186,36 @@ export class BotSim {
           if (rand() < 0.5) b.strafeDir = -b.strafeDir;
         }
 
+        // ── SABER swing gate (sibling of the fire gate; preferred in melee) ──────
+        // In saber range, off cooldown, grounded, not stunned/fire-locked/mid-swing →
+        // SWING instead of shooting. The bot prefers the blade when close, else keeps
+        // shooting (coherent with the offline bot behaviour). One swing in flight at a
+        // time (b.swingT gate). fireLockT (a stagger lockout) also suppresses a swing.
+        let didSwing = false;
+        if (
+          isEngager &&
+          b.reactT <= 0 &&
+          b.saberCd <= 0 &&
+          b.swingT <= 0 &&
+          dist <= SABER_PREFER_RANGE &&
+          b.grounded &&
+          b.stunT <= 0 &&
+          b.fireLockT <= 0
+        ) {
+          this.startSaberSwing(room, b, tgt);
+          didSwing = true;
+        }
+
         // ── Shoot (with slight aim leading + varied cadence) ──
         // Only ENGAGERS fire: the nearest few bots per player keep the heat fair
-        // (capping the dogpile at ~MAX_ENGAGERS_PER_PLAYER guns instead of N).
+        // (capping the dogpile at ~MAX_ENGAGERS_PER_PLAYER guns instead of N). A bot
+        // that swung this tick (or is mid-swing) does NOT also shoot — saber takes over.
         b.shootCd -= dt;
         if (
           isEngager &&
+          !didSwing &&
+          b.swingT <= 0 &&
+          b.reactT <= 0 &&
           b.shootCd <= 0 &&
           dist <= SHOOT_RANGE &&
           b.grounded &&
@@ -939,7 +1224,7 @@ export class BotSim {
         ) {
           // Rapid pickup ~halves the cadence while its buff is active.
           const rapidMult = b.rapidT > 0 ? 0.5 : 1;
-          b.shootCd = (SHOOT_CD_MIN + rand() * SHOOT_CD_RND) * rapidMult;
+          b.shootCd = (SHOOT_CD_MIN + rand() * SHOOT_CD_RND) * b.cadenceMul * rapidMult;
           this.fire(room, b, tgt);
         }
 
@@ -949,8 +1234,10 @@ export class BotSim {
           if (b.health <= DASH_RETREAT_HP && rand() < DASH_DODGE_CHANCE) {
             // Low HP: lunge AWAY from the target to break the engagement.
             this.dashSafely(room, b, -ux, -uz);
-          } else if (b.threat > 0 && rand() < DASH_DODGE_CHANCE) {
+          } else if (b.threat > 0 && b.defensiveReactT <= 0 && rand() < DASH_DODGE_CHANCE) {
             // Under fire: juke sideways (perpendicular) to dodge the next shot.
+            // Defensive flinch un-gates after min(reactT, DEFENSIVE_FLINCH) seconds so
+            // the bot isn't catatonic; full offensive re-engage waits for reactT=0.
             this.dashSafely(room, b, -uz * b.strafeDir, ux * b.strafeDir);
           } else if (dist > DASH_GAP_DIST && rand() < DASH_DODGE_CHANCE) {
             // Big gap: dash toward the target to close it quickly.
@@ -962,7 +1249,9 @@ export class BotSim {
         b.jumpCd -= dt;
         if (b.jumpCd <= 0 && b.grounded && b.stunT <= 0) {
           const urgent = b.threat > 0 || b.health <= DASH_RETREAT_HP;
-          if (urgent && rand() < JUMP_DODGE_CHANCE) {
+          if (urgent && b.defensiveReactT <= 0 && rand() < JUMP_DODGE_CHANCE) {
+            // Defensive flinch: un-gate the bob after min(reactT, DEFENSIVE_FLINCH)
+            // so the bot reacts physically without firing back during startle.
             this.startJump(room, b); // bob to throw off the shooter's aim
           } else if (rand() < JUMP_IDLE_CHANCE) {
             this.startJump(room, b); // liveliness hop
@@ -971,7 +1260,11 @@ export class BotSim {
 
         // ── SUPER entry gate ──
         // Begin a telegraphed mega only against a PLAYER, off-cooldown, in close
-        // range, grounded, and healthy enough to commit. From the NEXT tick the
+        // range, grounded, and healthy enough to commit. A two-step hesitation
+        // (skill-scaled pause) runs first: on the first eligible tick the bot ARMS
+        // (`_superArmed=true`) and starts a short timer; once the timer elapses it
+        // COMMITS (`kameCharging=true`) unconditionally — no re-roll that could hold
+        // the per-player super slot while telegraphing nothing. From commit the
         // CHARGE_SUPER branch above takes over (movement/fire suppressed) until the
         // wind-up completes (fire) or the target escapes (abort). The `maySuper`
         // gate enforces ONE charging super per player (the per-player super slot)
@@ -985,9 +1278,23 @@ export class BotSim {
           dist <= SUPER_RANGE &&
           this.hub.isPlayer(room, tgt.id)
         ) {
-          b.kameCharging = true;
-          b.kameChargeT = 0;
-          b.superTargetId = tgt.id;
+          if (b.superHesitateT <= 0 && !b._superArmed) {
+            // First eligible tick: start the skill-scaled hesitation window.
+            b.superHesitateT = SUPER_HESITATE_MIN + (1 - b.skill) * SUPER_HESITATE_SPAN;
+            b._superArmed = true;
+          } else if (b.superHesitateT <= 0 && b._superArmed) {
+            // Hesitation elapsed: commit unconditionally (no re-roll).
+            b.kameCharging = true;
+            b.kameChargeT = 0;
+            b.superTargetId = tgt.id;
+            b._superArmed = false;
+          }
+          // (else: timer still ticking — keep waiting, nothing to do)
+        } else {
+          // Conditions no longer met: clear any in-progress hesitation immediately
+          // so the per-player super slot is never held while telegraphing nothing.
+          b.superHesitateT = 0;
+          b._superArmed = false;
         }
       } else {
         // ── HUNT (center-biased idle) ──
@@ -1011,7 +1318,20 @@ export class BotSim {
         const dx = b.wanderX - b.x;
         const dz = b.wanderZ - b.z;
         const d = Math.hypot(dx, dz);
-        if (d > 0.6) { mvx = dx / d; mvz = dz / d; b.yaw = Math.atan2(dz, dx); }
+        if (d > 0.6) { mvx = dx / d; mvz = dz / d; this.faceToward(b, dx, dz, dt); }
+
+        // Targetless evasive steer: during the startle window, if we know who shot us,
+        // override the wander direction to move AWAY from the last attacker (steering
+        // only — no fire). This keeps the bot mobile and non-catatonic while startled.
+        if (b.reactT > 0 && b.lastAttacker) {
+          const atk = enemies.find((e) => e.id === b.lastAttacker);
+          if (atk) {
+            const adx = b.x - atk.x; // away from attacker
+            const adz = b.z - atk.z;
+            const alen = Math.hypot(adx, adz);
+            if (alen > 0.001) { mvx = adx / alen; mvz = adz / alen; this.faceToward(b, adx, adz, dt); }
+          }
+        }
 
         // The odd idle hop keeps wandering bots from looking frozen.
         b.jumpCd -= dt;
@@ -1088,6 +1408,50 @@ export class BotSim {
 
       this.fanout(room, "s", this.snapshot(b), b.id);
     }
+
+    // ── PLAYER-ATTENTION FLOOR (post-pass — authoritative guarantee) ──────────
+    // This is the SOLE mechanism that ensures every player is targeted by at least
+    // one bot. Pure nearest-enemy selection (above) gives no such guarantee on its
+    // own; this pass runs once per tick AFTER all per-bot selection is done and
+    // assigns the nearest free bot to any neglected player. Effect lands next tick
+    // (~50 ms), which is imperceptible.
+    //
+    // "Free" bot = commitT <= 0 (strictly uncommitted — single consistent definition).
+    // STEAL-GUARD: skip a free bot that is the SOLE targeter of another player (to
+    // avoid leaving that player orphaned). When a bot IS reassigned away from
+    // player B, decrement B's live count immediately so B can be rescued in this
+    // same pass if needed. Counts are maintained live as assignments are made.
+    if (players.length > 0) {
+      // Build live targeter counts (players only; updated as we reassign below).
+      const liveCount = new Map<string, number>();
+      for (const b of this.bots.values()) {
+        if (b.alive && b.targetId && players.some((p) => p.id === b.targetId)) {
+          liveCount.set(b.targetId, (liveCount.get(b.targetId) ?? 0) + 1);
+        }
+      }
+      for (const p of players) {
+        if ((liveCount.get(p.id) ?? 0) > 0) continue; // already has a targeter
+        let best: ServerBot | null = null, bestD2 = Infinity;
+        for (const b of this.bots.values()) {
+          if (!b.alive || b.commitT > 0) continue; // only strictly free bots
+          // STEAL-GUARD: don't take the sole guardian of another player.
+          if (b.targetId && players.some((pp) => pp.id === b.targetId)) {
+            if ((liveCount.get(b.targetId) ?? 0) <= 1) continue;
+          }
+          const d2 = (b.x - p.x) ** 2 + (b.z - p.z) ** 2;
+          if (d2 < bestD2) { bestD2 = d2; best = b; }
+        }
+        if (best) {
+          // Decrement the previous player's count so it can be rescued this pass.
+          if (best.targetId && players.some((pp) => pp.id === best!.targetId)) {
+            liveCount.set(best.targetId, (liveCount.get(best.targetId) ?? 0) - 1);
+          }
+          best.targetId = p.id;
+          best.commitT = COMMIT_MIN + (1 - best.skill) * COMMIT_SPAN;
+          liveCount.set(p.id, (liveCount.get(p.id) ?? 0) + 1);
+        }
+      }
+    }
   }
 
   /** Live position (+ grounded) of a player id, or null if absent/dead this tick. */
@@ -1141,12 +1505,14 @@ export class BotSim {
 
   /** Cancel a wind-up cleanly: no emit, no damage, short re-arm so a wasted tell
    *  isn't punished forever. The cleared flags ride the NEXT "s" so the client
-   *  drops the orb. */
+   *  drops the orb. Also clears any in-progress hesitation (slot-safety). */
   private abortSuper(b: ServerBot) {
     b.kameCharging = false;
     b.kameChargeT = 0;
     b.superTargetId = null;
     b.superCd = SUPER_REARM;
+    b.superHesitateT = 0;
+    b._superArmed = false;
   }
 
   /**
@@ -1228,8 +1594,8 @@ export class BotSim {
     const tid = b.superTargetId;
     if (!tid) return;
     const est = this.targetVel.get(tid);
-    const aimX = tpos.x + (est?.vx ?? 0) * LEAD_FACTOR;
-    const aimZ = tpos.z + (est?.vz ?? 0) * LEAD_FACTOR;
+    const aimX = tpos.x + (est?.vx ?? 0) * LEAD_FACTOR * b.leadMul;
+    const aimZ = tpos.z + (est?.vz ?? 0) * LEAD_FACTOR * b.leadMul;
     const ddx = aimX - b.x;
     const ddz = aimZ - b.z;
     const dlen = Math.hypot(ddx, ddz) || 1;
@@ -1290,11 +1656,15 @@ export class BotSim {
 
     if (res.died) {
       this.fanout(room, "died", { id: tid, x: res.x, z: res.z, by: b.id, seq }, b.id);
+      // Super only targets players (see fireSuper guard), so always emit the feed line.
+      b.kills += 1;
+      b.streak += 1;
+      // Streak capped at 2 so bot farming never trips the client's >=3 rampage banner.
       this.fanout(room, "kill", {
         id: `srvk_${this.killSeq++}`,
         killer: b.name,
         victim: res.victimName,
-        streak: 0,
+        streak: Math.min(b.streak, 2),
       }, b.id);
     }
   }
@@ -1370,6 +1740,202 @@ export class BotSim {
   }
 
   /**
+   * Begin a saber SWING toward `tgt`: FREEZE the facing toward the target (the arc
+   * + the strike both read this frozen dir, NOT the live yaw, so the swing can't be
+   * re-aimed mid-animation), fan the visual "melee" arc NOW, and SCHEDULE the strike
+   * to land at SWING_WINDUP_END_T of the way through the swing — via the SAME
+   * damage-on-arrival queue fire() uses — so the hit coincides with the blade
+   * visually striking. Only ONE swing is in flight at a time (gated by b.swinging).
+   * Mirrors the player saber (src/game/Game.ts); the snapshot weapon flips to
+   * "saber" via b.swinging while swingT>0.
+   */
+  private startSaberSwing(room: string, b: ServerBot, tgt: Target) {
+    const dx = tgt.x - b.x;
+    const dz = tgt.z - b.z;
+    const len = Math.hypot(dx, dz) || 1;
+    b.swingDirX = dx / len;
+    b.swingDirZ = dz / len;
+    b.swinging = true;
+    b.swingT = MELEE_SWING_DUR;
+    b.swingHitIds.clear();
+    b.clashed = false;
+    b.saberCd = SABER_CD;
+    b.lungeT = 0; // swing landed → stop pressing in (resume orbit/kite during the cooldown)
+    b.yaw = Math.atan2(b.swingDirZ, b.swingDirX); // commit the facing to the strike
+
+    // VISUAL arc (matches the player MeleeEvent shape {id, origin, dir}). The client
+    // renders the bot's full saber arc from this (bots render as RemotePlayers).
+    this.fanout(room, "melee", {
+      id: b.id,
+      origin: { x: b.x, y: MUZZLE_Y, z: b.z },
+      dir: { x: b.swingDirX, y: 0, z: b.swingDirZ },
+    }, b.id);
+
+    // STRIKE scheduled at strike-time (≈0.072s) via the shared damage-on-arrival queue,
+    // so the hit lands when the blade visually strikes — same mechanism as fire().
+    this.hub.enqueueHit(room, {
+      applyAt: Date.now() + MELEE_SWING_DUR * SWING_WINDUP_END_T * 1000,
+      resolve: () => this.resolveSaberSwing(room, b),
+    });
+  }
+
+  /**
+   * Resolve a saber swing's strike at strike-time. Recompute the arc from the bot's
+   * CURRENT position + the FROZEN swing direction, then for each enemy (players +
+   * other bots) inside SABER_RANGE and forward of the blade (dot >= SABER_ARC_DOT),
+   * not already resolved this swing and not clashed:
+   *   - bot↔bot CLASH: the victim bot is itself mid-swing in its strike window with
+   *     an OPPOSED facing → fan "clash" ONCE, cancel BOTH swings' damage + recoil
+   *     both, NO damage, NO stun;
+   *   - player victim: damagePlayer × MELEE_DAMAGE + "meleehit" stagger cue;
+   *   - bot victim: damageBot × MELEE_DAMAGE + staggerBot (authoritative stun) + a
+   *     "meleehit" observer cue so the victim bot visibly staggers on every client.
+   * Scalar point-in-arc test only (no client blade geometry on the server).
+   */
+  private resolveSaberSwing(room: string, b: ServerBot) {
+    if (!b.alive || !b.swinging) return; // swing ended/cancelled before the strike landed
+
+    const dirX = b.swingDirX;
+    const dirZ = b.swingDirZ;
+    const r2 = SABER_RANGE * SABER_RANGE;
+
+    // ── Players first (the headline victims) ──
+    for (const p of this.hub.playerTargets(room)) {
+      if (b.clashed) break; // a clash this strike cancels all remaining damage
+      if (b.swingHitIds.has(p.id)) continue;
+      const px = p.x - b.x;
+      const pz = p.z - b.z;
+      const d2 = px * px + pz * pz;
+      if (d2 > r2) continue;
+      const d = Math.sqrt(d2) || 1;
+      if ((px / d) * dirX + (pz / d) * dirZ < SABER_ARC_DOT) continue; // outside forward arc
+      b.swingHitIds.add(p.id);
+      this.strikePlayer(room, b, p.id, dirX, dirZ);
+    }
+
+    // ── Other bots (clash detection + bot-on-bot saber damage) ──
+    for (const other of this.bots.values()) {
+      if (b.clashed) break;
+      if (other.id === b.id || !other.alive) continue;
+      if (b.swingHitIds.has(other.id)) continue;
+      const ox = other.x - b.x;
+      const oz = other.z - b.z;
+      const d2 = ox * ox + oz * oz;
+      if (d2 > r2) continue;
+      const d = Math.sqrt(d2) || 1;
+      if ((ox / d) * dirX + (oz / d) * dirZ < SABER_ARC_DOT) continue; // outside forward arc
+
+      // CLASH: the other bot is ALSO mid-swing — and PAST its wind-up, i.e. in the
+      // STRIKE phase (mirrors the client's isSaberStriking) — with an opposed facing
+      // → two blades cross. swingT decays from MELEE_SWING_DUR to 0, so "past wind-up"
+      // ⇔ swingT <= MELEE_SWING_DUR * (1 - SWING_WINDUP_END_T). Fan ONCE (guard via
+      // swingHitIds on BOTH so the mirrored strike doesn't double-fire), cancel both
+      // swings' damage, recoil both.
+      const otherStriking =
+        other.swinging &&
+        !other.clashed &&
+        !other.swingHitIds.has(b.id) &&
+        other.swingT <= MELEE_SWING_DUR * (1 - SWING_WINDUP_END_T);
+      const opposed = dirX * other.swingDirX + dirZ * other.swingDirZ < CLASH_OPPOSED_DOT;
+      if (otherStriking && opposed) {
+        b.swingHitIds.add(other.id);
+        other.swingHitIds.add(b.id);
+        b.clashed = true;
+        other.clashed = true;
+        const mx = (b.x + other.x) * 0.5;
+        const mz = (b.z + other.z) * 0.5;
+        this.fanout(room, "clash", { a: b.id, b: other.id, x: mx, z: mz }, b.id);
+        // Mutual recoil: each bot shoved away from the contact midpoint.
+        this.applySaberRecoil(room, b, b.x - mx, b.z - mz);
+        this.applySaberRecoil(room, other, other.x - mx, other.z - mz);
+        break; // the clash cancels the rest of THIS swing (b.clashed now true)
+      }
+
+      // No clash → a clean bot-on-bot saber hit.
+      b.swingHitIds.add(other.id);
+      this.strikeBot(room, b, other, dirX, dirZ);
+    }
+  }
+
+  /** Apply a saber hit to a PLAYER victim: MELEE_DAMAGE points (shield-first) + the
+   *  death/kill feed (mirrors resolveShot), then the "meleehit" stun cue the victim's
+   *  client applies (server-origin = trusted). */
+  private strikePlayer(room: string, b: ServerBot, targetId: string, dirX: number, dirZ: number) {
+    let res: HitResult | null = null;
+    for (let i = 0; i < MELEE_DAMAGE; i++) {
+      const r = this.hub.damagePlayer(room, targetId, b.id);
+      if (!r) break; // target vanished mid-loop
+      res = r;
+      if (r.died) break;
+    }
+    // The stun/knockback cue: server-origin = trusted. Sent even on a shielded hit
+    // (the saber still staggers). Clamped values are the canonical server constants.
+    this.fanout(room, "meleehit", {
+      id: b.id,
+      target: targetId,
+      dir: { x: dirX, y: 0, z: dirZ },
+      stunMs: Math.round(MELEE_STUN_T * 1000),
+      fireLockMs: Math.round(MELEE_FIRE_LOCK_T * 1000),
+      interruptCharge: true,
+    }, b.id);
+    if (!res) return;
+    if (res.died) {
+      this.fanout(room, "died", { id: targetId, x: res.x, z: res.z, by: b.id }, b.id);
+      b.kills += 1;
+      b.streak += 1;
+      this.fanout(room, "kill", {
+        id: `srvk_${this.killSeq++}`,
+        killer: b.name,
+        victim: res.victimName,
+        streak: Math.min(b.streak, 2),
+      }, b.id);
+    }
+  }
+
+  /** Apply a saber hit to a BOT victim: MELEE_DAMAGE via damageBot (which fans the
+   *  kill feed itself on a bot→bot frag) + an AUTHORITATIVE staggerBot, and a
+   *  "meleehit" observer cue so the victim bot visibly staggers on EVERY client
+   *  (online must render 100% of what happens — a server bot has no client to honor
+   *  the stun, so the relayed cue is the fidelity carrier for observers). */
+  private strikeBot(room: string, b: ServerBot, other: ServerBot, dirX: number, dirZ: number) {
+    let res: HitResult | null = null;
+    for (let i = 0; i < MELEE_DAMAGE; i++) {
+      const r = this.damageBot(room, other.id, b.id);
+      if (!r) break;
+      res = r;
+      if (r.died) break;
+    }
+    this.staggerBot(room, other.id); // authoritative server-side stun on the victim bot
+    // Observer cue: the victim is a RemotePlayer on every client → the "meleehit"
+    // makes them visibly react (knockback/flash), matching what a player victim shows.
+    this.fanout(room, "meleehit", {
+      id: b.id,
+      target: other.id,
+      dir: { x: dirX, y: 0, z: dirZ },
+      stunMs: Math.round(MELEE_STUN_T * 1000),
+      fireLockMs: Math.round(MELEE_FIRE_LOCK_T * 1000),
+      interruptCharge: true,
+    }, b.id);
+    if (res?.died) {
+      this.fanout(room, "died", { id: other.id, x: res.x, z: res.z, by: b.id }, b.id);
+      // damageBot already fanned the bot→bot "kill" feed line; do NOT double-emit.
+    }
+  }
+
+  /** Apply a mutual-recoil knockback to a bot along (nx,nz): reuse the dash impulse
+   *  channel so the lunge rides the existing "s" vx/vz dead-reckoning + the "dash"
+   *  juice. No allocation; normalises in place. */
+  private applySaberRecoil(room: string, b: ServerBot, nx: number, nz: number) {
+    const len = Math.hypot(nx, nz);
+    const ux = len > 0.001 ? nx / len : -b.swingDirX;
+    const uz = len > 0.001 ? nz / len : -b.swingDirZ;
+    b.dashVx = ux * SABER_RECOIL_SPEED;
+    b.dashVz = uz * SABER_RECOIL_SPEED;
+    b.dashT = DASH_DURATION;
+    this.fanout(room, "dash", { id: b.id, dir: Math.atan2(uz, ux) }, b.id);
+  }
+
+  /**
    * Fire a normal shot at `tgt`: broadcast the tracer NOW, but SCHEDULE the
    * damage to land when the visible bullet arrives (`dist/BULLET_SPEED` later)
    * instead of applying it synchronously — so the victim SEES the shot before
@@ -1380,15 +1946,28 @@ export class BotSim {
     // Lead the aim slightly toward where a MOVING target is heading — this is the
     // COSMETIC tracer direction for OBSERVERS. Bots are treated as stationary
     // (vx/vz=0) so this only bites on real players.
-    const aimX = tgt.x + tgt.vx * LEAD_FACTOR;
-    const aimZ = tgt.z + tgt.vz * LEAD_FACTOR;
+    const aimX = tgt.x + tgt.vx * LEAD_FACTOR * b.leadMul;
+    const aimZ = tgt.z + tgt.vz * LEAD_FACTOR * b.leadMul;
     const dx = aimX - b.x;
     const dz = aimZ - b.z;
     const leadDist = Math.hypot(dx, dz) || 1;
     const dir = { x: dx / leadDist, y: 0, z: dz / leadDist };
     const seq = this.shotSeq++;
     // Accuracy decided NOW (deterministic); damage applied ON ARRIVAL.
-    const hits = rand() <= ACCURACY;
+    const hits = rand() <= b.accEff;
+    // DISPLAY-ONLY: deflect the cosmetic tracer dir on a miss so the shot
+    // visibly goes wide instead of phasing straight through the player.
+    // The `dir` object is mutated HERE (before building the fanout payload)
+    // and only affects the cosmetic tracer — the hit/damage path is untouched.
+    if (!hits) {
+      const angSpeed = Math.min(1, Math.hypot(tgt.vx, tgt.vz) / 8);
+      let aimErr = (1 - b.skill) * MISS_SPREAD_RAD * (0.5 + angSpeed);
+      aimErr = Math.min(aimErr, 1.5 * MISS_SPREAD_RAD); // clamp absurd deflection
+      const a = (rand() < 0.5 ? -1 : 1) * aimErr * (0.3 + rand() * 1.4); // random sign + magnitude
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const rx = dir.x * ca - dir.z * sa, rz = dir.x * sa + dir.z * ca;
+      dir.x = rx; dir.z = rz;
+    }
     const hitsPlayer = hits && this.hub.isPlayer(room, tgt.id);
     // Visual tracer. A shot that WILL hit a PLAYER carries `targetId` so that
     // victim's client anchors the tracer to this absolute origin and aims it AT
@@ -1436,14 +2015,44 @@ export class BotSim {
 
     if (res.died) {
       this.fanout(room, "died", { id: targetId, x: res.x, z: res.z, by: b.id, seq }, b.id);
-      // Bots are the killer here → the SERVER owns this feed line (player-killers
-      // are surfaced client-side). Everyone sees it.
-      this.fanout(room, "kill", {
-        id: `srvk_${this.killSeq++}`,
-        killer: b.name,
-        victim: res.victimName,
-        streak: 0,
-      }, b.id);
+      // Bot→player kill: emit the feed line here. damageBot fans the kill event
+      // itself when the killer is a tracked bot — do NOT add a second emit here
+      // for bot victims. Only emit when the victim was a real player.
+      if (this.hub.isPlayer(room, targetId)) {
+        b.kills += 1;
+        b.streak += 1;
+        // Streak capped at 2 so bot farming never trips the client's >=3 rampage banner.
+        this.fanout(room, "kill", {
+          id: `srvk_${this.killSeq++}`,
+          killer: b.name,
+          victim: res.victimName,
+          streak: Math.min(b.streak, 2),
+        }, b.id);
+      }
     }
+  }
+
+  /** Recompute the cached feel values from b.skill. Variance spreads AROUND the
+   *  owner-locked means: E[accEff]=ACCURACY, E[cadenceMul]=E[leadMul]=1 at E[skill]=0.5.
+   *  No clamp — raw accEff range [0.21,0.39] is already valid at ACCURACY=0.3. */
+  private deriveSkill(b: ServerBot): void {
+    b.accEff = ACCURACY * (0.7 + 0.6 * b.skill);
+    b.cadenceMul = 1.25 - 0.5 * b.skill;
+    b.leadMul = 0.5 + b.skill;
+  }
+
+  /** TEST-ONLY read of internal bot state (no allocation in tick path). */
+  inspect(room: string): Record<string, unknown>[] {
+    if (room !== GAME_ROOM) return [];
+    return [...this.bots.values()].map((b) => ({
+      id: b.id, name: b.name, animal: b.animal, x: b.x, z: b.z, yaw: b.yaw,
+      health: b.health, alive: b.alive, skill: b.skill, accEff: b.accEff,
+      cadenceMul: b.cadenceMul, leadMul: b.leadMul, targetId: b.targetId,
+      commitT: b.commitT,
+      reactT: b.reactT, superHesitateT: b.superHesitateT, defensiveReactT: b.defensiveReactT,
+      kameCharging: b.kameCharging, kills: b.kills, streak: b.streak,
+      saberCd: b.saberCd, swinging: b.swinging, swingT: b.swingT, clashed: b.clashed,
+      stunT: b.stunT, fireLockT: b.fireLockT,
+    }));
   }
 }

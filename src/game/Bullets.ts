@@ -53,12 +53,13 @@ const HIT_RADIUS = 0.35; // squared distance check uses radius
 const MAX_BULLET_REFLECTIONS = 1;
 /**
  * Maximum XZ travel distance for any bullet (local or visual-remote).
- * Caps at 2 * HEARING_RADIUS so bullets never fly past the audio horizon.
+ * Pistol reach = 2 * HEARING_RADIUS * 1.3 (+30% reach buff, 2026-06-25); the only
+ * bullet-based weapon is the Pistol (Energy Blast is a beam, Lightsaber is melee).
  * Bot-vs-bot damage in ambient mode is achieved by alternating the bot `side`
  * ("player" vs "bot") so each bot's bullets are owned by the opposite side and
  * pass the `tgt.side === b.owner` skip-guard — no change to this collision path.
  */
-const BULLET_MAX_RANGE = 2 * HEARING_RADIUS;
+const BULLET_MAX_RANGE = 2 * HEARING_RADIUS * 1.3;
 /** Vertical tolerance: a bullet at flightY only hits a target whose body is within this Y range. */
 const HIT_VERTICAL_TOLERANCE = 0.35;
 /** A lethal-to-local tracer counts as "arrived" within this XZ radius of the

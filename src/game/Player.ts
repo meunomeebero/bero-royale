@@ -113,6 +113,11 @@ const SWING_PARRY_END_T = 0.75;
 const MELEE_STUN = 0.25; // brief full-action freeze
 const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
 const STAGGER_HOP = 3.4; // small upward "pulinho" on a stagger (< JUMP_VELOCITY 6)
+// Guaranteed un-staggerable window after each honored stagger (matches Bot
+// MELEE_STAGGER_FREE / server staggerOkAt) so multiple bots can't chain-freeze the
+// player. The online meleehit receiver gates separately (nextStaggerOkAt); this gate
+// protects the DIRECT applyMeleeStagger callers (offline bot saber + energy blast).
+const STAGGER_FREE_MS = 500;
 const KAME_CHARGE = 3.0; // channel time to ready the energy blast (back to 3.0 — 1.5 was too strong)
 const BOSS_HP_MULT = 3; // boss has triple HP
 const BOSS_SCALE = 5; // boss is 5× the normal size
@@ -178,6 +183,7 @@ export class Player implements BulletTarget {
   private stunTimer = 0;
   private fireLockTimer = 0;
   private staggerFlashT = 0; // >0 → body pulses white (saber-hit "atordoado" feedback)
+  private staggerFreeUntil = 0; // epoch ms: no stagger honored before this (anti-chain-freeze)
   // Scratch reused each swing sample (no per-frame allocation).
   private swingBladeStart = new THREE.Vector3();
   private swingBladeEnd = new THREE.Vector3();
@@ -445,6 +451,30 @@ export class Player implements BulletTarget {
     return this.stunTimer > 0;
   }
 
+  /** True while this player's saber is in its damaging STRIKE phase (for clash). */
+  isSaberStriking(): boolean {
+    return (
+      this.fireMode === "lightsaber" &&
+      this.swingTimer > 0 &&
+      this.swingElapsed / MELEE_SWING_DUR >= SWING_WINDUP_END_T
+    );
+  }
+
+  /** Fill the live world blade segment (pivot→tip) + the committed XZ swing facing;
+   *  returns true ONLY during the strike phase. Used by Game for saber-clash
+   *  detection (two blades crossing → mutual recoil, no hit). Allocation-free. */
+  getSaberStrike(
+    outStart: THREE.Vector3,
+    outEnd: THREE.Vector3,
+    outDir: THREE.Vector3,
+  ): boolean {
+    if (!this.isSaberStriking()) return false;
+    this.staffPivot.getWorldPosition(outStart);
+    this.staffTip.getWorldPosition(outEnd);
+    this.getAimDirection(outDir);
+    return true;
+  }
+
   /** Cancel any in-progress concentrated-super charge (saber interruption). */
   cancelKameCharge() {
     if (this.kameState !== "idle") {
@@ -465,8 +495,14 @@ export class Player implements BulletTarget {
     interruptCharge: boolean,
   ) {
     if (this.state !== "alive") return;
+    // Anti-chain-freeze: ignore a new stagger until the prior one's effect + a free
+    // window has elapsed (mirrors Bot.staggerFreeT / server staggerOkAt), so several
+    // bots saber-hitting at once can't keep the player permanently frozen.
+    const now = Date.now();
+    if (now < this.staggerFreeUntil) return;
     this.stunTimer = Math.max(this.stunTimer, stunSeconds);
     this.fireLockTimer = Math.max(this.fireLockTimer, fireLockSeconds);
+    this.staggerFreeUntil = now + Math.max(stunSeconds, fireLockSeconds) * 1000 + STAGGER_FREE_MS;
     // Pulse white for the whole no-shoot window + a small backward hop so a saber
     // hit reads as a stagger (the horizontal push rides applyKnockback's dashVel).
     this.staggerFlashT = Math.max(this.staggerFlashT, fireLockSeconds);
@@ -789,6 +825,7 @@ export class Player implements BulletTarget {
     this.stunTimer = 0;
     this.fireLockTimer = 0;
     this.staggerFlashT = 0;
+    this.staggerFreeUntil = 0;
     this.staffPivot.rotation.y = SABER_REST_YAW;
     this.staff.position.x = BASE_SABER_MOUNT;
     // Power-up boosts + shield are lost on death (you respawn fresh — BR style).
@@ -987,7 +1024,10 @@ export class Player implements BulletTarget {
       if (this.kameState !== "idle") this.kameState = "idle"; // safety
       if (held && this.fireLockTimer <= 0) this.tryPistol(); // stagger locks pistol fire
     } else if (this.kameState === "idle") {
-      if (held) {
+      // A saber hit (fire-lock) breaks the Energy Blast canalization for the WHOLE
+      // lock window: gate re-channel on fireLockTimer (mirrors pistol/boss) so the
+      // stun can't be sidestepped by re-charging the instant the 0.25s freeze ends.
+      if (held && this.fireLockTimer <= 0) {
         this.kameState = "charging";
         this.kameTimer = 0;
       }

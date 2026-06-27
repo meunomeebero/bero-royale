@@ -207,6 +207,12 @@ export function attachWebSocket(server: Server): RoomHub {
             if (typeof target === "string" && hub.botSim.hasBot(ws.room, target)) {
               const res = hub.botSim.killBot(ws.room, target);
               if (res?.died) {
+                // NOTE: bot kills do NOT score the leaderboard. `kamehit`/`hit`
+                // bot targets are client-declared and unvalidated (killBot drains a
+                // named bot in one frame), so crediting them would let a script farm
+                // the board over WS — the same poisoning, moved off HTTP. Only
+                // server-resolved PvP kills (damagePlayer) score. Re-enable bot
+                // scoring only once WS hit validation (range/cooldown) exists.
                 hub.fanout(ws.room, {
                   t: "broadcast",
                   event: "died",
@@ -231,6 +237,26 @@ export function attachWebSocket(server: Server): RoomHub {
             const target = (m.payload as { target?: unknown }).target;
             if (typeof target === "string" && hub.botSim.hasBot(ws.room, target)) {
               hub.botSim.staggerBot(ws.room, target);
+            }
+          }
+
+          // A CLIENT-declared saber CLASH (player↔server-bot): two blades crossed.
+          // The verbatim relay below carries the white-smoke/sound cue to every
+          // observer at (x,z). Here we additionally apply the server-side gameplay
+          // effect: if `a` or `b` names one of THIS room's bots, cancel that bot's
+          // in-flight (non-damaging) swing + apply a mutual recoil. This is
+          // client-declared / best-effort (deferred-anti-cheat posture): a forged
+          // clash can only neutralise a bot's OWN swing — it grants the sender
+          // nothing. x,z are validated as finite numbers before use.
+          if (m.event === "clash" && m.payload && typeof m.payload === "object") {
+            const c = m.payload as { a?: unknown; b?: unknown; x?: unknown; z?: unknown };
+            const cx = typeof c.x === "number" && Number.isFinite(c.x) ? c.x : 0;
+            const cz = typeof c.z === "number" && Number.isFinite(c.z) ? c.z : 0;
+            if (typeof c.a === "string" && hub.botSim.hasBot(ws.room, c.a)) {
+              hub.botSim.clashBot(ws.room, c.a, cx, cz);
+            }
+            if (typeof c.b === "string" && hub.botSim.hasBot(ws.room, c.b)) {
+              hub.botSim.clashBot(ws.room, c.b, cx, cz);
             }
           }
 
@@ -277,6 +303,8 @@ export function attachWebSocket(server: Server): RoomHub {
           // synchronously as before (the "died" needs no seq).
           const result = hub.applyHit(ws.room, m.target, ws.id);
           if (result?.died) {
+            // Bot kills do NOT score (client-declared target, farmable over WS) —
+            // only server-resolved PvP kills (damagePlayer) credit the leaderboard.
             const diedMsg: ServerMsg = {
               t: "broadcast",
               event: "died",

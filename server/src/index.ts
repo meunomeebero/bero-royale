@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { PORT } from "./env";
 import { migrate } from "./db";
-import { getLeaderboardHandler, postScoreHandler } from "./leaderboard";
+import { getLeaderboardHandler } from "./leaderboard";
 import { authHandler, getMapHandler, putMapHandler, initMapCache } from "./map";
 import { getTurnCredentials } from "./turn";
 import { attachWebSocket } from "./ws/index";
@@ -48,20 +48,41 @@ process.on("unhandledRejection", (e) =>
 // Also doubles as a cheap RTT probe for the client's ping read-out.
 let onlineCount = (): number => 0;
 
+// GLOBAL token bucket for /api/turn (deliberately NOT per-IP). The only client-IP
+// signal is `X-Forwarded-For`, which is attacker-controllable (the app can be hit
+// directly and a spoofed XFF mints a fresh per-IP bucket every request), so a
+// per-IP limiter is trivially bypassed. A single global bucket bounds total TURN-
+// credential minting regardless of source and cannot be rotated around. Legit
+// clients fetch /api/turn rarely (once per session + a ~24h TTL refresh), so this
+// generous cap never affects real users. The real relay-abuse defense is coturn-
+// side quotas (per-allocation bandwidth/time limits) — infra, see shardcloud.md.
+const TURN_RL_CAP = 60,
+  TURN_RL_REFILL_PER_SEC = 30; // 60 burst, 30/s sustained — global
+const turnBucket = { tokens: TURN_RL_CAP, last: Date.now() };
+function turnRateLimitOk(): boolean {
+  const now = Date.now();
+  turnBucket.tokens = Math.min(
+    TURN_RL_CAP,
+    turnBucket.tokens + ((now - turnBucket.last) / 1000) * TURN_RL_REFILL_PER_SEC,
+  );
+  turnBucket.last = now;
+  if (turnBucket.tokens < 1) return false;
+  turnBucket.tokens -= 1;
+  return true;
+}
+
 const app = new Elysia({ adapter: node() })
   .get("/health", () => "ok")
   .get("/api/online", () => ({ count: onlineCount() }))
   .get("/api/leaderboard", ({ query }) =>
     getLeaderboardHandler(query as Record<string, string | undefined>),
   )
-  .get("/api/turn", () => getTurnCredentials())
-  .post("/api/score", async ({ body, set }) => {
-    const r = await postScoreHandler(body);
-    if (!r.ok) {
-      set.status = r.kind === "db" ? 503 : 400;
-      return { error: r.error };
+  .get("/api/turn", ({ set }) => {
+    if (!turnRateLimitOk()) {
+      set.status = 429;
+      return { error: "rate limited" };
     }
-    return r.row;
+    return getTurnCredentials();
   })
   .post("/api/editor/auth", ({ body, set }) => {
     const r = authHandler(body);

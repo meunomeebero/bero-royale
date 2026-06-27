@@ -153,6 +153,15 @@ export class AudioEngine {
     this.blip(g, 220, 520, 90, "square", 0.07);
   }
 
+  /** Saber CLASH — a bright metallic two-blip "ting" at the contact point, distinct
+   *  from playHit/playShot so two blades crossing reads as a satisfying block. */
+  playClash(worldPos: THREE.Vector3, isLocal: boolean) {
+    const g = this.gainFor(worldPos, isLocal);
+    if (g <= 0) return;
+    this.blip(g, 2400, 900, 60, "sawtooth", 0.06);
+    this.blip(g, 1500, 400, 90, "square", 0.04);
+  }
+
   playLand(worldPos: THREE.Vector3, isLocal: boolean) {
     const g = this.gainFor(worldPos, isLocal);
     if (g <= 0) return;

@@ -10,7 +10,9 @@
 | Doc | Domínio | Keywords |
 |---|---|---|
 | [`systems/netcode-fidelity-golden-rule.md`](systems/netcode-fidelity-golden-rule.md) | 🥇 **Regra de ouro:** fidelidade 100% no online | fidelidade, golden rule, regra de ouro, espelhar, 100%, sabre invisível, o que me matou, parry visível, presentation |
+| [`systems/mechanic-coherence-golden-rule.md`](systems/mechanic-coherence-golden-rule.md) | 🥇 **Regra de ouro:** coerência de mecânica em TODO contexto | coerência, coherence, golden rule, regra de ouro, todo contexto, offline, online, bot, humano, server-bot, todas as direções, não deferir contexto |
 | [`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md) | Arma corpo a corpo — Lightsaber (slot 3) | lightsaber, sabre, saber, melee, swing, parry, reflect, deflect, impact spark, dano puro |
+| [`systems/saber-clash-and-stun.md`](systems/saber-clash-and-stun.md) | Sabre — stun no acerto + clash (bloqueio), coerente em todo contexto | saber, clash, choque, bloqueio, block, stun, atordoar, fire-lock, travar tiro, interromper canal, recoil, bot melee, lunge, coerência, meleehit, clash event |
 | [`systems/weapons-energy-blast.md`](systems/weapons-energy-blast.md) | Energy Blast — super canalizado (slot 2) | energy blast, super, kamehameha, canalizar, channel, channeling, stun, stagger, fire-lock, bare-handed, knockback |
 | [`systems/weapons-weight-speed.md`](systems/weapons-weight-speed.md) | Peso das armas → velocidade | peso, weight, arma, velocidade, speed, movimento, balance, pistol, energy blast, lightsaber, leve, pesada |
 | [`systems/netcode-trust-model.md`](systems/netcode-trust-model.md) | Autoridade de rede | netcode, online, servidor, autoritativo, broadcast, hit, parry, tiros invisíveis, interpolação |
@@ -18,11 +20,12 @@
 | [`systems/netcode-hit-sync-plan.md`](systems/netcode-hit-sync-plan.md) | 🔴→🛠️ Arquitetura da correção (tiro↔dano) | tiros invisíveis, hit sync, damage-on-arrival, scheduler, applyAt, impact gate, shotSeq, beam-front, favor-the-victim |
 | [`systems/netcode-testing.md`](systems/netcode-testing.md) | Testes determinísticos de netcode (harness + invariantes) | teste, vitest, fast-check, property test, determinístico, simulação, fault injection, invariante, regressão, LethalImpactGate, VibiNet |
 | [`systems/powerups-hp-shield.md`](systems/powerups-hp-shield.md) | Power-ups ↔ HP/escudo (autoridade) | powerup, putake, heal, cura, shield, escudo, super, HP, autoritativo, hp event, desync, morrer com escudo, cura some |
-| [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick |
+| [`systems/server-bots-ai.md`](systems/server-bots-ai.md) | Bots do servidor (IA + combate) | bot, srvbot, IA, engager, hitscan, fire, super, telegraph, stagger, tick, skill, accEff, reactT, commitT, superHesitateT, kills, streak, genHandle, retaliation, player-attention-floor, yaw-slew, miss-spread, sabre, saber, swing, melee, clash, bloqueio, recoil, lunge |
 | [`systems/voxel-character-gen.md`](systems/voxel-character-gen.md) | Gerar personagens voxel via IA | personagem, character, voxel, gerar, IA, owl, coruja, OBJ, paleta, proporção, coerência, novo animal |
 | [`systems/secret-characters-easter-egg.md`](systems/secret-characters-easter-egg.md) | Personagens secretos (easter egg do username) | easter egg, secret, owl, coruja, rabbi, rabino, _jew, bero, roster escondido, unlock, randomAnimalName |
+| [`systems/security-leaderboard.md`](systems/security-leaderboard.md) | Segurança — leaderboard server-authoritative (anti-poisoning) | leaderboard, score, poisoning, api, injection, server-authoritative, anti-cheat, submitScore, /api/score, finalizeRun, creditKill, sanitizeUsername |
 | [`systems/map-editor.md`](systems/map-editor.md) | Editor de mapa oficial (v1, só decor) — rota `/editor` gated | map editor, editor de mapa, /editor, decor, árvores, props, MapDefinition, DecorEntry, senha, password, super-user, active.json, persistência, snap-to-grid, validateMapDef, MAP_EDITOR_PASSWORD |
-| [`systems/settings-sliders.md`](systems/settings-sliders.md) | Configurações — sliders de sensibilidade do cursor + nível do filtro VHS | configurações, settings, slider, sensibilidade, cursor, mira, aim sensitivity, gain, VHS, filtro retrô, modo desenho, intensidade, nível, level, localStorage, gainCursor, setLevel |
+| [`systems/settings-sliders.md`](systems/settings-sliders.md) | Configurações — sliders + cel-shading (contorno cartoon) + filtro VHS | configurações, settings, slider, sensibilidade, cursor, mira, aim sensitivity, gain, VHS, filtro retrô, modo desenho, cel shading, contorno, outline, inverted hull, intensidade, nível, level, localStorage, gainCursor, setLevel |
 
 > _Em construção (sprint de docs — ver `PENDENCIAS.md`): indexar os demais domínios (movimento/dash,
 > super/kamehameha, power-ups, voz/WebRTC, HUD, leaderboard) em `docs/systems/`._

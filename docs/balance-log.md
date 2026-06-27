@@ -1,7 +1,8 @@
 # Balance log — sessões de balanceamento do Bero Royale
 
 **Keywords:** balance, balanceamento, nerf, buff, tuning, ajuste, sessão, playtest, peso,
-velocidade, armas, super, kite, dano, fire rate, cooldown, números canônicos, histórico de balance.
+velocidade, armas, super, kite, dano, fire rate, cooldown, números canônicos, histórico de balance,
+bots, IA, realismo, skill, reação, targeting, hesitation.
 
 > **Por que este doc existe:** um jogo competitivo só tem sucesso se for **balanceado**. Cada arma
 > e interação precisa ter força e fraqueza claras (sem dominância, sem playstyle "grátis"). Este é o
@@ -16,6 +17,109 @@ velocidade, armas, super, kite, dano, fire rate, cooldown, números canônicos, 
   não tem contrapartida, ele vira dominante → criar o trade-off.
 - **Iterar com playtest.** Ajustar em passos pequenos (±10%) e sentir antes de empilhar.
 - **Documentar.** Toda mudança de número/regra entra aqui + no doc de sistema correspondente.
+
+---
+
+## Sessão 2026-06-26 — Sabre: stun de volta + clash (bloqueio), coerente em todo contexto
+
+**Doc de sistema:** [`systems/saber-clash-and-stun.md`](systems/saber-clash-and-stun.md) ·
+[`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md)
+
+### Reversão: o stun **volta** ao sabre (era OP em 2026-06-25 → removido; agora re-adicionado)
+
+- **Antes (2026-06-25):** o sabre virou dano puro + deflexão; o stun (travar tiro + interromper canal
+  + freeze) migrou pra Energy Blast porque "dano alto + control" era OP.
+- **Agora (2026-06-26):** o stun **volta** ao sabre — acerto = freeze `0.25s` + fire-lock `1.0s` +
+  interrompe a canalização da Energy Blast. **As duas armas atordoam** (aditivo). Pedido do dono:
+  "se eu chego perto e te acerto com o sabre, você não consegue atirar".
+- **Por que não é OP de novo:** agora existe **contrapeso** que não existia antes —
+  **(1) clash** (cruzar o sabre no tempo certo bloqueia: ambos recuam, ninguém atordoa) e **(2) dash**
+  (o freeze é só `0.25s`, então dá pra dashar pra fora e recuperar enquanto o fire-lock corre).
+  Também fechei o **re-arm gap**: com fire-lock ativo você não recomeça a canalizar (senão o
+  "quebrar o canal" custaria só 0.25s).
+
+### Novo: **clash** (bloqueio de sabre)
+
+- Dois sabres cruzando no strike (lâminas a ≤`CLASH_RADIUS=0.7`, direções **opostas** dot ≤`-0.2`) →
+  **recuo mútuo** (`CLASH_KNOCKBACK=12`) + fumaça branca + clang, **sem dano e sem stun**. O clash
+  **vence** o acerto. É o "block".
+
+### Coerência (regra de ouro): bots viram usuários de sabre
+
+- O stun + clash funcionam **em todos os contextos**: offline player↔bot, offline bot↔bot, online
+  player↔player, online player↔server-bot, online server-bot↔server-bot. Isso exigiu dar **IA de
+  sabre aos bots** no cliente (`Bot.ts`: lunge → fecha distância e golpeia) e no servidor
+  (`bots.ts`). Ver [`systems/mechanic-coherence-golden-rule.md`](systems/mechanic-coherence-golden-rule.md).
+- **A sentir em playtest:** o `MELEE_FIRE_LOCK=1.0s` é o número "OP" — se travar demais, baixar só ele
+  (ex.: `0.6s`). Agressão de lunge dos bots (`BOT_MELEE_*`) e força do clash são os outros diais.
+
+---
+
+## Sessão 2026-06-25 — Modelo de realismo dos bots (megabrain council)
+
+**Spec de referência:** `docs/superpowers/specs/2026-06-25-multiplayer-bot-realism-design.md`
+**Doc de sistema:** [`systems/server-bots-ai.md`](systems/server-bots-ai.md)
+**Council:** GPT 5.5 + GLM 5.2 (via OpenRouter) + lentes Claude + juiz neutro.
+
+### População: `[3,6]` plano, vitalício de sala
+
+- **Antes:** preencher até `MIN_COMBATANTS=10`, cap `MAX_BOTS=5`.
+- **Agora:** rolar `targetBotCount = 3 + floor(rand()*4)` → `[3,6]`, uma vez ao ativar a sala
+  (live>0 && targetBotCount===0), mantido até `clearRoom`. `MAX_BOTS=6`.
+- **Racional:** lobby de 3–6 bots é coerente com uma sessão early-access real; número fixo
+  evita churning visível quando players entram/saem; o GLM sugeriu piso [4,6] (rejeitado —
+  provado que não reduz o neglect rate).
+
+### Precisão por bot: spread 3.1×, drift de DPS médio +2.3% ACEITO
+
+- **Antes:** `ACCURACY=0.3` única para todos os bots (cloning effect).
+- **Agora:** `skill∈[0,1]` (centro-biased) → `accEff=ACCURACY*(0.7+0.6*skill)`.
+  Range efetivo `[0.21,0.39]`. Spread de DPS: ~3.1× (fraco vs forte).
+- **Covariance drift:** `accEff` e `cadenceMul` (1.25−0.5×skill) ambos sobem com `skill`: bots
+  habilidosos acertam mais E atiram mais rápido. `E[accEff × 1/cadenceMul] ≈ ACCURACY × 1.023` →
+  **+2.3% de DPS médio** em relação a bots idênticos. Dentro da faixa de `SHOOT_CD_RND=0.5`.
+- **DECISÃO:** ACEITAR e LOGAR. NÃO tocar `SHOOT_CD_MIN` (owner-locked) para compensar.
+  A distribuição centro-biased significa que a maioria dos bots fica próxima da média.
+
+### Latência de reação: 150–300 ms, skill-scaled
+
+- **Antes:** reação instantânea (frame-perfect omniscient).
+- **Agora:** `reactT = REACT_MIN + (1-skill)*REACT_SPAN` → `[0.15s, 0.30s]`.
+  Gatea FIRE (reactT=0) + dodge defensivo via timer separado `defensiveReactT = min(reactT,
+  DEFENSIVE_FLINCH=0.12s)`. Semeado em `damageBot` somente quando `wasCalm` (ameaça estava em 0).
+- **Racional:** 150–300 ms é perceptível pelo player mas não o torna catatônico; skill-scaling
+  faz bots fortes reagirem mais rápido, mantendo hierarquia. Facing faz slew (`MAX_TURN_RATE=8`),
+  nunca snap de um tick (que leria como net-lag).
+
+### Super hesitation: 0.15–0.50 s, skill-scaled, dois passos arm→commit
+
+- **Antes:** super iniciava imediatamente ao cumprir as condições de gate.
+- **Agora:** `superHesitateT = SUPER_HESITATE_MIN + (1-skill)*SUPER_HESITATE_SPAN` →
+  `[0.15s, 0.50s]`. Gate em dois passos: arm (`_superArmed=true`) → timer → commit
+  incondicional (sem re-roll que poderia segurar o slot do super sem telegrafar nada).
+- **Slot-safety:** `superHesitateT=0` e `_superArmed=false` limpos em abort, stagger (ambos
+  os branches), respawn, saída de gate-failure e **morte** (`damageBot`/`killBot`).
+
+### Targeting: equal-by-distance + player-attention floor (post-pass)
+
+- **Antes:** player-first (drop duel to chase you the instant you approach).
+- **Agora:** `enemies` = players + bots tratados igual; nearest wins. `commitT` (0.8–1.6s)
+  anti-ping-pong. Retaliation (player OU bot, dentro de SHOOT_RANGE+ENGAGE_LEASH).
+  **Post-pass (player-attention floor):** único mecanismo que garante ~0% neglect rate.
+  Rode após o loop de bots; qualquer player com zero targeters recebe o bot livre (commitT≤0)
+  mais próximo, com steal-guard (não tira o único guardião de outro player).
+- **Racional:** "pure-equal" sem o post-pass deixa um player passivo sem-target ~29% do tempo
+  (simulado pelo juiz do council, invariante ao nº de bots). O post-pass reduz para ~0.6%.
+  `PLAYER_PULL` (bias de distância proposto pelo GLM) foi **rejeitado** — não funcionava na
+  geometria do arena (5u num arena de ±42); o post-pass é a garantia direta e sem alocação.
+
+**🚀 Deploy:** em prod 2026-06-25 (commit `abf1fed`). Review GPT-5.5 via OpenRouter — **APPROVE**,
+sem blockers (2 fixes aplicados antes: timer `defensiveReactT` real + limpar estado de super na
+morte). client+server tsc, eslint (só 5 erros pré-existentes de prod), **39 testes vitest** e build
+verdes. Integrado sobre `main` (rename de armas + netcode Phase 3/5 já em prod) sem regressão — só
+servidor (`bots.ts`), sem mudança de client/bundle. **Smoke ao vivo:** 6 bots no `voxelcube-ffa`
+(`kakashi`, `treta`, `v01d99`, `xXz0ro_proXx`, `destruidor_da_capeta75565`, `monstro_de_treta90031`),
+movendo + atirando (1038 snapshots / 25 shots em 9s). https://beroroyale.shardweb.app
 
 ---
 
