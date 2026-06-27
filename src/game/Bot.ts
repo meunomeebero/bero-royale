@@ -4,13 +4,39 @@ import type { AudioEngine } from "./AudioEngine";
 import type { DustParticles } from "./DustParticles";
 import type { Bullets, BulletTarget, BulletOwner } from "./Bullets";
 import type { SmokePuffs } from "./SmokePuffs";
-import { buildNameLabel } from "./PigParts";
+import { buildNameLabel, buildSaber } from "./PigParts";
 import { Avatar, AVATAR_HEIGHT } from "./Avatar";
 import { ModelLibrary } from "./ModelLibrary";
 import { BlobShadow } from "./Shadow";
+import { SaberTrail } from "./SaberTrail";
+import {
+  MELEE_SWING_DUR,
+  SABER_REST_YAW,
+  SWING_WINDUP_END_T,
+  BASE_SABER_MOUNT,
+  sampleSaberYaw,
+  saberMountX,
+} from "./saberKinematics";
 
 /** Behavior modes for Bot instances. */
 export type BotBehavior = "hunt" | "ambient";
+
+/**
+ * A bot's live saber swing, emitted once per STRIKE frame so Game resolves arc
+ * hits + clashes against the bot's blade (mirror of the player's MeleeSample, but
+ * the bot OWNS its prev-pose + per-swing dedup set since many bots swing at once).
+ */
+export interface BotMeleeSample {
+  swingId: number;
+  origin: THREE.Vector3; // bot body center (swing origin)
+  aimDir: THREE.Vector3; // committed XZ swing facing
+  bladeStart: THREE.Vector3; // live world blade base
+  bladeEnd: THREE.Vector3; // live world blade tip
+  prevStart: THREE.Vector3; // previous frame's blade base (anti-tunnel sweep)
+  prevEnd: THREE.Vector3;
+  hitIds: Set<string>; // bot-owned per-swing dedup (cleared on a new swing)
+  dt: number;
+}
 
 const BOT_SIZE = 0.5;
 const MOVE_SPEED = 4.2; // light aggression tune (was 3.5) — more pressure, still below player speed
@@ -46,6 +72,18 @@ const MELEE_STAGGER_FREE = 0.5; // guaranteed un-staggerable window after each s
 const KB_DECAY = 9.0; // exponential decay of the knockback impulse (per second)
 const KB_DURATION = 0.32; // seconds the impulse is tracked
 const KB_HOP = 3.4; // upward pop on a saber hit (a little hop, < JUMP_VELOCITY 6)
+
+// ── Bot saber melee (coherence golden rule: bots are first-class saber users) ──
+// A bot periodically "lunges" — commits to closing into saber range and swinging —
+// then returns to ranged fire. The swing's hit/clash is resolved by Game against
+// the bot's live blade (handleBotMeleeSample), identical to the player's.
+const BOT_SABER_REACH = 2.8; // swing when the target is within this (≤ Game MELEE_RANGE 3.2)
+const BOT_MELEE_CLOSE_DIST = 1.6; // distance the bot tries to close to while lunging
+const BOT_MELEE_LUNGE_RANGE = 8.0; // only decide to lunge when the target is within this
+const BOT_MELEE_INTENT_DUR = 2.2; // seconds committed to a lunge before reverting to ranged
+const BOT_MELEE_COOLDOWN_MIN = 4.5; // min seconds between lunges
+const BOT_MELEE_COOLDOWN_RANGE = 4.0; // + up to this (randomized)
+const BOT_SABER_SWING_CD = 0.6; // min seconds between swings during a lunge
 
 type State = "alive" | "falling" | "dead";
 
@@ -112,6 +150,35 @@ export class Bot implements BulletTarget {
   private kbT = 0;
   // While >0 the body pulses WHITE (impact / "atordoado" feedback).
   private flashT = 0;
+
+  // ── Saber melee rig (mirrors RemotePlayer's held-weapon saber so a bot swing
+  // looks byte-identical to a player/remote swing — same kinematics + blue trail). ──
+  private staff!: THREE.Group;
+  private staffPivot!: THREE.Group;
+  private staffTip!: THREE.Object3D;
+  /** World-space blue arc trail (Game adds its mesh to the scene, like RemotePlayer). */
+  readonly saberTrail = new SaberTrail();
+  private swinging = false;
+  private swingTimer = 0;
+  private swingElapsed = 0;
+  private swingYaw = 0; // committed facing for the whole swing
+  private swingId = 0;
+  private swingSeeded = false; // prev-pose seeded on the first strike frame
+  private swingEndTip: THREE.Vector3 | null = null; // one-shot end-of-swing smoke pos
+  private meleeHitIds = new Set<string>(); // per-swing dedup (cleared on a new swing)
+  private onMeleeSample?: (s: BotMeleeSample) => void;
+  // AI lunge state: a bot periodically commits to closing in + swinging.
+  private meleeIntentT = 0; // >0 while lunging
+  private meleeLungeTimer = 0; // cooldown until the next lunge
+  private saberSwingCd = 0; // cooldown between swings during a lunge
+  // Blade-pose + sample scratch (alloc-free per-frame emit).
+  private bladeStart = new THREE.Vector3();
+  private bladeEnd = new THREE.Vector3();
+  private prevBladeStart = new THREE.Vector3();
+  private prevBladeEnd = new THREE.Vector3();
+  private sampleOrigin = new THREE.Vector3();
+  private sampleAimDir = new THREE.Vector3();
+  private meleeSampleObj!: BotMeleeSample;
 
   private aimYaw = 0;
   private shootTimer = 0;
@@ -204,7 +271,164 @@ export class Bot implements BulletTarget {
     this.gun.position.set(0.12, 0, 0);
     this.aimGroup.add(this.gun);
 
+    // Saber rig — mirror RemotePlayer: built on aimGroup beside the gun, hidden
+    // until a swing. The world-space blue trail mesh is added to the scene by Game.
+    const saberParts = buildSaber();
+    this.staff = saberParts.group;
+    this.staffPivot = saberParts.pivot;
+    this.staffTip = saberParts.tip;
+    this.staff.position.set(BASE_SABER_MOUNT, 0.05, 0);
+    this.staffPivot.rotation.y = SABER_REST_YAW;
+    this.staff.visible = false;
+    this.aimGroup.add(this.staff);
+
+    // Reused per-frame swing sample (references the scratch vectors + dedup set so
+    // emitting allocates nothing on the hot path).
+    this.meleeSampleObj = {
+      swingId: 0,
+      origin: this.sampleOrigin,
+      aimDir: this.sampleAimDir,
+      bladeStart: this.bladeStart,
+      bladeEnd: this.bladeEnd,
+      prevStart: this.prevBladeStart,
+      prevEnd: this.prevBladeEnd,
+      hitIds: this.meleeHitIds,
+      dt: 0,
+    };
+
     this.respawn();
+  }
+
+  /** Game registers this to resolve the bot's swing hits + clashes (mirror of the
+   *  player's onMeleeSample). Emitted once per STRIKE frame. */
+  setOnMeleeSample(cb: (s: BotMeleeSample) => void) {
+    this.onMeleeSample = cb;
+  }
+
+  /** True while this bot's saber is in its damaging STRIKE phase (for clash). */
+  isSaberStriking(): boolean {
+    return (
+      this.swinging &&
+      this.swingTimer > 0 &&
+      this.swingElapsed / MELEE_SWING_DUR >= SWING_WINDUP_END_T
+    );
+  }
+
+  /** Fill the live world blade segment + committed XZ swing facing; true only during
+   *  the strike phase. The blade matrix is refreshed each frame in updateSaber(). */
+  getSaberStrike(
+    outStart: THREE.Vector3,
+    outEnd: THREE.Vector3,
+    outDir: THREE.Vector3,
+  ): boolean {
+    if (!this.isSaberStriking()) return false;
+    this.staffPivot.getWorldPosition(outStart);
+    this.staffTip.getWorldPosition(outEnd);
+    outDir.set(Math.cos(this.swingYaw), 0, Math.sin(this.swingYaw));
+    return true;
+  }
+
+  /** One-shot end-of-swing blade-tip world pos (for the white smoke puff), or null. */
+  consumeSwingEnd(): THREE.Vector3 | null {
+    const v = this.swingEndTip;
+    this.swingEndTip = null;
+    return v;
+  }
+
+  /** Begin a saber swing committed to `dir` (XZ). No-op if stunned / fire-locked /
+   *  already swinging — the swing is the bot's committed melee action. */
+  private triggerSwing(dirX: number, dirZ: number) {
+    if (this.state !== "alive" || this.stunTimer > 0 || this.swingTimer > 0) return;
+    this.swinging = true;
+    this.swingTimer = MELEE_SWING_DUR;
+    this.swingElapsed = 0;
+    this.swingId = (this.swingId + 1) & 0xffff;
+    this.swingYaw = Math.atan2(dirZ, dirX);
+    this.swingSeeded = false;
+    this.swingEndTip = null;
+    this.meleeHitIds.clear();
+    this.staff.visible = true;
+    this.saberTrail.clear();
+    this.audio.playJump(this.root.position, true); // brief whoosh cue (no saber asset)
+  }
+
+  /** Cancel any in-flight swing (death/fall) so it can't finish a phantom arc. */
+  private resetSwing() {
+    if (!this.swinging && this.staffPivot.rotation.y === SABER_REST_YAW) return;
+    this.swinging = false;
+    this.swingTimer = 0;
+    this.swingElapsed = 0;
+    this.swingEndTip = null;
+    this.meleeIntentT = 0;
+    this.staff.visible = false;
+    this.staffPivot.rotation.y = SABER_REST_YAW;
+    this.staff.position.x = BASE_SABER_MOUNT;
+  }
+
+  /**
+   * Animate the saber swing (mirror of RemotePlayer.updateHeldWeapon): advance the
+   * blade through the SAME 180° arc, freeze facing to the committed swing dir, feed
+   * the blue trail during the strike, and EMIT a BotMeleeSample each strike frame so
+   * Game resolves hits/clashes against the live blade. Settles back to rest otherwise.
+   */
+  private updateSaber(dt: number) {
+    if (!this.swinging) {
+      // Settle the blade back to the perpendicular rest pose, then hide it.
+      if (this.staffPivot.rotation.y !== SABER_REST_YAW) {
+        this.staffPivot.rotation.y +=
+          (SABER_REST_YAW - this.staffPivot.rotation.y) * Math.min(1, 18 * dt);
+        if (Math.abs(this.staffPivot.rotation.y - SABER_REST_YAW) < 0.002) {
+          this.staffPivot.rotation.y = SABER_REST_YAW;
+          this.staff.position.x = BASE_SABER_MOUNT;
+          this.staff.visible = false;
+        }
+      }
+      return;
+    }
+
+    // Freeze facing to the committed swing dir (body + weapon group), exactly like
+    // the local player freezes aim during its swing.
+    this.aimGroup.rotation.y = -this.swingYaw;
+    this.avatar.faceYaw(this.swingYaw);
+
+    this.swingTimer = Math.max(0, this.swingTimer - dt);
+    this.swingElapsed += dt;
+    const t = Math.min(1, this.swingElapsed / MELEE_SWING_DUR);
+    const yaw = sampleSaberYaw(t);
+    this.staffPivot.rotation.y = yaw;
+    this.staff.position.x = saberMountX(yaw);
+    this.staff.updateWorldMatrix(true, true); // fresh blade transform for the sample
+
+    if (t >= SWING_WINDUP_END_T) {
+      // Roll the previous strike pose forward (anti-tunnel), then read the live one.
+      if (this.swingSeeded) {
+        this.prevBladeStart.copy(this.bladeStart);
+        this.prevBladeEnd.copy(this.bladeEnd);
+      }
+      this.staffPivot.getWorldPosition(this.bladeStart);
+      this.staffTip.getWorldPosition(this.bladeEnd);
+      if (!this.swingSeeded) {
+        this.prevBladeStart.copy(this.bladeStart);
+        this.prevBladeEnd.copy(this.bladeEnd);
+        this.swingSeeded = true;
+      }
+      this.saberTrail.push(this.bladeStart, this.bladeEnd);
+      // Emit the strike sample so Game resolves hits + clashes vs the live blade.
+      if (this.onMeleeSample) {
+        this.sampleOrigin.copy(this.root.position);
+        this.sampleAimDir.set(Math.cos(this.swingYaw), 0, Math.sin(this.swingYaw));
+        this.meleeSampleObj.swingId = this.swingId;
+        this.meleeSampleObj.dt = dt;
+        this.onMeleeSample(this.meleeSampleObj);
+      }
+    }
+
+    if (this.swingTimer <= 0) {
+      // End of swing → flag the tip for the white smoke puff, then go to settle.
+      this.staffTip.getWorldPosition(this.bladeEnd);
+      this.swingEndTip = this.bladeEnd.clone();
+      this.swinging = false;
+    }
   }
 
   isAlive() {
@@ -395,6 +619,18 @@ export class Bot implements BulletTarget {
     this.kbT = 0;
     this.flashT = 0;
     this.lastHitBy = null;
+    // Reset the saber/melee state so a swing or lunge can't survive respawn.
+    this.swinging = false;
+    this.swingTimer = 0;
+    this.swingElapsed = 0;
+    this.swingEndTip = null;
+    this.meleeHitIds.clear();
+    this.meleeIntentT = 0;
+    this.meleeLungeTimer = 1.0 + Math.random() * BOT_MELEE_COOLDOWN_RANGE; // stagger first lunge
+    this.saberSwingCd = 0;
+    this.staff.visible = false;
+    this.staffPivot.rotation.y = SABER_REST_YAW;
+    this.staff.position.x = BASE_SABER_MOUNT;
     this.position.copy(this.root.position);
   }
 
@@ -416,9 +652,14 @@ export class Bot implements BulletTarget {
    *                null makes the bot fall back to wandering regardless of mode.
    */
   update(dt: number, target: BulletTarget | null) {
+    // Age the world-space blade trail every frame so an in-flight arc keeps fading
+    // even if the bot dies/falls mid-swing.
+    this.saberTrail.update(dt);
+
     if (this.state === "dead") {
       this.deadTimer += dt;
       this.shadow.setVisible(false);
+      this.resetSwing(); // a swing can't survive death / resume on respawn
       // Bursts into voxel gore on death (spawned by Game) — hide the body.
       this.body.scale.setScalar(0.0001);
       this.avatar.setOpacity(0);
@@ -430,6 +671,7 @@ export class Bot implements BulletTarget {
     }
 
     if (this.state === "falling") {
+      this.resetSwing(); // cancel any in-flight swing while tumbling off the edge
       this.fallTimer += dt;
       this.shadow.setVisible(false);
       this.velocity.y -= GRAVITY * dt * 0.5;
@@ -535,43 +777,95 @@ export class Bot implements BulletTarget {
           }
           // move stays (0,0,0) — frozen while charging.
         } else {
-          // Approach to a comfortable shooting distance (closer when aggressive;
-          // the non-aggressive local tune also closes a bit — 5 was 6).
-          const desired = this.aggressive ? 5 : 5;
-          if (distToTarget > desired + 0.5) {
-            move.set(dx, 0, dz).normalize();
-          } else if (distToTarget < desired - 0.5) {
-            move.set(-dx, 0, -dz).normalize();
+          // Decay the melee timers every (non-charging) frame.
+          if (this.saberSwingCd > 0) this.saberSwingCd = Math.max(0, this.saberSwingCd - dt);
+          if (this.meleeLungeTimer > 0) this.meleeLungeTimer = Math.max(0, this.meleeLungeTimer - dt);
+          if (this.meleeIntentT > 0) this.meleeIntentT = Math.max(0, this.meleeIntentT - dt);
+
+          // Decide to start a LUNGE: periodically commit to closing into saber range
+          // and swinging (coherence golden rule — bots are first-class saber users),
+          // bounded by a cooldown so they don't all melee-rush at once.
+          if (
+            this.onMeleeSample != null && // only bots whose swing is resolved (not menu/ambient)
+            this.meleeIntentT <= 0 &&
+            this.meleeLungeTimer <= 0 &&
+            this.constantFireLockTimer <= 0 &&
+            this.grounded &&
+            distToTarget <= BOT_MELEE_LUNGE_RANGE
+          ) {
+            this.meleeIntentT = BOT_MELEE_INTENT_DUR;
+            this.meleeLungeTimer =
+              BOT_MELEE_COOLDOWN_MIN + Math.random() * BOT_MELEE_COOLDOWN_RANGE;
           }
 
-          // Shoot on cooldown — suppressed while saber-locked out of fire.
-          const shootCd = this.aggressive ? AGGRO_SHOOT_COOLDOWN : SHOOT_COOLDOWN;
-          this.shootTimer -= dt;
-          if (this.shootTimer <= 0 && this.constantFireLockTimer <= 0) {
-            this.shoot();
-            this.shootTimer = shootCd + Math.random() * 0.35;
+          if (this.meleeIntentT > 0) {
+            // LUNGE: charge into saber range and swing on cooldown (no pistol/kame
+            // while committed). Drop the lunge if the target outran the saber.
+            if (distToTarget > BOT_MELEE_LUNGE_RANGE * 1.5) {
+              this.meleeIntentT = 0;
+            } else {
+              if (distToTarget > BOT_MELEE_CLOSE_DIST) {
+                move.set(dx, 0, dz).normalize();
+              }
+              if (
+                distToTarget <= BOT_SABER_REACH &&
+                this.saberSwingCd <= 0 &&
+                this.swingTimer <= 0 &&
+                this.constantFireLockTimer <= 0
+              ) {
+                this.triggerSwing(dx, dz);
+                this.saberSwingCd = BOT_SABER_SWING_CD;
+              }
+              // Occasionally jump (chase airborne targets) even mid-lunge.
+              this.jumpTimer -= dt;
+              if (this.grounded && this.jumpTimer <= 0) {
+                this.velocity.y = JUMP_VELOCITY;
+                this.grounded = false;
+                this.audio.playJump(this.root.position, true);
+                this.targetScale.set(0.7, 1.4, 0.7);
+                this.jumpTimer = JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
+              }
+            }
           }
 
-          // Occasionally jump (so it can hit airborne targets)
-          this.jumpTimer -= dt;
-          if (this.grounded && this.jumpTimer <= 0) {
-            this.velocity.y = JUMP_VELOCITY;
-            this.grounded = false;
-            this.audio.playJump(this.root.position, true);
-            this.targetScale.set(0.7, 1.4, 0.7);
-            this.jumpTimer =
-              JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
-          }
+          if (this.meleeIntentT <= 0) {
+            // RANGED: approach to a comfortable shooting distance, then shoot/super.
+            const desired = this.aggressive ? 5 : 5;
+            if (distToTarget > desired + 0.5) {
+              move.set(dx, 0, dz).normalize();
+            } else if (distToTarget < desired - 0.5) {
+              move.set(-dx, 0, -dz).normalize();
+            }
 
-          // Bots periodically wind up a TELEGRAPHED mega beam (BOT_KAME_CHARGE
-          // wind-up) when they have a clear shot in range — dodgeable AND now
-          // saber-parryable. Any bot with an onKame handler may do this (local
-          // bots included), so the super-parry has something to deflect offline.
-          if (this.onKame) {
-            this.megaTimer -= dt;
-            if (this.megaTimer <= 0 && distToTarget <= BOT_KAME_RANGE) {
-              this.kameCharging = true;
-              this.kameChargeT = 0;
+            // Shoot on cooldown — suppressed while saber-locked out of fire.
+            const shootCd = this.aggressive ? AGGRO_SHOOT_COOLDOWN : SHOOT_COOLDOWN;
+            this.shootTimer -= dt;
+            if (this.shootTimer <= 0 && this.constantFireLockTimer <= 0) {
+              this.shoot();
+              this.shootTimer = shootCd + Math.random() * 0.35;
+            }
+
+            // Occasionally jump (so it can hit airborne targets)
+            this.jumpTimer -= dt;
+            if (this.grounded && this.jumpTimer <= 0) {
+              this.velocity.y = JUMP_VELOCITY;
+              this.grounded = false;
+              this.audio.playJump(this.root.position, true);
+              this.targetScale.set(0.7, 1.4, 0.7);
+              this.jumpTimer =
+                JUMP_COOLDOWN_MIN + Math.random() * JUMP_COOLDOWN_MAX;
+            }
+
+            // Bots periodically wind up a TELEGRAPHED mega beam (BOT_KAME_CHARGE
+            // wind-up) when they have a clear shot in range — dodgeable AND now
+            // saber-parryable. Any bot with an onKame handler may do this (local
+            // bots included), so the super-parry has something to deflect offline.
+            if (this.onKame) {
+              this.megaTimer -= dt;
+              if (this.megaTimer <= 0 && distToTarget <= BOT_KAME_RANGE) {
+                this.kameCharging = true;
+                this.kameChargeT = 0;
+              }
             }
           }
         }
@@ -596,6 +890,10 @@ export class Bot implements BulletTarget {
     }
 
     this.avatar.faceYaw(this.aimYaw);
+    // Saber swing animation (overrides facing to the committed swing dir while
+    // swinging) + emits the strike sample Game resolves hits/clashes against.
+    this.updateSaber(dt);
+    this.gun.visible = !this.staff.visible; // gun hidden while the blade is out
 
     // Movement
     const targetVx = move.x * moveSpeed;
@@ -797,6 +1095,15 @@ export class Bot implements BulletTarget {
       if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
       else if (mat) mat.dispose();
     });
+    // Saber rig (per-instance geometries + materials) + the world-space blue trail.
+    this.staff.traverse((c) => {
+      const m = c as THREE.Mesh;
+      if (m.geometry) m.geometry.dispose();
+      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+      else if (mat) mat.dispose();
+    });
+    this.saberTrail.dispose();
     // Name label owns a per-instance CanvasTexture (~64KB GPU) + SpriteMaterial.
     const labelMat = this.nameLabel.material as THREE.SpriteMaterial;
     labelMat.map?.dispose();

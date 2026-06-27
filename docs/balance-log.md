@@ -20,6 +20,41 @@ bots, IA, realismo, skill, reação, targeting, hesitation.
 
 ---
 
+## Sessão 2026-06-26 — Sabre: stun de volta + clash (bloqueio), coerente em todo contexto
+
+**Doc de sistema:** [`systems/saber-clash-and-stun.md`](systems/saber-clash-and-stun.md) ·
+[`systems/weapons-melee-saber.md`](systems/weapons-melee-saber.md)
+
+### Reversão: o stun **volta** ao sabre (era OP em 2026-06-25 → removido; agora re-adicionado)
+
+- **Antes (2026-06-25):** o sabre virou dano puro + deflexão; o stun (travar tiro + interromper canal
+  + freeze) migrou pra Energy Blast porque "dano alto + control" era OP.
+- **Agora (2026-06-26):** o stun **volta** ao sabre — acerto = freeze `0.25s` + fire-lock `1.0s` +
+  interrompe a canalização da Energy Blast. **As duas armas atordoam** (aditivo). Pedido do dono:
+  "se eu chego perto e te acerto com o sabre, você não consegue atirar".
+- **Por que não é OP de novo:** agora existe **contrapeso** que não existia antes —
+  **(1) clash** (cruzar o sabre no tempo certo bloqueia: ambos recuam, ninguém atordoa) e **(2) dash**
+  (o freeze é só `0.25s`, então dá pra dashar pra fora e recuperar enquanto o fire-lock corre).
+  Também fechei o **re-arm gap**: com fire-lock ativo você não recomeça a canalizar (senão o
+  "quebrar o canal" custaria só 0.25s).
+
+### Novo: **clash** (bloqueio de sabre)
+
+- Dois sabres cruzando no strike (lâminas a ≤`CLASH_RADIUS=0.7`, direções **opostas** dot ≤`-0.2`) →
+  **recuo mútuo** (`CLASH_KNOCKBACK=12`) + fumaça branca + clang, **sem dano e sem stun**. O clash
+  **vence** o acerto. É o "block".
+
+### Coerência (regra de ouro): bots viram usuários de sabre
+
+- O stun + clash funcionam **em todos os contextos**: offline player↔bot, offline bot↔bot, online
+  player↔player, online player↔server-bot, online server-bot↔server-bot. Isso exigiu dar **IA de
+  sabre aos bots** no cliente (`Bot.ts`: lunge → fecha distância e golpeia) e no servidor
+  (`bots.ts`). Ver [`systems/mechanic-coherence-golden-rule.md`](systems/mechanic-coherence-golden-rule.md).
+- **A sentir em playtest:** o `MELEE_FIRE_LOCK=1.0s` é o número "OP" — se travar demais, baixar só ele
+  (ex.: `0.6s`). Agressão de lunge dos bots (`BOT_MELEE_*`) e força do clash são os outros diais.
+
+---
+
 ## Sessão 2026-06-25 — Modelo de realismo dos bots (megabrain council)
 
 **Spec de referência:** `docs/superpowers/specs/2026-06-25-multiplayer-bot-realism-design.md`

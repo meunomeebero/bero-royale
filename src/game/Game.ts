@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { Platform } from "./Platform";
 import { Player, type FireMode, type MeleeSample } from "./Player";
-import { Bot } from "./Bot";
+import { Bot, type BotMeleeSample } from "./Bot";
 import { InputManager } from "./InputManager";
 import { AudioEngine } from "./AudioEngine";
 import { DustParticles } from "./DustParticles";
@@ -70,11 +70,30 @@ const MELEE_ARC_DOT = 0.0; // forward hemisphere (was -0.15; too wide at 2× ran
 const MELEE_SWEEP_RADIUS = 0.6; // point-to-blade-segment hit thickness
 const MELEE_KNOCKBACK = 16; // push impulse applied to a hit target
 const MELEE_DT_CLAMP = 0.1; // skip collision/parry on bigger frame steps (tab resume)
-// Lightsaber HIT: knockback + a brief white blink (NO stun) — impact feel only.
-const SABER_IMPACT_FLASH = 0.6; // seconds the hit target pulses white (no fire-lock)
-// Energy-blast stagger applied to a hit target (the stun moved off the saber).
+// Lightsaber HIT: a brief white blink on impact.
+const SABER_IMPACT_FLASH = 0.6; // seconds the hit target pulses white
+// Saber HIT stagger — 2026-06 re-add (coherence golden rule): a saber hit again
+// mini-stuns its victim (freeze + fire-lock + breaks the Energy Blast channel),
+// in EVERY context (player↔bot, bot↔player, bot↔bot, player↔player, ↔server-bot).
+// Shares the canonical numbers with the Energy Blast stagger (both weapons stun).
+// The block (saber clash) + dash counterplay is the balance lever vs the old "OP".
 const MELEE_STUN = 0.25; // brief full-action freeze
-const MELEE_FIRE_LOCK = 1.0; // constant-fire lockout (~1s)
+const MELEE_FIRE_LOCK = 1.0; // constant-fire / channel lockout (~1s)
+// ── Saber CLASH (two blades crossing mid-strike → mutual recoil, no damage, no
+// stun; doubles as the "block your own saber" counterplay). ──
+const CLASH_RADIUS = 0.7; // blade-segment XZ proximity that counts as a cross (> hit radius)
+const CLASH_DOT_MAX = -0.2; // the two swing facings must roughly OPPOSE (dot below this)
+const CLASH_KNOCKBACK = 12; // mutual shove (< MELEE_KNOCKBACK 16 — both recoil, net similar)
+const CLASH_SMOKE_COUNT = 18; // white smoke cubes at the contact point (> the 13 hit puff)
+// A clash is resolved once per (unordered) pair within this window — dedups the two
+// local resolvers (same frame) AND a relayed `clash` echo (≤ ~one-way latency), while
+// staying < the swing cooldown so a genuine NEW clash of the same pair isn't eaten.
+const CLASH_DEDUP_MS = 350;
+/** Sentinel id for the LOCAL player in per-swing hit-sets / clash-pair keys. */
+const LOCAL_PLAYER_ID = "__local_player__";
+/** Sentinel added to a swing's hit-set once it CLASHES — the whole swing is then spent
+ *  (deflected), matching the server's all-or-nothing clash. */
+const CLASH_SENTINEL = "__clashed__";
 // Victim-side clamps for a RECEIVED stagger (meleehit is a blindly-relayed
 // broadcast — bound the trusted cue so it can't become a permanent stun-lock).
 const MELEE_MAX_STUN_MS = 400;
@@ -108,6 +127,24 @@ function distPointSegXZ(
   let t = ((px - ax) * vx + (pz - az) * vz) / len2;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (ax + t * vx), pz - (az + t * vz));
+}
+
+/** Shortest XZ distance between two segments A(a0→a1) and B(b0→b1) — used to detect
+ *  two saber blades crossing (a clash). Sampled endpoint-to-segment (4 tests): the
+ *  blades are short and roughly straight, so this is exact enough for the clash gate
+ *  while staying allocation-free. */
+function segSegDistXZ(
+  a0: THREE.Vector3,
+  a1: THREE.Vector3,
+  b0: THREE.Vector3,
+  b1: THREE.Vector3,
+): number {
+  return Math.min(
+    distPointSegXZ(a0.x, a0.z, b0.x, b0.z, b1.x, b1.z),
+    distPointSegXZ(a1.x, a1.z, b0.x, b0.z, b1.x, b1.z),
+    distPointSegXZ(b0.x, b0.z, a0.x, a0.z, a1.x, a1.z),
+    distPointSegXZ(b1.x, b1.z, a0.x, a0.z, a1.x, a1.z),
+  );
 }
 
 // Subtle screen shake on taking damage
@@ -213,6 +250,16 @@ export class Game {
   /** Scratch for the interpolated blade sub-segment during a swept parry. */
   private meleeSegA = new THREE.Vector3();
   private meleeSegB = new THREE.Vector3();
+  // ── Saber CLASH scratch: the OTHER blade segment + its swing dir + contact point. ──
+  private clashB0 = new THREE.Vector3();
+  private clashB1 = new THREE.Vector3();
+  private clashBDir = new THREE.Vector3();
+  private clashMid = new THREE.Vector3();
+  private clashPush = new THREE.Vector3();
+  /** Clash dedup: unordered-pair key → expiry (epoch ms). Dedups the two local
+   *  resolvers (same frame) AND a relayed `clash` echo within CLASH_DEDUP_MS, so a
+   *  clash applies recoil+FX exactly once per pair per swing across all detectors. */
+  private clashPairUntil = new Map<string, number>();
   /** Earliest time (ms) we'll honor the NEXT saber stagger. Set to the END of the
    *  effect we just applied PLUS a guaranteed free window — so no spam of cues (even
    *  with rotated/forged attacker ids) can refresh the longer fire-lock into a
@@ -772,13 +819,18 @@ export class Game {
     this.mp.setMeleeHandler((e) => {
       this.remotePlayers.get(e.id)?.triggerSwing(e.dir.x, e.dir.z);
     });
-    // LEGACY (remove once the old bundle fully drains from prod): the new lightsaber
-    // no longer sends `meleehit` (its stun moved to the energy blast), but a LEGACY
-    // peer's saber still does — so we keep this handler to apply that incoming stun.
-    // We got clubbed by a remote staff → small knockback (damage arrives via the
-    // server "hit" path). Best-effort: the server may re-assert our position.
+    // Saber HIT cue (re-activated 2026-06): a saber struck `target`. The lightsaber
+    // again sends `meleehit` (stun moved back ON to it), and a server bot sends it
+    // when it hits a player. Two paths:
+    //   • target is the LOCAL player → apply the real (clamped, anti-spam) stun.
+    //   • target is a REMOTE (another player OR a bot victim of a server-bot swing) →
+    //     render its stagger juice so EVERY observer sees the hit (fidelity golden
+    //     rule). The authoritative freeze is the victim's own / staggerBot's.
     this.mp.setMeleeHitHandler((e) => {
-      if (e.target !== this.mp?.id) return;
+      if (e.target !== this.mp?.id) {
+        this.remotePlayers.get(e.target)?.applyStaggerVisual(e.dir.x, e.dir.z);
+        return;
+      }
       this.player.applyKnockback(
         new THREE.Vector3(e.dir.x, 0, e.dir.z),
         MELEE_KNOCKBACK,
@@ -801,6 +853,10 @@ export class Game {
         }
       }
     });
+    // A saber clash announced by another client / the server (player↔player,
+    // player↔server-bot, or server-bot↔server-bot). Render the clash FX for observers;
+    // participants already handled it locally on detection (handleRemoteClash skips us).
+    this.mp.setClashHandler((e) => this.handleRemoteClash(e.a, e.b, e.x, e.z));
     // A remote player parried OUR shot. We own the authoritative bullet, so cancel
     // our nearest still-flying bullet near the parrying player — that's what makes
     // their parry an actual shield (otherwise our bullet would still hit them).
@@ -1127,6 +1183,13 @@ export class Game {
       this.meleePrevEnd.copy(s.bladeEnd);
       return;
     }
+    // A clash deflected this swing → it's SPENT (no more hits this swing), matching
+    // the server's all-or-nothing clash.
+    if (this.meleeHitIds.has(CLASH_SENTINEL)) {
+      this.meleePrevStart.copy(s.bladeStart);
+      this.meleePrevEnd.copy(s.bladeEnd);
+      return;
+    }
     // Feed the blue light-trail with the live blade segment across the sweep.
     this.saberTrail.push(s.bladeStart, s.bladeEnd);
     // Anti-tunnel: the blade can advance tens of degrees between frames, so test
@@ -1157,39 +1220,84 @@ export class Game {
     };
 
     for (const bot of this.bots) {
-      if (!bot.isAlive() || this.meleeHitIds.has(bot.id)) continue;
+      if (!bot.isAlive() || this.meleeHitIds.has(bot.id) || this.meleeHitIds.has(CLASH_SENTINEL)) continue;
       const push = resolve(bot.root.position.x, bot.root.position.z);
       if (!push) continue;
+      // CLASH first: if the bot is ALSO mid-strike and the blades cross, both recoil
+      // (the "block") and neither is hit/stunned. Runs before damage/stun and SPENDS
+      // the swing (CLASH_SENTINEL) so it can't also hit a second target.
+      if (
+        bot.getSaberStrike(this.clashB0, this.clashB1, this.clashBDir) &&
+        this.bladesCross(s.bladeStart, s.bladeEnd, s.aimDir, this.clashB0, this.clashB1, this.clashBDir)
+      ) {
+        this.meleeHitIds.add(bot.id);
+        this.meleeHitIds.add(CLASH_SENTINEL);
+        this.applyClash(
+          LOCAL_PLAYER_ID, this.player.root.position, bot.id, bot.position,
+          (d) => this.player.applyKnockback(d, CLASH_KNOCKBACK),
+          (d) => bot.knockback(d, CLASH_KNOCKBACK),
+        );
+        continue;
+      }
       this.meleeHitIds.add(bot.id);
       this.meleeImpactFx(bot.root.position, push);
       for (let i = 0; i < MELEE_DAMAGE && bot.isAlive(); i++) bot.takeHit(push);
-      // 2026 rebalance v2: the lightsaber knocks back + blinks the target + impact
-      // smoke (the satisfying hit feel) but NO stun — it never locks fire or
-      // interrupts a shot/energy-blast channel. That control lives on the energy blast.
+      // 2026-06 saber-stun RE-ADD (coherence golden rule): knockback + white blink +
+      // a mini-stun that freezes the bot, locks its fire, and INTERRUPTS its Energy
+      // Blast channel. Same in every context (this is the player→bot case).
       bot.knockback(push, MELEE_KNOCKBACK);
       bot.flash(SABER_IMPACT_FLASH);
+      bot.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
     }
     for (const rp of this.remotePlayers.values()) {
-      if (!rp.isAlive() || this.meleeHitIds.has(rp.id)) continue;
+      if (!rp.isAlive() || this.meleeHitIds.has(rp.id) || this.meleeHitIds.has(CLASH_SENTINEL)) continue;
       const p = rp.getPosition();
       const push = resolve(p.x, p.z);
       if (!push) continue;
+      // CLASH (online player↔player AND player↔server-bot): if the opponent is also
+      // mid-strike with crossing blades, both recoil. Recoil OUR player locally and
+      // fan `clash` so the opponent + observers see it (and the server cancels a
+      // clashed bot's swing). No `hit` / no `meleehit` is sent → no damage, no stun.
+      if (
+        rp.getSaberStrike(this.clashB0, this.clashB1, this.clashBDir) &&
+        this.bladesCross(s.bladeStart, s.bladeEnd, s.aimDir, this.clashB0, this.clashB1, this.clashBDir)
+      ) {
+        this.meleeHitIds.add(rp.id);
+        this.meleeHitIds.add(CLASH_SENTINEL); // clash spends the whole swing
+        const myId = this.mp?.id ?? LOCAL_PLAYER_ID;
+        // Remote recoils on its OWN client (symmetric detection) — push only ours.
+        this.applyClash(
+          myId, this.player.root.position, rp.id, p,
+          (d) => this.player.applyKnockback(d, CLASH_KNOCKBACK),
+          () => {},
+        );
+        this.mp?.sendClash(myId, rp.id, this.clashMid.x, this.clashMid.z);
+        continue;
+      }
       this.meleeHitIds.add(rp.id);
       this.meleeImpactFx(p, push);
-      // 2026 rebalance v2: instant client juice on the opponent WE hit — a backward
-      // hop + white blink + impact smoke (the satisfying saber feel). This is the
-      // SAME visual as before. Crucially, NO stun is sent (no `meleehit`), so the
-      // victim's shots / energy-blast channel are never interrupted — the lightsaber
-      // is impact-without-control now; the stun lives on the energy blast.
+      // Instant client juice on the opponent WE hit — backward hop + white blink +
+      // impact smoke. The real stun is applied authoritatively by the victim via the
+      // `meleehit` cue below (clamped on receipt).
       rp.applyStaggerVisual(push.x, push.z);
       const gy = this.platform.surfaceY(p.x, p.z);
       this.dust.spawnBurst(new THREE.Vector3(p.x, gy + 0.05, p.z), 8);
       for (let i = 0; i < MELEE_DAMAGE; i++) this.mp?.sendHit(rp.id);
+      // 2026-06 saber-stun RE-ADD (coherence): send the stagger so the victim freezes,
+      // fire-locks, and has its Energy Blast channel interrupted (player↔player; and
+      // player→server-bot, which the server intercepts → staggerBot).
+      this.mp?.sendMeleeHit(
+        rp.id,
+        { x: push.x, y: 0, z: push.z },
+        MELEE_STUN * 1000,
+        MELEE_FIRE_LOCK * 1000,
+        true,
+      );
     }
     // The saber also smashes loot crates (server-authoritative: takeHit() flashes
     // + relays sendHit, the server tracks crate HP + broadcasts the burst).
     for (const crate of this.crates.targets()) {
-      if (this.meleeHitIds.has(crate.id)) continue;
+      if (this.meleeHitIds.has(crate.id) || this.meleeHitIds.has(CLASH_SENTINEL)) continue;
       // Vertical gate: don't smash a crate still falling from the sky above you.
       if (Math.abs(crate.position.y - s.origin.y) > 1.3) continue;
       const push = resolve(crate.position.x, crate.position.z);
@@ -1208,6 +1316,172 @@ export class Game {
    *  a bit bigger on a hit than the end-of-swing puff. */
   private meleeImpactFx(pos: THREE.Vector3, _dir: THREE.Vector3) {
     this.kame.smokeBurst(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), 0.85, 13);
+  }
+
+  /** Two saber blades cross (a clash): segments within CLASH_RADIUS AND the two
+   *  swing facings roughly OPPOSE (so a same-direction near-miss isn't a clash). */
+  private bladesCross(
+    aStart: THREE.Vector3, aEnd: THREE.Vector3, aDir: THREE.Vector3,
+    bStart: THREE.Vector3, bEnd: THREE.Vector3, bDir: THREE.Vector3,
+  ): boolean {
+    return (
+      segSegDistXZ(aStart, aEnd, bStart, bEnd) <= CLASH_RADIUS &&
+      aDir.x * bDir.x + aDir.z * bDir.z <= CLASH_DOT_MAX
+    );
+  }
+
+  /**
+   * Apply a saber clash between A and B: a mutual recoil (push each away from the
+   * other) + white smoke + clang at the contact midpoint. Dedup'd per-frame by the
+   * unordered pair key, so the player resolver and the bot resolver (which both see
+   * the same crossing) apply it ONCE. `this.clashMid` is always set for the caller
+   * (e.g. to fan the network `clash`). Recoil is applied via per-entity callbacks
+   * because Player / Bot / RemotePlayer have different push methods.
+   */
+  private applyClash(
+    aId: string, aPos: THREE.Vector3,
+    bId: string, bPos: THREE.Vector3,
+    pushA: (dir: THREE.Vector3) => void,
+    pushB: (dir: THREE.Vector3) => void,
+  ): void {
+    this.clashMid.set((aPos.x + bPos.x) * 0.5, aPos.y + 0.6, (aPos.z + bPos.z) * 0.5);
+    const key = aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
+    const now = Date.now();
+    if ((this.clashPairUntil.get(key) ?? 0) > now) return; // already resolved this swing
+    this.clashPairUntil.set(key, now + CLASH_DEDUP_MS);
+    let dx = aPos.x - bPos.x;
+    let dz = aPos.z - bPos.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    dx /= dl;
+    dz /= dl;
+    this.clashPush.set(dx, 0, dz);
+    pushA(this.clashPush); // A away from B
+    this.clashPush.set(-dx, 0, -dz);
+    pushB(this.clashPush); // B away from A
+    this.spawnClashFx(this.clashMid, true);
+  }
+
+  /** Clash FX triad: big white smoke burst + a metallic clang + ground dust. */
+  private spawnClashFx(pos: THREE.Vector3, isLocal: boolean) {
+    this.kame.smokeBurst(new THREE.Vector3(pos.x, pos.y, pos.z), 1.0, CLASH_SMOKE_COUNT);
+    this.audio.playClash(pos, isLocal);
+    if (this.platform) {
+      const gy = this.platform.surfaceY(pos.x, pos.z);
+      this.dust.spawnBurst(new THREE.Vector3(pos.x, gy + 0.05, pos.z), 10);
+    }
+  }
+
+  /**
+   * Resolve a LOCAL bot's saber swing (offline coherence — client-authoritative):
+   * sweep its live blade against the player + every other bot, applying a CLASH
+   * (block, mutual recoil) or a HIT (damage + knockback + flash + mini-stun that
+   * interrupts the victim's Energy Blast channel). Mirror of handleMeleeSample's
+   * strike resolution; the bot owns its prev-pose + per-swing dedup set (s.hitIds).
+   */
+  private handleBotMeleeSample(s: BotMeleeSample, bot: Bot) {
+    if (s.dt > MELEE_DT_CLAMP) return; // tab-resume: animate only, no hits
+    if (s.hitIds.has(CLASH_SENTINEL)) return; // a clash already spent this swing
+    const ps = s.prevStart;
+    const pe = s.prevEnd;
+    const tipTravel = Math.hypot(s.bladeEnd.x - pe.x, s.bladeEnd.z - pe.z);
+    const steps = Math.max(1, Math.min(8, Math.ceil(tipTravel / MELEE_SWEEP_RADIUS)));
+    const resolve = (tx: number, tz: number): THREE.Vector3 | null => {
+      const dx = tx - s.origin.x;
+      const dz = tz - s.origin.z;
+      const dl = Math.hypot(dx, dz) || 1;
+      if (dl > MELEE_RANGE + MELEE_SWEEP_RADIUS) return null;
+      if ((dx / dl) * s.aimDir.x + (dz / dl) * s.aimDir.z < MELEE_ARC_DOT) return null;
+      for (let k = 1; k <= steps; k++) {
+        const f = k / steps;
+        const ax = ps.x + (s.bladeStart.x - ps.x) * f;
+        const az = ps.z + (s.bladeStart.z - ps.z) * f;
+        const bx = pe.x + (s.bladeEnd.x - pe.x) * f;
+        const bz = pe.z + (s.bladeEnd.z - pe.z) * f;
+        if (distPointSegXZ(tx, tz, ax, az, bx, bz) <= MELEE_SWEEP_RADIUS) {
+          return new THREE.Vector3(dx / dl, 0, dz / dl);
+        }
+      }
+      return null;
+    };
+
+    // ── bot → local player (only in the playable local mode) ──
+    if (this.mode === "local" && this.player.isAlive() && !s.hitIds.has(LOCAL_PLAYER_ID)) {
+      const pp = this.player.root.position;
+      const push = resolve(pp.x, pp.z);
+      if (push) {
+        s.hitIds.add(LOCAL_PLAYER_ID);
+        if (
+          this.player.getSaberStrike(this.clashB0, this.clashB1, this.clashBDir) &&
+          this.bladesCross(s.bladeStart, s.bladeEnd, s.aimDir, this.clashB0, this.clashB1, this.clashBDir)
+        ) {
+          s.hitIds.add(CLASH_SENTINEL); // clash spends the bot's whole swing
+          this.applyClash(
+            bot.id, bot.position, LOCAL_PLAYER_ID, pp,
+            (d) => bot.knockback(d, CLASH_KNOCKBACK),
+            (d) => this.player.applyKnockback(d, CLASH_KNOCKBACK),
+          );
+          return; // swing deflected → resolve nothing else this swing
+        } else {
+          this.meleeImpactFx(pp, push);
+          this.player.applyKnockback(push, MELEE_KNOCKBACK);
+          this.player.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+          for (let i = 0; i < MELEE_DAMAGE && this.player.isAlive(); i++) this.player.takeHit(push);
+        }
+      }
+    }
+
+    // ── bot → other bots (bot↔bot coherence) ──
+    for (const other of this.bots) {
+      if (other === bot || !other.isAlive() || s.hitIds.has(other.id) || s.hitIds.has(CLASH_SENTINEL)) continue;
+      const push = resolve(other.position.x, other.position.z);
+      if (!push) continue;
+      s.hitIds.add(other.id);
+      if (
+        other.getSaberStrike(this.clashB0, this.clashB1, this.clashBDir) &&
+        this.bladesCross(s.bladeStart, s.bladeEnd, s.aimDir, this.clashB0, this.clashB1, this.clashBDir)
+      ) {
+        s.hitIds.add(CLASH_SENTINEL); // clash spends the bot's whole swing
+        this.applyClash(
+          bot.id, bot.position, other.id, other.position,
+          (d) => bot.knockback(d, CLASH_KNOCKBACK),
+          (d) => other.knockback(d, CLASH_KNOCKBACK),
+        );
+        continue;
+      }
+      this.meleeImpactFx(other.position, push);
+      other.knockback(push, MELEE_KNOCKBACK);
+      other.flash(SABER_IMPACT_FLASH);
+      other.applyMeleeStagger(MELEE_STUN, MELEE_FIRE_LOCK, true);
+      for (let i = 0; i < MELEE_DAMAGE && other.isAlive(); i++) other.takeHit(push);
+    }
+  }
+
+  /**
+   * Network `clash` handler (player↔player, player↔server-bot, server-bot↔server-bot).
+   * Deduped by the SAME pair key + TTL as local detection (clashPairUntil), so:
+   *   • if WE detected it locally first, this relayed echo is a no-op;
+   *   • if we did NOT detect it (latency: our strike windows didn't overlap), we still
+   *     render the smoke/clang AND — if we're a participant — recoil our own player,
+   *     so the clash stays coherent on every screen (golden rule);
+   *   • two participants both fanning → observers render it ONCE.
+   * (Residual: a hit/meleehit the non-detecting side already SENT before this arrived
+   *  isn't retracted — same best-effort class as PvP parry under latency.)
+   */
+  private handleRemoteClash(a: string, b: string, x: number, z: number) {
+    const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+    const now = Date.now();
+    if ((this.clashPairUntil.get(key) ?? 0) > now) return; // already handled (local or prior echo)
+    this.clashPairUntil.set(key, now + CLASH_DEDUP_MS);
+    this.clashMid.set(x, this.player ? this.player.root.position.y + 0.6 : 1.0, z);
+    this.spawnClashFx(this.clashMid, false);
+    const myId = this.mp?.id;
+    if (myId && this.player.isAlive() && (a === myId || b === myId)) {
+      const dx = this.player.root.position.x - x;
+      const dz = this.player.root.position.z - z;
+      const dl = Math.hypot(dx, dz) || 1;
+      this.clashPush.set(dx / dl, 0, dz / dl);
+      this.player.applyKnockback(this.clashPush, CLASH_KNOCKBACK);
+    }
   }
 
   private onKameHit(
@@ -1417,8 +1691,11 @@ export class Game {
     bot.setOnKame((origin, dir) =>
       this.kame.fire(origin, dir, true, "bot", false, bot.id),
     );
+    // Resolve the bot's saber swing (hits + clashes vs player + other bots).
+    bot.setOnMeleeSample((s) => this.handleBotMeleeSample(s, bot));
     this.bots.push(bot);
     this.scene.add(bot.root);
+    this.scene.add(bot.saberTrail.mesh); // world-space blue arc (like RemotePlayer)
     this.bullets.registerTarget(bot);
     this.kame.registerTarget(bot);
   }
@@ -1429,6 +1706,7 @@ export class Game {
       this.kame.unregisterTarget(bot);
       this.kame.clearCharge(bot.id);
       this.scene.remove(bot.root);
+      this.scene.remove(bot.saberTrail.mesh); // world-space trail (added in spawnBot)
       bot.dispose();
     }
     this.bots = [];
@@ -1513,6 +1791,35 @@ export class Game {
       const dx = other.position.x - bot.position.x;
       const dz = other.position.z - bot.position.z;
       const d = dx * dx + dz * dz;
+      if (d < bestD) {
+        bestD = d;
+        best = other;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Hunt target for a LOCAL survival bot: the player by default (with a distance
+   * BIAS so survival stays "you vs them"), but a clearly-closer bot becomes the
+   * target so bots also DUEL each other — making the saber hit-stun + clash coherent
+   * bot↔bot (matching the server, where bots already fight one another).
+   */
+  private nearestHuntTarget(bot: Bot): BulletTarget | null {
+    const PLAYER_BIAS = 4; // world units the player "feels" closer by (stays primary)
+    let best: BulletTarget | null = null;
+    let bestD = Infinity;
+    if (this.player.isAlive()) {
+      const dx = this.player.root.position.x - bot.position.x;
+      const dz = this.player.root.position.z - bot.position.z;
+      best = this.player;
+      bestD = Math.hypot(dx, dz) - PLAYER_BIAS;
+    }
+    for (const other of this.bots) {
+      if (other === bot || !other.isAlive()) continue;
+      const dx = other.position.x - bot.position.x;
+      const dz = other.position.z - bot.position.z;
+      const d = Math.hypot(dx, dz);
       if (d < bestD) {
         bestD = d;
         best = other;
@@ -2304,8 +2611,16 @@ export class Game {
 
       if (!this.paused) {
         this.player.update(dt, this.camera);
-        // Local survival bots hunt the player (online bots are server-driven).
-        for (const bot of this.bots) bot.update(dt, this.player);
+        // Local survival bots hunt the nearest of {player, other bots} (player-biased)
+        // so the saber mechanics — hit-stun + clash — are coherent bot↔bot too, not
+        // only bot↔player. Each bot's swing is resolved via its onMeleeSample callback.
+        for (const bot of this.bots) {
+          bot.update(dt, this.nearestHuntTarget(bot));
+          // End-of-swing white smoke puff at the bot's blade tip (mirror of the
+          // local + remote end-of-swing smoke).
+          const tip = bot.consumeSwingEnd();
+          if (tip) this.kame.smokeBurst(tip, 0.6, 9);
+        }
         // Drive each local bot's super-charge telegraph (the inward orb stream)
         // so the player can SEE the wind-up and dodge or saber-parry it.
         for (const bot of this.bots) {

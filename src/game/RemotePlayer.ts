@@ -31,6 +31,11 @@ import {
 
 const HALF_HEIGHT = 0.25;
 
+/** Don't cancel a remote saber swing that's within ~1 server tick of finishing — a
+ *  server bot flips its snapshot weapon to "gun" the tick its swing ends, which would
+ *  otherwise truncate the last frames of the arc + its end-of-swing smoke. */
+const SWING_CANCEL_TOLERANCE = 0.06;
+
 // ── Saber stagger juice (when WE hit this remote with the saber) ──────────────
 const STAGGER_FLASH_DUR = 1.0; // seconds the body pulses white ("atordoado")
 const STAGGER_RECOIL = 0.55; // initial backward visual offset (eases back to 0)
@@ -477,6 +482,29 @@ export class RemotePlayer implements BulletTarget {
     return this.root.position;
   }
 
+  /** True while this remote's saber is in its damaging STRIKE phase (for clash). */
+  isSaberStriking(): boolean {
+    return (
+      this.swingTimer > 0 &&
+      this.swingElapsed / MELEE_SWING_DUR >= SWING_WINDUP_END_T
+    );
+  }
+
+  /** Fill the live world blade segment + committed XZ swing facing; true only during
+   *  the strike phase. The blade matrix was refreshed in updateHeldWeapon this frame
+   *  (remotes update before the local player), so the world positions are current. */
+  getSaberStrike(
+    outStart: THREE.Vector3,
+    outEnd: THREE.Vector3,
+    outDir: THREE.Vector3,
+  ): boolean {
+    if (!this.isSaberStriking()) return false;
+    this.staffPivot.getWorldPosition(outStart);
+    this.staffTip.getWorldPosition(outEnd);
+    outDir.set(Math.cos(this.swingYaw), 0, Math.sin(this.swingYaw));
+    return true;
+  }
+
   update(dt: number, groundY: number) {
     // Age the world-space saber trail every frame (so an in-flight arc keeps
     // fading even if this remote dies/falls mid-swing); the swing pushes new ribs.
@@ -686,8 +714,10 @@ export class RemotePlayer implements BulletTarget {
 
     // Mid-swing weapon switch: if the owner swapped off the saber while a swing was
     // in flight, cancel it — otherwise the remote completes a phantom arc + smoke
-    // the owner never finished (the local setFireMode cancels its swing too).
-    if (this.swingTimer > 0 && this.weapon !== "saber") this.resetSwing();
+    // the owner never finished (the local setFireMode cancels its swing too). A small
+    // tolerance (~1 server tick) protects an essentially-complete arc from being
+    // truncated when a server BOT flips weapon→"gun" the tick its swing ends (jitter).
+    if (this.swingTimer > SWING_CANCEL_TOLERANCE && this.weapon !== "saber") this.resetSwing();
     const swinging = this.swingTimer > 0;
 
     // Aim the weapon group: a swing FREEZES facing to its committed direction
